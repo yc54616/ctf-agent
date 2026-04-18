@@ -27,7 +27,18 @@ from backend.models import model_id_from_spec, supports_vision
 from backend.output_types import solver_output_json_schema
 from backend.prompts import ChallengeMeta, build_prompt, list_distfiles
 from backend.sandbox import DockerSandbox
-from backend.solver_base import CANCELLED, ERROR, FLAG_FOUND, GAVE_UP, QUOTA_ERROR, SolverResult
+from backend.solver_base import (
+    CANCELLED,
+    ERROR,
+    FLAG_FOUND,
+    GAVE_UP,
+    QUOTA_ERROR,
+    LaneRuntimeStatus,
+    SolverResult,
+    lifecycle_for_result,
+    summarize_tool_input,
+    summarize_tool_result,
+)
 from backend.tools.core import (
     do_bash,
     do_list_files,
@@ -43,6 +54,11 @@ from backend.tracing import SolverTracer
 logger = logging.getLogger(__name__)
 
 _rpc_counter = itertools.count(1)
+WATCHDOG_SAMPLE_SECONDS = 15
+WATCHDOG_STALL_SAMPLES = 3
+WATCHDOG_IDLE_GRACE_SECONDS = 90
+PROACTIVE_COMPACT_CONTEXT_FRACTION = 0.7
+PROACTIVE_COMPACT_ABSOLUTE_TOKENS = 250_000
 
 # Per-model reasoning effort (only for models that support it)
 REASONING_EFFORT: dict[str, str] = {
@@ -132,6 +148,8 @@ class CodexSolver:
         submit_fn=None,
         message_bus=None,
         notify_coordinator=None,
+        sandbox: DockerSandbox | None = None,
+        initial_step_count: int = 0,
     ) -> None:
         self.model_spec = model_spec
         self.model_id = model_id_from_spec(model_spec)
@@ -146,30 +164,60 @@ class CodexSolver:
         self.no_submit = no_submit
         self.submit_fn = submit_fn
 
-        self.sandbox = DockerSandbox(
+        self.sandbox = sandbox or DockerSandbox(
             image=getattr(settings, "sandbox_image", "ctf-sandbox"),
             challenge_dir=challenge_dir,
             memory_limit=getattr(settings, "container_memory_limit", "4g"),
+            exec_output_spill_threshold_bytes=getattr(settings, "exec_output_spill_threshold_bytes", 65_536),
+            read_file_spill_threshold_bytes=getattr(settings, "read_file_spill_threshold_bytes", 262_144),
+            artifact_preview_bytes=getattr(settings, "artifact_preview_bytes", 8_192),
         )
         self.use_vision = supports_vision(model_spec)
         self.loop_detector = LoopDetector()
         self.tracer = SolverTracer(meta.name, self.model_id)
         self.agent_name = f"{meta.name}/{self.model_id}"
+        self._runtime = LaneRuntimeStatus()
 
         self._proc: asyncio.subprocess.Process | None = None
         self._thread_id: str | None = None
-        self._step_count = 0
+        self._step_count = initial_step_count
         self._flag: str | None = None
         self._confirmed = False
         self._findings = ""
         self._cost_usd = 0.0
         self._bump_insights: str | None = None
+        self._advisory_bump_insights: str | None = None
+        self._operator_bump_insights: str | None = None
         self._structured_output: dict | None = None
         self._turn_error: str | None = None
         self._compact_requested = False
         self._pending_responses: dict[int, asyncio.Future] = {}
         self._reader_task: asyncio.Task | None = None
         self._turn_done: asyncio.Event = asyncio.Event()
+        self._progress_seq = 0
+        self._last_progress_at = time.monotonic()
+
+    def _build_thread_params(self, system_prompt: str) -> dict[str, Any]:
+        tool_names = [t["name"] for t in SANDBOX_TOOLS]
+        sandbox_preamble = (
+            "IMPORTANT: You are running inside a Docker sandbox. "
+            "All files are under /challenge/ — distfiles at /challenge/distfiles/, "
+            "workspace at /challenge/workspace/. Do NOT use any paths outside /challenge/. "
+            f"Your tools: {', '.join(tool_names)}. Use these for ALL operations.\n\n"
+        )
+        thread_params: dict[str, Any] = {
+            "model": self.model_id,
+            "personality": "pragmatic",
+            "baseInstructions": sandbox_preamble + system_prompt,
+            "cwd": "/challenge",
+            "approvalPolicy": "on-request",
+            "sandbox": "read-only",
+            "dynamicTools": SANDBOX_TOOLS,
+        }
+        reasoning = REASONING_EFFORT.get(self.model_id)
+        if reasoning:
+            thread_params["reasoningEffort"] = reasoning
+        return thread_params
 
     async def start(self) -> None:
         await self.sandbox.start()
@@ -200,34 +248,22 @@ class CodexSolver:
         await self._send_notification("initialized", {})
 
         # thread/start — personality is enum, system prompt in baseInstructions
-        # Prepend sandbox path reminder to prevent models from using host paths
-        tool_names = [t["name"] for t in SANDBOX_TOOLS]
-        sandbox_preamble = (
-            "IMPORTANT: You are running inside a Docker sandbox. "
-            "All files are under /challenge/ — distfiles at /challenge/distfiles/, "
-            "workspace at /challenge/workspace/. Do NOT use any paths outside /challenge/. "
-            f"Your tools: {', '.join(tool_names)}. Use these for ALL operations.\n\n"
-        )
-        thread_params = {
-            "model": self.model_id,
-            "personality": "pragmatic",
-            "baseInstructions": sandbox_preamble + system_prompt,
-            "cwd": "/challenge",
-            "approvalPolicy": "on-request",
-            "sandbox": "read-only",
-            "serviceTier": "flex",
-            "dynamicTools": SANDBOX_TOOLS,
-        }
-        # Reasoning effort for models that support it
-        reasoning = REASONING_EFFORT.get(self.model_id)
-        if reasoning:
-            thread_params["reasoningEffort"] = reasoning
+        thread_params = self._build_thread_params(system_prompt)
         resp = await self._rpc("thread/start", thread_params)
         # ThreadStartResponse: result.thread.id
         self._thread_id = resp.get("result", {}).get("thread", {}).get("id", "")
 
+        self._runtime.mark_ready()
         self.tracer.event("start", challenge=self.meta.name, model=self.model_id)
         logger.info(f"[{self.agent_name}] Codex solver started (thread={self._thread_id})")
+
+    @staticmethod
+    def _should_request_compaction(context_window: int | None, total_tokens: int) -> bool:
+        if total_tokens <= 0:
+            return False
+        if context_window and total_tokens > context_window * PROACTIVE_COMPACT_CONTEXT_FRACTION:
+            return True
+        return total_tokens >= PROACTIVE_COMPACT_ABSOLUTE_TOKENS
 
     async def _rpc(self, method: str, params: dict | None = None) -> dict:
         assert self._proc and self._proc.stdin
@@ -270,6 +306,7 @@ class CodexSolver:
             if not line:
                 self._turn_done.set()
                 break
+            self._mark_progress()
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
@@ -344,18 +381,19 @@ class CodexSolver:
                 last = token_usage.get("last", {})
                 total = token_usage.get("total", {})
 
-                # Proactive compaction at 70% context window (only for small-context models like spark)
                 context_window = token_usage.get("modelContextWindow")
                 total_tokens = total.get("totalTokens", 0)
-                if context_window and context_window < 200_000 and total_tokens > context_window * 0.7:
-                    if not self._compact_requested:
-                        self._compact_requested = True
-                        logger.info(f"[{self.agent_name}] Requesting compaction ({total_tokens}/{context_window} tokens)")
-                        try:
-                            await self._rpc("thread/compact/start", {"threadId": self._thread_id})
-                            self.tracer.event("compact_requested", tokens=total_tokens, window=context_window)
-                        except Exception as e:
-                            logger.warning(f"[{self.agent_name}] Compaction request failed: {e}")
+                if (
+                    self._should_request_compaction(context_window, total_tokens)
+                    and not self._compact_requested
+                ):
+                    self._compact_requested = True
+                    logger.info(f"[{self.agent_name}] Requesting compaction ({total_tokens}/{context_window} tokens)")
+                    try:
+                        await self._rpc("thread/compact/start", {"threadId": self._thread_id})
+                        self.tracer.event("compact_requested", tokens=total_tokens, window=context_window)
+                    except Exception as e:
+                        logger.warning(f"[{self.agent_name}] Compaction request failed: {e}")
 
                 self.cost_tracker.record_tokens(
                     self.agent_name, self.model_id,
@@ -372,6 +410,58 @@ class CodexSolver:
                     total.get("cachedInputTokens", 0),
                     self._cost_usd,
                 )
+
+    def _mark_progress(self) -> None:
+        self._progress_seq += 1
+        self._last_progress_at = time.monotonic()
+
+    def _watchdog_fingerprint(self) -> tuple[object, ...]:
+        runtime = self._runtime.snapshot()
+        return (
+            self._progress_seq,
+            self._step_count,
+            runtime.get("current_tool", ""),
+            runtime.get("current_command", ""),
+            runtime.get("last_tool", ""),
+            runtime.get("last_command", ""),
+            runtime.get("last_exit_hint", ""),
+            self._findings[:200],
+        )
+
+    def _watchdog_is_within_idle_grace(self) -> bool:
+        return (time.monotonic() - self._last_progress_at) < WATCHDOG_IDLE_GRACE_SECONDS
+
+    async def _watch_turn_progress(self) -> None:
+        stable_samples = 0
+        previous_fingerprint: tuple[object, ...] | None = None
+
+        while not self._turn_done.is_set():
+            await asyncio.sleep(WATCHDOG_SAMPLE_SECONDS)
+            if self._turn_done.is_set():
+                return
+            if self._runtime.current_tool or self._watchdog_is_within_idle_grace():
+                stable_samples = 0
+                previous_fingerprint = None
+                continue
+
+            fingerprint = self._watchdog_fingerprint()
+            if fingerprint == previous_fingerprint:
+                stable_samples += 1
+            else:
+                previous_fingerprint = fingerprint
+                stable_samples = 1
+
+            if stable_samples < WATCHDOG_STALL_SAMPLES:
+                continue
+
+            reason = f"stalled: no progress across {WATCHDOG_STALL_SAMPLES} samples"
+            self._turn_error = reason
+            self._findings = reason
+            self._structured_output = None
+            self._runtime.mark_terminal("error", reason)
+            self.tracer.event("turn_stalled", reason=reason, step=self._step_count)
+            self._turn_done.set()
+            return
 
     async def _handle_tool_call(self, request_id: int, params: dict) -> None:
         """Handle item/tool/call server request. Params are DynamicToolCallParams."""
@@ -406,12 +496,6 @@ class CodexSolver:
             result_text = str(result)
             self.tracer.tool_result(tool_name, result_text[:500], self._step_count)
 
-            if self._step_count % 5 == 0 and self.message_bus:
-                from backend.tools.core import do_check_findings
-                findings = await do_check_findings(self.message_bus, self.model_spec)
-                if findings and "No new findings" not in findings:
-                    result_text = f"{result_text}\n\n---\n{findings}"
-
             content_items = [{"type": "inputText", "text": result_text}]
 
         await self._respond_to_request(request_id, {
@@ -420,41 +504,99 @@ class CodexSolver:
         })
 
     async def _exec_tool(self, name: str, args: dict) -> str | tuple[bytes, str]:
-        if name == "bash":
-            return await do_bash(self.sandbox, args.get("command", ""), args.get("timeout_seconds", 60))
-        elif name == "read_file":
-            return str(await do_read_file(self.sandbox, args.get("path", "")))
-        elif name == "write_file":
-            return await do_write_file(self.sandbox, args.get("path", ""), args.get("content", ""))
-        elif name == "list_files":
-            return await do_list_files(self.sandbox, args.get("path", "/challenge/distfiles"))
-        elif name == "submit_flag":
-            flag = args.get("flag", "")
-            if self.no_submit:
-                return f'DRY RUN — would submit "{flag}"'
-            if self.submit_fn:
-                display, is_confirmed = await self.submit_fn(flag)
+        self._runtime.mark_busy(name, summarize_tool_input(name, args), step_count=self._step_count)
+        try:
+            if name == "bash":
+                result = await do_bash(self.sandbox, args.get("command", ""), args.get("timeout_seconds", 60))
+            elif name == "read_file":
+                result = str(await do_read_file(self.sandbox, args.get("path", "")))
+            elif name == "write_file":
+                result = await do_write_file(self.sandbox, args.get("path", ""), args.get("content", ""))
+            elif name == "list_files":
+                result = await do_list_files(self.sandbox, args.get("path", "/challenge/distfiles"))
+            elif name == "submit_flag":
+                flag = args.get("flag", "")
+                if self.no_submit:
+                    result = f'DRY RUN — would submit "{flag}"'
+                else:
+                    if self.submit_fn:
+                        display, is_confirmed = await self.submit_fn(flag)
+                    else:
+                        from backend.tools.core import do_submit_flag
+                        display, is_confirmed = await do_submit_flag(self.ctfd, self.meta.name, flag)
+                    if is_confirmed:
+                        self._confirmed = True
+                        self._flag = flag
+                    result = display
+            elif name == "web_fetch":
+                result = await do_web_fetch(args.get("url", ""), args.get("method", "GET"), args.get("body", ""))
+            elif name == "webhook_create":
+                result = await do_webhook_create()
+            elif name == "webhook_get_requests":
+                result = await do_webhook_get_requests(args.get("uuid", ""))
+            elif name == "view_image":
+                result = await do_view_image(self.sandbox, args.get("filename", ""), use_vision=self.use_vision)
+            elif name == "notify_coordinator":
+                if self.notify_coordinator:
+                    await self.notify_coordinator(args.get("message", ""))
+                    result = "Message sent to coordinator."
+                else:
+                    result = "No coordinator connected."
             else:
-                from backend.tools.core import do_submit_flag
-                display, is_confirmed = await do_submit_flag(self.ctfd, self.meta.name, flag)
-            if is_confirmed:
-                self._confirmed = True
-                self._flag = flag
-            return display
-        elif name == "web_fetch":
-            return await do_web_fetch(args.get("url", ""), args.get("method", "GET"), args.get("body", ""))
-        elif name == "webhook_create":
-            return await do_webhook_create()
-        elif name == "webhook_get_requests":
-            return await do_webhook_get_requests(args.get("uuid", ""))
-        elif name == "view_image":
-            return await do_view_image(self.sandbox, args.get("filename", ""), use_vision=self.use_vision)
-        elif name == "notify_coordinator":
-            if self.notify_coordinator:
-                await self.notify_coordinator(args.get("message", ""))
-                return "Message sent to coordinator."
-            return "No coordinator connected."
-        return f"Unknown tool: {name}"
+                result = f"Unknown tool: {name}"
+        except Exception as exc:
+            self._runtime.mark_idle(str(exc))
+            raise
+
+        if isinstance(result, tuple):
+            image_bytes, mime_type = result
+            self._runtime.mark_idle(f"image:{mime_type}:{len(image_bytes)}b")
+            return result
+
+        self._runtime.mark_idle(summarize_tool_result(result))
+        return result
+
+    def get_runtime_status(self) -> dict[str, object]:
+        return self._runtime.snapshot()
+
+    def mark_terminal_status(self, status: str) -> None:
+        self._runtime.mark_terminal(lifecycle_for_result(status), status)
+
+    def _consume_turn_prompt(self) -> str:
+        if self._operator_bump_insights:
+            prompt_text = (
+                "Stop your previous line of attack. "
+                "Highest priority guidance from the operator:\n\n"
+                f"{self._operator_bump_insights}\n\n"
+                "Do this first. Verify or refute it before returning to earlier exploration."
+            )
+            self._operator_bump_insights = None
+            self._advisory_bump_insights = None
+            self._bump_insights = None
+            return prompt_text
+
+        if self._advisory_bump_insights:
+            prompt_text = (
+                "Prioritize this lane advisory for your next 1-2 actions:\n\n"
+                f"{self._advisory_bump_insights}\n\n"
+                "Validate or falsify it before returning to broader search."
+            )
+            self._advisory_bump_insights = None
+            return prompt_text
+
+        if self._bump_insights:
+            prompt_text = (
+                "Your previous attempt did not find the flag. "
+                f"Additional guidance:\n\n{self._bump_insights}\n\n"
+                "Try a different approach."
+            )
+            self._bump_insights = None
+            return prompt_text
+
+        if self._step_count == 0:
+            return "Solve this CTF challenge."
+
+        return "Continue solving. Try a different approach."
 
     async def run_until_done_or_gave_up(self) -> SolverResult:
         if not self._proc:
@@ -462,29 +604,24 @@ class CodexSolver:
         assert self._thread_id
 
         t0 = time.monotonic()
-        if self._bump_insights:
-            prompt_text = (
-                "Your previous attempt did not find the flag. "
-                f"Insights from other agents:\n\n{self._bump_insights}\n\n"
-                "Try a different approach."
-            )
-            self._bump_insights = None
-        elif self._step_count == 0:
-            prompt_text = "Solve this CTF challenge."
-        else:
-            prompt_text = "Continue solving. Try a different approach."
+        prompt_text = self._consume_turn_prompt()
 
         try:
             self._turn_done.clear()
             self._structured_output = None
             self._turn_error = None
+            self._mark_progress()
             await self._rpc("turn/start", {
                 "threadId": self._thread_id,
                 "input": [{"type": "text", "text": prompt_text}],
                 "outputSchema": solver_output_json_schema(),
             })
-
-            await self._turn_done.wait()
+            watchdog_task = asyncio.create_task(self._watch_turn_progress())
+            try:
+                await self._turn_done.wait()
+            finally:
+                watchdog_task.cancel()
+                await asyncio.gather(watchdog_task, return_exceptions=True)
 
             duration = time.monotonic() - t0
             self.tracer.event("turn_complete", duration=round(duration, 1), steps=self._step_count)
@@ -498,12 +635,11 @@ class CodexSolver:
                     return self._result(QUOTA_ERROR)
                 return self._result(ERROR)
 
-            if self._structured_output:
-                if self._structured_output.get("type") == "flag_found":
-                    self._flag = self._structured_output.get("flag")
-                    self._findings = f"Flag found via {self._structured_output.get('method', '?')}: {self._flag}"
-                    if self.no_submit:
-                        self._confirmed = True
+            if self._structured_output and self._structured_output.get("type") == "flag_found":
+                self._flag = self._structured_output.get("flag")
+                self._findings = f"Flag found via {self._structured_output.get('method', '?')}: {self._flag}"
+                if self.no_submit:
+                    self._confirmed = True
 
             if self._confirmed and self._flag:
                 return self._result(FLAG_FOUND)
@@ -521,9 +657,24 @@ class CodexSolver:
             return self._result(ERROR)
 
     def bump(self, insights: str) -> None:
-        self._bump_insights = insights
+        if self._bump_insights and insights not in self._bump_insights:
+            self._bump_insights = f"{self._bump_insights}\n\n---\n\n{insights}"
+        else:
+            self._bump_insights = insights
         self.loop_detector.reset()
-        self.tracer.event("bump", insights=insights[:500])
+        self.tracer.event("bump", source="auto", insights=insights[:500])
+
+    def bump_advisory(self, insights: str) -> None:
+        self._advisory_bump_insights = insights
+        self.loop_detector.reset()
+        self.tracer.event("bump", source="auto", channel="advisory", insights=insights[:500])
+
+    def bump_operator(self, insights: str) -> None:
+        self._operator_bump_insights = insights
+        self._advisory_bump_insights = None
+        self._bump_insights = None
+        self.loop_detector.reset()
+        self.tracer.event("bump", source="operator", insights=insights[:500])
 
     def _result(self, status: str) -> SolverResult:
         self.tracer.event("finish", status=status, flag=self._flag, confirmed=self._confirmed)
@@ -536,6 +687,11 @@ class CodexSolver:
 
     async def stop(self) -> None:
         self.tracer.event("stop", step_count=self._step_count)
+        await self.stop_process()
+        if self.sandbox:
+            await self.sandbox.stop()
+
+    async def stop_process(self) -> None:
         self.tracer.close()
         if self._reader_task:
             self._reader_task.cancel()
@@ -543,6 +699,7 @@ class CodexSolver:
                 await self._reader_task
             except (asyncio.CancelledError, Exception):
                 pass
+            self._reader_task = None
         if self._proc:
             try:
                 self._proc.terminate()
@@ -553,5 +710,3 @@ class CodexSolver:
                 except Exception:
                     pass
             self._proc = None
-        if self.sandbox:
-            await self.sandbox.stop()

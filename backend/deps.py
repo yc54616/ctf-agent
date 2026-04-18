@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -55,3 +56,7 @@ class CoordinatorDeps:
     results: dict[str, dict] = field(default_factory=dict)
     challenge_dirs: dict[str, str] = field(default_factory=dict)
     challenge_metas: dict[str, Any] = field(default_factory=dict)
+    pending_swarm_queue: deque[str] = field(default_factory=deque)
+    pending_swarm_set: set[str] = field(default_factory=set)
+    known_challenge_count: int = 0
+    known_solved_count: int = 0

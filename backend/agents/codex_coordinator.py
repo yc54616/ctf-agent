@@ -36,6 +36,8 @@ Strategy:
 - Use read_solver_trace to monitor what each solver is doing and where it's stuck
 - When agents are stuck, read their traces, then craft targeted bumps with specific technical guidance
 - Use broadcast to share cross-solver insights (e.g. flag format discovery, shared vulnerabilities)
+- When you receive `ADVISOR MESSAGE:` or `Artifact path: /challenge/shared-artifacts/...`, treat it as evidence to inspect before deciding what to do.
+- Read `/challenge/shared-artifacts/manifest.md` or the referenced artifact file first, then decide whether to broadcast, bump a specific lane, or ignore it.
 
 CRITICAL RULES:
 - NEVER kill a swarm. Solvers will keep trying indefinitely with different approaches.
@@ -44,6 +46,7 @@ CRITICAL RULES:
   is confirmed correct.
 - When a solver seems stuck, bump it with very specific technical guidance based on
   its trace. Tell it exactly what to try next — specific tools, techniques, approaches.
+- Do not rebroadcast advisor or artifact messages blindly. Inspect the evidence first and only broadcast when it is broadly useful across lanes.
 - Cost is not a concern. Keep all swarms running.
 
 You will receive event messages. Respond with tool calls to manage the competition.
@@ -137,7 +140,7 @@ COORDINATOR_TOOLS = [
 class CodexCoordinator:
     """Coordinator using Codex App Server JSON-RPC."""
 
-    def __init__(self, deps: CoordinatorDeps, model: str = "gpt-5.4") -> None:
+    def __init__(self, deps: CoordinatorDeps, model: str = "gpt-5.4-mini") -> None:
         self.deps = deps
         self.model = model
         self._proc: asyncio.subprocess.Process | None = None
@@ -336,7 +339,7 @@ async def run_codex_coordinator(
     )
     deps.msg_port = msg_port
 
-    resolved_model = coordinator_model or "gpt-5.4"
+    resolved_model = coordinator_model or "gpt-5.4-mini"
     coordinator = CodexCoordinator(deps, model=resolved_model)
     await coordinator.start()
 

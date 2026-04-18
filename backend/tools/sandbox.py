@@ -20,6 +20,8 @@ async def bash(ctx: RunContext[SolverDeps], command: str, timeout_seconds: int =
 
     Distfiles are at /challenge/distfiles/ (read-only).
     Write generated/repaired files to /challenge/workspace/ (writable).
+    Large stdout/stderr is automatically saved under /challenge/shared-artifacts/
+    and this tool returns a preview plus the saved path.
     Challenge services are reachable via host.docker.internal.
     Run `cat /tools.txt` to see all installed tools.
     """
@@ -27,7 +29,13 @@ async def bash(ctx: RunContext[SolverDeps], command: str, timeout_seconds: int =
 
 
 async def read_file(ctx: RunContext[SolverDeps], path: str) -> str:
-    """Read a file from the container. For distfiles use paths like /challenge/distfiles/readme.txt."""
+    """Read a file from the container.
+
+    Small text files are returned inline.
+    Large files return a preview plus a file path so you can inspect targeted ranges with bash.
+    Shared artifact files live at /challenge/shared-artifacts/.
+    For distfiles use paths like /challenge/distfiles/readme.txt.
+    """
     return await do_read_file(ctx.deps.sandbox, path)
 
 

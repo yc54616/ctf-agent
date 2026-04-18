@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
+import re
 import shlex
 import tarfile
 import tempfile
+import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +28,11 @@ _active_count: int = 0
 _count_lock = asyncio.Lock()
 
 _WARN_THRESHOLDS = {100, 200, 500}
+SHARED_ARTIFACTS_HOST_DIRNAME = ".shared-artifacts"
+SHARED_ARTIFACTS_CONTAINER_ROOT = "/challenge/shared-artifacts"
+DEFAULT_EXEC_OUTPUT_SPILL_THRESHOLD_BYTES = 64 * 1024
+DEFAULT_READ_FILE_SPILL_THRESHOLD_BYTES = 256 * 1024
+DEFAULT_ARTIFACT_PREVIEW_BYTES = 8 * 1024
 
 
 def configure_semaphore(max_concurrent: int = 50) -> None:
@@ -69,10 +78,116 @@ async def cleanup_orphan_containers() -> None:
 
 
 @dataclass
+class FilePointer:
+    container_path: str
+    size_bytes: int
+    host_path: str | None = None
+
+
+def resolve_shared_artifacts_dir(challenge_dir: str | Path) -> Path:
+    root = Path(challenge_dir).resolve() / SHARED_ARTIFACTS_HOST_DIRNAME
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def allocate_artifact_pointer(
+    host_root: str | Path,
+    container_root: str,
+    prefix: str,
+    suffix: str,
+) -> FilePointer:
+    safe_prefix = re.sub(r"[^A-Za-z0-9._-]+", "-", prefix).strip("-") or "artifact"
+    token = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+    filename = f"{safe_prefix}-{token}{suffix}"
+    root = Path(host_root)
+    root.mkdir(parents=True, exist_ok=True)
+    host_path = root / filename
+    container_path = f"{container_root.rstrip('/')}/{filename}"
+    return FilePointer(container_path=container_path, host_path=str(host_path), size_bytes=0)
+
+
+@dataclass
 class ExecResult:
     exit_code: int
     stdout: str
     stderr: str
+    stdout_bytes: int = 0
+    stderr_bytes: int = 0
+    stdout_pointer: FilePointer | None = None
+    stderr_pointer: FilePointer | None = None
+
+
+@dataclass
+class FileReadResult:
+    path: str
+    data: bytes
+    size_bytes: int
+    pointer: FilePointer | None = None
+
+
+class _OutputSpooler:
+    def __init__(
+        self,
+        *,
+        label: str,
+        spill_threshold_bytes: int,
+        preview_bytes: int,
+        pointer_factory,
+    ) -> None:
+        self.label = label
+        self.spill_threshold_bytes = spill_threshold_bytes
+        self.preview_bytes = preview_bytes
+        self.pointer_factory = pointer_factory
+        self.total_bytes = 0
+        self._preview = bytearray()
+        self._buffer = bytearray()
+        self._fp = None
+        self._pointer: FilePointer | None = None
+        self._finalized = False
+
+    def feed(self, chunk: bytes) -> None:
+        if self._finalized:
+            raise RuntimeError("Cannot feed finalized spooler")
+
+        self.total_bytes += len(chunk)
+        remaining_preview = self.preview_bytes - len(self._preview)
+        if remaining_preview > 0:
+            self._preview.extend(chunk[:remaining_preview])
+
+        if self._fp is not None:
+            self._fp.write(chunk)
+            return
+
+        self._buffer.extend(chunk)
+        if len(self._buffer) > self.spill_threshold_bytes:
+            self._pointer = self.pointer_factory(self.label, ".log")
+            if not self._pointer.host_path:
+                raise RuntimeError("Spill pointer missing host path")
+            host_path = Path(self._pointer.host_path)
+            host_path.parent.mkdir(parents=True, exist_ok=True)
+            self._fp = host_path.open("wb")
+            self._fp.write(self._buffer)
+            self._buffer.clear()
+
+    def finalize(self) -> tuple[str, FilePointer | None, int]:
+        if self._finalized:
+            preview = self._preview.decode("utf-8", errors="replace")
+            return preview, self._pointer, self.total_bytes
+
+        self._finalized = True
+        if self._fp is not None:
+            self._fp.close()
+            self._fp = None
+
+        if self._pointer is not None:
+            self._pointer.size_bytes = self.total_bytes
+            preview = self._preview.decode("utf-8", errors="replace")
+            self._buffer.clear()
+            return preview, self._pointer, self.total_bytes
+
+        text = self._buffer.decode("utf-8", errors="replace")
+        self._buffer.clear()
+        return text, None, self.total_bytes
 
 
 @dataclass
@@ -82,6 +197,10 @@ class DockerSandbox:
     image: str
     challenge_dir: str
     memory_limit: str = "16g"
+    exec_output_spill_threshold_bytes: int = DEFAULT_EXEC_OUTPUT_SPILL_THRESHOLD_BYTES
+    read_file_spill_threshold_bytes: int = DEFAULT_READ_FILE_SPILL_THRESHOLD_BYTES
+    artifact_preview_bytes: int = DEFAULT_ARTIFACT_PREVIEW_BYTES
+    shared_artifacts_dir: str = ""
     workspace_dir: str = ""
     _container: Any = field(default=None, repr=False)
     _docker: Any = field(default=None, repr=False)
@@ -93,6 +212,10 @@ class DockerSandbox:
         if not self._container:
             raise RuntimeError("Sandbox not started")
         return self._container.id
+
+    @property
+    def is_started(self) -> bool:
+        return self._container is not None
 
     def _parse_memory_limit(self) -> int:
         s = self.memory_limit.strip().lower()
@@ -106,7 +229,27 @@ class DockerSandbox:
             logger.warning("Invalid memory_limit %r, defaulting to 4GB", self.memory_limit)
             return 4 * 1024 * 1024 * 1024
 
+    def _artifact_root_host(self) -> Path:
+        if self.shared_artifacts_dir:
+            root = Path(self.shared_artifacts_dir)
+            root.mkdir(parents=True, exist_ok=True)
+            return root
+        return resolve_shared_artifacts_dir(self.challenge_dir)
+
+    def _artifact_root_container(self) -> str:
+        return SHARED_ARTIFACTS_CONTAINER_ROOT
+
+    def _make_pointer(self, prefix: str, suffix: str) -> FilePointer:
+        return allocate_artifact_pointer(
+            self._artifact_root_host(),
+            self._artifact_root_container(),
+            prefix,
+            suffix,
+        )
+
     async def start(self) -> None:
+        if self._container is not None:
+            return
         sem = _start_semaphore or asyncio.Semaphore(50)
         async with sem:
             self._docker = aiodocker.Docker()
@@ -116,8 +259,10 @@ class DockerSandbox:
             challenge_root = Path(self.challenge_dir).resolve()
             distfiles = str(challenge_root / "distfiles")
             meta_yml = str(challenge_root / "metadata.yml")
+            self.shared_artifacts_dir = str(self._artifact_root_host())
 
             binds: list[str] = [f"{self.workspace_dir}:/challenge/workspace:rw"]
+            binds.append(f"{self.shared_artifacts_dir}:{SHARED_ARTIFACTS_CONTAINER_ROOT}:rw")
             if Path(distfiles).exists():
                 binds.append(f"{distfiles}:/challenge/distfiles:ro")
             if Path(meta_yml).exists():
@@ -171,8 +316,18 @@ class DockerSandbox:
         )
 
         stream = exec_instance.start(detach=False)
-        stdout_chunks: list[bytes] = []
-        stderr_chunks: list[bytes] = []
+        stdout_spool = _OutputSpooler(
+            label="stdout",
+            spill_threshold_bytes=self.exec_output_spill_threshold_bytes,
+            preview_bytes=self.artifact_preview_bytes,
+            pointer_factory=self._make_pointer,
+        )
+        stderr_spool = _OutputSpooler(
+            label="stderr",
+            spill_threshold_bytes=self.exec_output_spill_threshold_bytes,
+            preview_bytes=self.artifact_preview_bytes,
+            pointer_factory=self._make_pointer,
+        )
 
         async def _collect() -> None:
             while True:
@@ -180,9 +335,9 @@ class DockerSandbox:
                 if msg is None:
                     break
                 if msg.stream == 1:
-                    stdout_chunks.append(msg.data)
+                    stdout_spool.feed(msg.data)
                 else:
-                    stderr_chunks.append(msg.data)
+                    stderr_spool.feed(msg.data)
 
         try:
             # Give extra margin beyond the container-side timeout
@@ -192,23 +347,37 @@ class DockerSandbox:
                 await stream.close()
             except Exception:
                 pass
+            stdout_text, stdout_pointer, stdout_bytes = stdout_spool.finalize()
+            stderr_text, stderr_pointer, stderr_bytes = stderr_spool.finalize()
+            timeout_stderr = "Command timed out"
+            if stderr_text:
+                timeout_stderr = f"{stderr_text}\n{timeout_stderr}"
             return ExecResult(
                 exit_code=-1,
-                stdout=b"".join(stdout_chunks).decode("utf-8", errors="replace"),
-                stderr="Command timed out",
+                stdout=stdout_text,
+                stderr=timeout_stderr,
+                stdout_bytes=stdout_bytes,
+                stderr_bytes=stderr_bytes,
+                stdout_pointer=stdout_pointer,
+                stderr_pointer=stderr_pointer,
             )
 
         inspect = await exec_instance.inspect()
         exit_code = inspect.get("ExitCode", 0)
+        stdout_text, stdout_pointer, stdout_bytes = stdout_spool.finalize()
+        stderr_text, stderr_pointer, stderr_bytes = stderr_spool.finalize()
 
         return ExecResult(
             exit_code=exit_code,
-            stdout=b"".join(stdout_chunks).decode("utf-8", errors="replace"),
-            stderr=b"".join(stderr_chunks).decode("utf-8", errors="replace"),
+            stdout=stdout_text,
+            stderr=stderr_text,
+            stdout_bytes=stdout_bytes,
+            stderr_bytes=stderr_bytes,
+            stdout_pointer=stdout_pointer,
+            stderr_pointer=stderr_pointer,
         )
 
-    async def read_file(self, path: str) -> str | bytes:
-        """Read a file from the container. Returns str for text, bytes for binary."""
+    async def _read_file_raw(self, path: str) -> bytes:
         if not self._container:
             raise RuntimeError("Sandbox not started")
 
@@ -226,19 +395,64 @@ class DockerSandbox:
                 if member.isfile():
                     f = tar.extractfile(member)
                     if f:
-                        data = f.read()
-                        try:
-                            return data.decode("utf-8")
-                        except UnicodeDecodeError:
-                            return data
+                        return f.read()
         raise FileNotFoundError(f"No file found at {path}")
 
-    async def read_file_bytes(self, path: str) -> bytes:
-        """Read a file from the container as raw bytes."""
-        result = await self.read_file(path)
-        if isinstance(result, str):
-            return result.encode("utf-8")
-        return result
+    async def _stat_file_size(self, path: str) -> int:
+        quoted = shlex.quote(path)
+        result = await self._exec_inner(
+            f"test -f -- {quoted} && stat -c '%s' -- {quoted}",
+            timeout_s=30,
+        )
+        if result.exit_code != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise FileNotFoundError(detail or f"No file found at {path}")
+        try:
+            return int(result.stdout.strip())
+        except ValueError as e:
+            raise RuntimeError(f"Unable to determine file size for {path}: {result.stdout!r}") from e
+
+    async def _read_file_sample(self, path: str, limit: int) -> bytes:
+        script = (
+            "python3 - <<'PY'\n"
+            "import base64\n"
+            f"path = {path!r}\n"
+            f"limit = {limit}\n"
+            "with open(path, 'rb') as fh:\n"
+            "    data = fh.read(limit)\n"
+            "print(base64.b64encode(data).decode())\n"
+            "PY"
+        )
+        result = await self._exec_inner(script, timeout_s=30)
+        if result.exit_code != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(detail or f"Failed to sample {path}")
+        encoded = result.stdout.strip()
+        return base64.b64decode(encoded) if encoded else b""
+
+    async def read_file(self, path: str, *, inline_limit_bytes: int | None = None) -> FileReadResult:
+        """Read a file from the container without loading large files fully into memory."""
+        if not self._container:
+            raise RuntimeError("Sandbox not started")
+
+        async with self._lock:
+            size_bytes = await self._stat_file_size(path)
+            limit = (
+                self.read_file_spill_threshold_bytes
+                if inline_limit_bytes is None
+                else inline_limit_bytes
+            )
+            if size_bytes <= limit:
+                data = await self._read_file_raw(path)
+                return FileReadResult(path=path, data=data, size_bytes=len(data))
+
+            sample = await self._read_file_sample(path, self.artifact_preview_bytes)
+            return FileReadResult(
+                path=path,
+                data=sample,
+                size_bytes=size_bytes,
+                pointer=FilePointer(container_path=path, size_bytes=size_bytes),
+            )
 
     async def write_file(self, path: str, content: str | bytes) -> None:
         """Write a file into the container via tar archive."""
@@ -264,10 +478,21 @@ class DockerSandbox:
             raise TimeoutError(f"Timed out writing {path}") from e
 
     async def copy_from(self, container_path: str, host_path: str) -> None:
-        """Copy a file from the container to the host."""
-        data = await self.read_file_bytes(container_path)
         Path(host_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(host_path).write_bytes(data)
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "cp",
+            f"{self.container_id}:{container_path}",
+            host_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip() or stdout.decode(
+                "utf-8", errors="replace"
+            ).strip()
+            raise RuntimeError(detail or f"docker cp failed for {container_path}")
 
     async def stop(self) -> None:
         if self._container:

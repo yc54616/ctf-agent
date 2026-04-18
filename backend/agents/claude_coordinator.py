@@ -31,6 +31,51 @@ from backend.deps import CoordinatorDeps
 
 logger = logging.getLogger(__name__)
 
+
+class ClaudeCoordinatorInactiveError(RuntimeError):
+    """Raised when Claude coordinator does not respond with any messages."""
+
+
+COORDINATOR_PREFLIGHT_PROMPT = """\
+Preflight readiness check only.
+Call fetch_challenges and get_solve_status, then respond with one short readiness note.
+Do not spawn, submit, kill, bump, or broadcast during this preflight.
+"""
+
+
+def _next_inactive_turn_count(
+    *,
+    msg_count: int,
+    tool_calls_delta: int,
+    previous_inactive_turns: int,
+) -> int:
+    if msg_count == 0:
+        return previous_inactive_turns + 1
+    if tool_calls_delta == 0:
+        return previous_inactive_turns + 1
+    return 0
+
+
+def _validate_turn_activity(
+    *,
+    msg_count: int,
+    tool_calls_delta: int,
+    previous_inactive_turns: int,
+    require_tool_action: bool = False,
+) -> int:
+    inactive_turns = _next_inactive_turn_count(
+        msg_count=msg_count,
+        tool_calls_delta=tool_calls_delta,
+        previous_inactive_turns=previous_inactive_turns,
+    )
+    if msg_count == 0:
+        raise ClaudeCoordinatorInactiveError("Claude coordinator produced no messages")
+    if require_tool_action and tool_calls_delta == 0:
+        raise ClaudeCoordinatorInactiveError("Claude coordinator preflight produced no tool actions")
+    if inactive_turns >= 2:
+        raise ClaudeCoordinatorInactiveError("Claude coordinator produced no tool actions")
+    return inactive_turns
+
 COORDINATOR_PROMPT = """\
 You are a CTF competition coordinator running for the ENTIRE duration of a live competition.
 Your job is to maximize the number of challenges solved.
@@ -40,6 +85,8 @@ Strategy:
 - Use read_solver_trace to monitor what each solver is doing and where it's stuck
 - When agents are stuck, read their traces, then craft targeted bumps with specific technical guidance
 - Use broadcast to share cross-solver insights (e.g. flag format discovery, shared vulnerabilities)
+- When you receive `ADVISOR MESSAGE:` or `Artifact path: /challenge/shared-artifacts/...`, treat it as evidence to inspect before deciding what to do.
+- Read `/challenge/shared-artifacts/manifest.md` or the referenced artifact file first, then decide whether to broadcast, bump a specific lane, or ignore it.
 
 CRITICAL RULES:
 - NEVER kill a swarm. Solvers will keep trying indefinitely with different approaches.
@@ -48,6 +95,7 @@ CRITICAL RULES:
   is confirmed correct.
 - When a solver seems stuck, bump it with very specific technical guidance based on
   its trace. Tell it exactly what to try next — specific tools, techniques, approaches.
+- Do not rebroadcast advisor or artifact messages blindly. Inspect the evidence first and only broadcast when it is broadly useful across lanes.
 - Cost is not a concern. Keep all swarms running.
 
 You will receive event messages. Respond with tool calls to manage the competition.
@@ -59,43 +107,56 @@ def _text(s: str) -> dict:
     return {"content": [{"type": "text", "text": s}]}
 
 
-def _build_coordinator_mcp(deps: CoordinatorDeps):
+def _build_coordinator_mcp(deps: CoordinatorDeps, on_tool_call=None):
     """Build MCP server — thin wrappers around coordinator_core functions."""
+
+    def _mark_tool_call() -> None:
+        if on_tool_call is not None:
+            on_tool_call()
 
     @tool("fetch_challenges", "List all challenges with category, points, solve count, and status.", {})
     async def fetch_challenges(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_fetch_challenges(deps))
 
     @tool("get_solve_status", "Check which challenges are solved and which swarms are running.", {})
     async def get_solve_status(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_get_solve_status(deps))
 
     @tool("spawn_swarm", "Launch all solver models on a challenge.", {"challenge_name": str})
     async def spawn_swarm(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_spawn_swarm(deps, args["challenge_name"]))
 
     @tool("check_swarm_status", "Get per-agent progress for a swarm.", {"challenge_name": str})
     async def check_swarm_status(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_check_swarm_status(deps, args["challenge_name"]))
 
     @tool("submit_flag", "Submit a flag to CTFd.", {"challenge_name": str, "flag": str})
     async def submit_flag(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_submit_flag(deps, args["challenge_name"], args["flag"]))
 
     @tool("kill_swarm", "Cancel all agents for a challenge.", {"challenge_name": str})
     async def kill_swarm(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_kill_swarm(deps, args["challenge_name"]))
 
     @tool("bump_agent", "Send targeted insights to a stuck agent.", {"challenge_name": str, "model_spec": str, "insights": str})
     async def bump_agent(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_bump_agent(deps, args["challenge_name"], args["model_spec"], args["insights"]))
 
     @tool("broadcast", "Broadcast a strategic hint to ALL solvers on a challenge.", {"challenge_name": str, "message": str})
     async def broadcast(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_broadcast(deps, args["challenge_name"], args["message"]))
 
     @tool("read_solver_trace", "Read recent trace events from a specific solver. Use this to understand what a solver is doing, what it tried, and where it's stuck.", {"challenge_name": str, "model_spec": str, "last_n": int})
     async def read_solver_trace(args: dict) -> dict:
+        _mark_tool_call()
         return _text(await do_read_solver_trace(deps, args["challenge_name"], args["model_spec"], args.get("last_n", 20)))
 
     return create_sdk_mcp_server(
@@ -119,7 +180,13 @@ async def run_claude_coordinator(
     )
     deps.msg_port = msg_port
 
-    mcp_server = _build_coordinator_mcp(deps)
+    tool_call_counter = {"count": 0}
+    consecutive_inactive_turns = 0
+
+    def _record_tool_call() -> None:
+        tool_call_counter["count"] += 1
+
+    mcp_server = _build_coordinator_mcp(deps, on_tool_call=_record_tool_call)
     resolved_model = coordinator_model or "claude-opus-4-6"
 
     allowed = {
@@ -159,8 +226,10 @@ async def run_claude_coordinator(
     )
 
     async with ClaudeSDKClient(options=options) as client:
-        async def turn_fn(msg: str) -> None:
+        async def _run_checked_turn(msg: str, *, require_tool_action: bool = False) -> None:
+            nonlocal consecutive_inactive_turns
             logger.debug(f"Coordinator query: {msg[:200]}")
+            before_tool_calls = tool_call_counter["count"]
             await client.query(msg)
             msg_count = 0
             async for message in client.receive_response():
@@ -171,7 +240,31 @@ async def run_claude_coordinator(
                     cost = getattr(message, "total_cost_usd", 0)
                     session = getattr(message, "session_id", None)
                     logger.info(f"Claude coordinator turn done (messages={msg_count}, cost=${cost:.4f}, session={session})")
-            if msg_count == 0:
-                logger.warning("Coordinator turn produced no messages!")
+            tool_calls_delta = tool_call_counter["count"] - before_tool_calls
+            consecutive_inactive_turns = _validate_turn_activity(
+                msg_count=msg_count,
+                tool_calls_delta=tool_calls_delta,
+                previous_inactive_turns=consecutive_inactive_turns,
+                require_tool_action=require_tool_action,
+            )
+            if tool_calls_delta == 0:
+                logger.warning(
+                    "Coordinator turn stayed inactive (messages=%d, tool_calls=%d, consecutive=%d)",
+                    msg_count,
+                    tool_calls_delta,
+                    consecutive_inactive_turns,
+                )
 
-        return await run_event_loop(deps, ctfd, cost_tracker, turn_fn)
+        async def turn_fn(msg: str) -> None:
+            await _run_checked_turn(msg)
+
+        await _run_checked_turn(COORDINATOR_PREFLIGHT_PROMPT, require_tool_action=True)
+        logger.info("Claude coordinator preflight passed")
+
+        return await run_event_loop(
+            deps,
+            ctfd,
+            cost_tracker,
+            turn_fn,
+            propagate_fatal=True,
+        )

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CTF Operator Console</title>
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">CTF Agent</p>
+        <h1>Operator Console</h1>
+      </div>
+      <div class="topbar-meta">
+        <div class="metric-pill">
+          <span class="metric-label">Updated</span>
+          <strong id="updatedAt">-</strong>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-label">Sync</span>
+          <strong id="syncMode">polling 2s</strong>
+        </div>
+      </div>
+    </header>
+
+    <section class="summary-grid" id="summaryGrid"></section>
+
+    <main class="workspace">
+      <aside class="panel sidebar">
+        <div class="panel-header">
+          <h2>Challenges</h2>
+          <p id="challengeCount">-</p>
+        </div>
+        <div class="challenge-groups" id="challengeGroups"></div>
+      </aside>
+
+      <section class="panel main-panel">
+        <div class="panel-header">
+          <div>
+            <h2 id="selectedChallengeTitle">Select a challenge</h2>
+            <p id="selectedChallengeMeta">No active challenge selected.</p>
+          </div>
+          <div class="toolbar">
+            <label class="field-inline">
+              <span>Trace file</span>
+              <select id="traceSelect"></select>
+            </label>
+            <button class="ghost" id="loadOlderBtn" type="button">Load older</button>
+          </div>
+        </div>
+
+        <div class="lane-strip" id="laneStrip"></div>
+        <section class="lane-focus" id="laneFocus"></section>
+
+        <div class="trace-toolbar">
+          <label class="toggle-inline">
+            <input id="hideErrorLanesToggle" type="checkbox" checked>
+            <span>Hide error lanes</span>
+          </label>
+          <label class="field-inline">
+            <span>Type</span>
+            <select id="traceTypeFilter">
+              <option value="">All</option>
+            </select>
+          </label>
+          <label class="field-inline wide">
+            <span>Contains</span>
+            <input id="traceTextFilter" type="text" placeholder="tool, endpoint, error...">
+          </label>
+        </div>
+
+        <div class="trace-shell">
+          <table class="trace-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Preview</th>
+              </tr>
+            </thead>
+            <tbody id="traceTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="panel control-panel">
+        <div class="panel-header">
+          <h2>Controls</h2>
+          <p id="selectedLaneMeta">Select a lane to inspect it.</p>
+        </div>
+
+        <section class="stack">
+          <div class="note-card">
+            <h3>Coordinator Advisory</h3>
+            <p id="coordinatorAdvisoryText">-</p>
+          </div>
+          <div class="note-card">
+            <h3>Lane Advisory</h3>
+            <p id="laneAdvisoryText">-</p>
+          </div>
+          <div class="note-card">
+            <h3>Shared Finding</h3>
+            <p id="sharedFindingText">-</p>
+          </div>
+        </section>
+
+        <section class="activity-log advisory-history">
+          <div class="panel-header compact">
+            <h3>Advisory History</h3>
+          </div>
+          <ul id="advisoryHistory"></ul>
+        </section>
+
+        <details class="composer composer-fold">
+          <summary>Message Coordinator</summary>
+          <form class="composer-body" id="msgForm">
+            <textarea id="msgInput" rows="4" placeholder="Global instruction to the coordinator"></textarea>
+            <button type="submit">Send message</button>
+          </form>
+        </details>
+
+        <details class="composer composer-fold" open>
+          <summary>Bump Selected Lane</summary>
+          <form class="composer-body" id="laneBumpForm">
+            <textarea id="laneBumpInput" rows="4" placeholder="Operator guidance for the selected lane"></textarea>
+            <button type="submit">Bump lane</button>
+          </form>
+        </details>
+
+        <details class="composer composer-fold">
+          <summary>Bump Challenge Lanes</summary>
+          <form class="composer-body" id="challengeBumpForm">
+            <textarea id="challengeBumpInput" rows="4" placeholder="Fan out to every non-final lane in this challenge"></textarea>
+            <button type="submit">Bump challenge</button>
+          </form>
+        </details>
+
+        <section class="activity-log">
+          <div class="panel-header compact">
+            <h3>Operator Activity</h3>
+          </div>
+          <ul id="activityLog"></ul>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/ui.js" defer></script>
+</body>
+</html>

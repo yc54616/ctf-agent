@@ -23,12 +23,24 @@ class ChallengeMessageBus:
 
     findings: list[Finding] = field(default_factory=list)
     cursors: dict[str, int] = field(default_factory=dict)
+    total_posts: int = 0
+    total_checks: int = 0
+    total_delivered: int = 0
+    posts_by_source: dict[str, int] = field(default_factory=dict)
+    last_post_model: str = ""
+    last_post_content: str = ""
+    last_post_at: float | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def post(self, model: str, content: str) -> None:
         """Post a finding from a solver."""
         async with self._lock:
             self.findings.append(Finding(model=model, content=content))
+            self.total_posts += 1
+            self.posts_by_source[model] = self.posts_by_source.get(model, 0) + 1
+            self.last_post_model = model
+            self.last_post_content = content
+            self.last_post_at = time.time()
             if len(self.findings) > MAX_FINDINGS:
                 trim = len(self.findings) - MAX_FINDINGS
                 self.findings = self.findings[trim:]
@@ -39,6 +51,8 @@ class ChallengeMessageBus:
         async with self._lock:
             cursor = self.cursors.get(model, 0)
             unread = [f for f in self.findings[cursor:] if f.model != model]
+            self.total_checks += 1
+            self.total_delivered += len(unread)
             self.cursors[model] = len(self.findings)
             return unread
 
@@ -46,9 +60,25 @@ class ChallengeMessageBus:
         """Coordinator broadcasts a message to all solvers."""
         await self.post(source, content)
 
+    async def snapshot_findings(self) -> list[Finding]:
+        """Return a copy of all current findings without advancing cursors."""
+        async with self._lock:
+            return list(self.findings)
+
     def format_unread(self, findings: list[Finding]) -> str:
         """Format findings for injection into a solver prompt."""
         if not findings:
             return ""
         parts = [f"[{f.model}] {f.content}" for f in findings]
         return "**Findings from other agents:**\n\n" + "\n\n".join(parts)
+
+    def stats_snapshot(self) -> dict[str, object]:
+        return {
+            "total_posts": self.total_posts,
+            "total_checks": self.total_checks,
+            "total_delivered": self.total_delivered,
+            "posts_by_source": dict(self.posts_by_source),
+            "last_post_model": self.last_post_model,
+            "last_post_content": self.last_post_content,
+            "last_post_at": self.last_post_at,
+        }

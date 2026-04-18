@@ -17,13 +17,68 @@ def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
     return head[:limit] + f"\n... [truncated — {len(text)} total chars, {len(lines)} lines]"
 
 
+def _looks_binary(data: bytes) -> bool:
+    if not data:
+        return False
+    non_text = sum(
+        1
+        for b in data
+        if b == 0 or (b < 7) or (13 < b < 32 and b != 27)
+    )
+    return non_text / len(data) > 0.05
+
+
+def _preview_block(label: str, preview: str) -> str:
+    cleaned = preview.strip("\n")
+    return f"[{label} preview]\n{cleaned or '(empty preview)'}"
+
+
+def _text_pointer_hint(path: str) -> str:
+    quoted = shlex.quote(path)
+    return (
+        "Use bash to inspect specific ranges:\n"
+        f"  sed -n '1,120p' {quoted}\n"
+        f"  tail -n 120 {quoted}\n"
+        f"  rg -n 'pattern' {quoted}"
+    )
+
+
+def _binary_pointer_hint(path: str) -> str:
+    quoted = shlex.quote(path)
+    return (
+        "Use bash to inspect it:\n"
+        f"  file {quoted}\n"
+        f"  xxd {quoted} | head -40\n"
+        f"  strings {quoted} | head -200\n"
+        f"  exiftool {quoted}\n"
+        f"  binwalk {quoted}"
+    )
+
+
 async def do_bash(sandbox, command: str, timeout_seconds: int = 60) -> str:
     result = await sandbox.exec(command, timeout_s=timeout_seconds)
     parts: list[str] = []
     if result.stdout:
-        parts.append(result.stdout)
+        if result.stdout_pointer:
+            parts.append(_preview_block("stdout", result.stdout))
+        else:
+            parts.append(result.stdout)
     if result.stderr:
-        parts.append(f"[stderr]\n{result.stderr}")
+        if result.stderr_pointer:
+            parts.append(_preview_block("stderr", result.stderr))
+        else:
+            parts.append(f"[stderr]\n{result.stderr}")
+    if result.stdout_pointer:
+        parts.append(
+            f"[stdout saved] {result.stdout_pointer.container_path} ({result.stdout_pointer.size_bytes} bytes)"
+        )
+    if result.stderr_pointer:
+        parts.append(
+            f"[stderr saved] {result.stderr_pointer.container_path} ({result.stderr_pointer.size_bytes} bytes)"
+        )
+    if result.stdout_pointer or result.stderr_pointer:
+        pointer_path = (result.stdout_pointer or result.stderr_pointer).container_path
+        parts.append(_text_pointer_hint(pointer_path))
     if result.exit_code != 0:
         parts.append(f"[exit {result.exit_code}]")
     out = "\n".join(parts).strip() or "(no output)"
@@ -32,29 +87,33 @@ async def do_bash(sandbox, command: str, timeout_seconds: int = 60) -> str:
 
 async def do_read_file(sandbox, path: str) -> str:
     try:
-        data = await sandbox.read_file(path)
+        result = await sandbox.read_file(path)
     except Exception as e:
         return f"Error reading file: {e}"
 
-    if isinstance(data, bytes):
-        sample = data[:4096]
-        non_text = sum(
-            1
-            for b in sample
-            if b == 0 or (b < 9 and b not in (7, 8)) or (9 < b < 13) or (13 < b < 32 and b != 27)
-        )
-        if len(sample) > 0 and non_text / len(sample) > 0.05:
-            return (
-                f"Binary file ({len(data)} bytes) — use bash to inspect it:\n"
-                f"  file {path}\n"
-                f"  xxd {path} | head -40\n"
-                f"  strings {path}\n"
-                f"  exiftool {path}\n"
-                f"  binwalk {path}"
-            )
-        return _truncate(data.decode("utf-8", errors="replace"))
+    data = result.data
+    pointer_path = result.pointer.container_path if result.pointer else path
 
-    return _truncate(data) if isinstance(data, str) else data
+    if _looks_binary(data):
+        label = "Large binary file" if result.pointer else "Binary file"
+        return (
+            f"{label} at {pointer_path} ({result.size_bytes} bytes).\n"
+            f"{_binary_pointer_hint(pointer_path)}"
+        )
+
+    text = data.decode("utf-8", errors="replace")
+    if result.pointer:
+        return _truncate(
+            "\n".join(
+                [
+                    f"Large text file kept at {pointer_path} ({result.size_bytes} bytes).",
+                    _preview_block("text", text),
+                    _text_pointer_hint(pointer_path),
+                ]
+            )
+        )
+
+    return _truncate(text)
 
 
 async def do_write_file(sandbox, path: str, content: str) -> str:
@@ -109,17 +168,28 @@ async def do_web_fetch(url: str, method: str = "GET", body: str = "") -> str:
         return "Fetch error: access to internal/private networks is blocked."
     try:
         # verify=False: CTF challenge services often use self-signed certs
-        async with httpx.AsyncClient(verify=False, timeout=30.0) as client:
-            resp = await client.request(
+        async with (
+            httpx.AsyncClient(verify=False, timeout=30.0) as client,
+            client.stream(
                 method,
                 url,
                 content=body or None,
                 headers={"User-Agent": "Mozilla/5.0"},
-            )
-            text = resp.text
+            ) as resp,
+        ):
+            preview_limit = 20_000
+            preview = bytearray()
+            total_bytes = 0
+            async for chunk in resp.aiter_bytes():
+                total_bytes += len(chunk)
+                remaining = preview_limit - len(preview)
+                if remaining > 0:
+                    preview.extend(chunk[:remaining])
+
+            text = preview.decode(resp.encoding or "utf-8", errors="replace")
             prefix = f"HTTP {resp.status_code} {resp.reason_phrase}\n{'─' * 40}\n"
-            if len(text) > 20_000:
-                text = text[:20_000] + f"\n... [truncated, total {len(resp.text)} bytes]"
+            if total_bytes > len(preview):
+                text += f"\n... [truncated, total {total_bytes} bytes]"
             return prefix + text
     except Exception as e:
         return f"Fetch error: {e}"
@@ -212,17 +282,18 @@ async def do_view_image(sandbox, filename: str, use_vision: bool) -> tuple[bytes
 
     for path in search_paths:
         try:
-            data = await sandbox.read_file_bytes(path)
+            result = await sandbox.read_file(path, inline_limit_bytes=MAX_IMAGE_BYTES)
+            if result.pointer:
+                return (
+                    f"Image too large for vision ({result.size_bytes / 1024 / 1024:.1f} MB > 4 MB limit). "
+                    "Use bash tools (steghide, zsteg, binwalk, exiftool, strings, xxd) instead."
+                )
+            data = result.data
             if not _has_valid_magic(data, mime_type):
                 return (
                     "Cannot load image: file appears invalid or corrupted. "
                     "Fix the magic bytes in the sandbox first, save to /challenge/workspace/, "
                     "then call view_image again."
-                )
-            if len(data) > MAX_IMAGE_BYTES:
-                return (
-                    f"Image too large for vision ({len(data) / 1024 / 1024:.1f} MB > 4 MB limit). "
-                    "Use bash tools (steghide, zsteg, binwalk, exiftool, strings, xxd) instead."
                 )
             return (data, mime_type)
         except Exception:

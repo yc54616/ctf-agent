@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36"
 
 
+def _timeout_detail(method: str, target: str) -> str:
+    return f"CTFd {method} timed out: {target}"
+
+
 @dataclass
 class SubmitResult:
     status: str  # "correct" | "already_solved" | "incorrect" | "unknown"
@@ -52,7 +56,10 @@ class CTFdClient:
         client = await self._ensure_client()
 
         # GET login page for nonce
-        resp = await client.get("/login")
+        try:
+            resp = await client.get("/login")
+        except httpx.ReadTimeout as e:
+            raise RuntimeError(_timeout_detail("GET", "/login")) from e
         m = re.search(r'id="nonce"[^>]*value="([^"]+)"', resp.text)
         if not m:
             m = re.search(r'name="nonce"[^>]*value="([^"]+)"', resp.text)
@@ -61,16 +68,19 @@ class CTFdClient:
         nonce = m.group(1)
 
         # POST credentials
-        resp = await client.post(
-            "/login",
-            data={
-                "name": self.username,
-                "password": self.password,
-                "_submit": "Submit",
-                "nonce": nonce,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+        try:
+            resp = await client.post(
+                "/login",
+                data={
+                    "name": self.username,
+                    "password": self.password,
+                    "_submit": "Submit",
+                    "nonce": nonce,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+        except httpx.ReadTimeout as e:
+            raise RuntimeError(_timeout_detail("POST", "/login")) from e
         if resp.status_code == 200:
             raise RuntimeError("CTFd login failed — bad credentials")
         self._logged_in = True
@@ -79,7 +89,10 @@ class CTFdClient:
         if self._csrf_token:
             return self._csrf_token
         client = await self._ensure_client()
-        resp = await client.get("/challenges")
+        try:
+            resp = await client.get("/challenges")
+        except httpx.ReadTimeout as e:
+            raise RuntimeError(_timeout_detail("GET", "/challenges")) from e
         m = re.search(r"csrfNonce':\s*\"([A-Fa-f0-9]+)\"", resp.text)
         if not m:
             raise RuntimeError("Could not find csrfNonce on CTFd challenges page")
@@ -95,7 +108,11 @@ class CTFdClient:
     async def _get(self, path: str) -> Any:
         await self._ensure_logged_in()
         client = await self._ensure_client()
-        resp = await client.get(f"/api/v1{path}", headers=self._base_headers())
+        request_path = f"/api/v1{path}"
+        try:
+            resp = await client.get(request_path, headers=self._base_headers())
+        except httpx.ReadTimeout as e:
+            raise RuntimeError(_timeout_detail("GET", request_path)) from e
         resp.raise_for_status()
         return resp.json()
 
@@ -105,20 +122,27 @@ class CTFdClient:
         headers = self._base_headers()
         if not self.token:
             headers["CSRF-Token"] = await self._get_csrf()
-        resp = await client.post(
-            f"/api/v1{path}",
-            json=body,
-            headers=headers,
-        )
+        request_path = f"/api/v1{path}"
+        try:
+            resp = await client.post(
+                request_path,
+                json=body,
+                headers=headers,
+            )
+        except httpx.ReadTimeout as e:
+            raise RuntimeError(_timeout_detail("POST", request_path)) from e
         # Retry once on 403 — CSRF token may have gone stale
         if resp.status_code == 403 and not self.token:
             self._csrf_token = ""
             headers["CSRF-Token"] = await self._get_csrf()
-            resp = await client.post(
-                f"/api/v1{path}",
-                json=body,
-                headers=headers,
-            )
+            try:
+                resp = await client.post(
+                    request_path,
+                    json=body,
+                    headers=headers,
+                )
+            except httpx.ReadTimeout as e:
+                raise RuntimeError(_timeout_detail("POST", request_path)) from e
         resp.raise_for_status()
         return resp.json()
 
@@ -225,10 +249,13 @@ class CTFdClient:
                 try:
                     # Only send auth headers to our CTFd server
                     headers = self._base_headers() if urlparse(url).hostname == urlparse(self.base_url).hostname else {}
-                    resp = await client.get(
-                        url, headers=headers,
-                        follow_redirects=True, timeout=60.0,
-                    )
+                    try:
+                        resp = await client.get(
+                            url, headers=headers,
+                            follow_redirects=True, timeout=60.0,
+                        )
+                    except httpx.ReadTimeout as e:
+                        raise RuntimeError(_timeout_detail("GET", url)) from e
                     resp.raise_for_status()
                     dest.write_bytes(resp.content)
                     logger.info(f"Downloaded: {fname} ({len(resp.content)} bytes)")

@@ -13,12 +13,14 @@ logger = logging.getLogger(__name__)
 
 # Provider ID mapping for genai-prices
 PROVIDER_MAP: dict[str, str] = {
-    "bedrock": "anthropic",
     "claude-sdk": "anthropic",
-    "azure": "openai",
-    "zen": "openai",
     "codex": "openai",
+    "gemini": "google",
     "google": "google",
+}
+
+MODEL_ALIASES: dict[str, str] = {
+    "gemini-2.5-flash": "gemini-3-flash-preview",
 }
 
 # Fallback pricing for models not in genai-prices (per 1M tokens, USD)
@@ -62,7 +64,7 @@ FALLBACK_PRICING: dict[str, dict[str, float]] = {
 
 
 def _calc_fallback_cost(usage: RunUsage, model: str) -> float | None:
-    pricing = FALLBACK_PRICING.get(model)
+    pricing = FALLBACK_PRICING.get(model) or FALLBACK_PRICING.get(MODEL_ALIASES.get(model, ""))
     if not pricing:
         return None
     input_rate = pricing.get("input", 0)

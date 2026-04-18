@@ -84,13 +84,6 @@ class TracingToolset(WrapperToolset[SolverDeps]):
         if name == "submit_flag" and any(m in result_str for m in CORRECT_MARKERS):
             self.tracer.event("flag_confirmed", tool=name, step=step)
 
-        if step % 5 == 0 and ctx.deps.message_bus and isinstance(result, str):
-            from backend.tools.core import do_check_findings
-            findings_text = await do_check_findings(ctx.deps.message_bus, ctx.deps.model_spec)
-            if findings_text and "No new findings" not in findings_text:
-                result = f"{result}\n\n---\n{findings_text}"
-                self.tracer.event("findings_injected", step=step)
-
         return result
 
 
@@ -132,6 +125,9 @@ class Solver:
             image=getattr(settings, "sandbox_image", "ctf-sandbox"),
             challenge_dir=challenge_dir,
             memory_limit=getattr(settings, "container_memory_limit", "4g"),
+            exec_output_spill_threshold_bytes=getattr(settings, "exec_output_spill_threshold_bytes", 65_536),
+            read_file_spill_threshold_bytes=getattr(settings, "read_file_spill_threshold_bytes", 262_144),
+            artifact_preview_bytes=getattr(settings, "artifact_preview_bytes", 8_192),
         )
         self.use_vision = supports_vision(model_spec)
         self.deps = SolverDeps(
@@ -152,6 +148,7 @@ class Solver:
         self._flag: str | None = None
         self._confirmed: bool = False
         self._findings: str = ""
+        self._advisory_bump_insights: str | None = None
 
     async def start(self) -> None:
         """Start the sandbox and build the agent."""
@@ -198,8 +195,6 @@ class Solver:
         assert self._agent is not None
 
         t0 = time.monotonic()
-        steps_before = self._step_count[0]
-
         try:
             from pydantic_ai.usage import UsageLimits
             result = await self._agent.run(
@@ -266,23 +261,54 @@ class Solver:
 
     def bump(self, insights: str) -> None:
         """Inject insights from siblings and prepare to resume."""
-        bump_msg = ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content=(
-                        "Your previous attempt did not find the flag. Here are insights "
-                        "from other agents working on the same challenge:\n\n"
-                        f"{insights}\n\n"
-                        "Use these insights to try a different approach. "
-                        "Do NOT repeat what has already been tried."
-                    )
-                )
-            ]
-        )
+        bump_msg = self._build_bump_message(insights)
         self._messages.append(bump_msg)
         self.loop_detector.reset()
-        self.tracer.event("bump", insights=insights[:500])
+        self.tracer.event("bump", source="auto", insights=insights[:500])
         logger.info(f"[{self.agent_name}] Bumped with sibling insights")
+
+    def bump_advisory(self, insights: str) -> None:
+        bump_msg = self._build_bump_message(insights, advisory=True)
+        self._messages.append(bump_msg)
+        self._advisory_bump_insights = insights
+        self.loop_detector.reset()
+        self.tracer.event("bump", source="auto", channel="advisory", insights=insights[:500])
+        logger.info(f"[{self.agent_name}] Bumped with lane advisory")
+
+    def bump_operator(self, insights: str) -> None:
+        bump_msg = self._build_bump_message(insights, operator=True)
+        self._messages.append(bump_msg)
+        self._advisory_bump_insights = None
+        self.loop_detector.reset()
+        self.tracer.event("bump", source="operator", insights=insights[:500])
+        logger.info(f"[{self.agent_name}] Bumped with operator guidance")
+
+    @staticmethod
+    def _build_bump_message(
+        insights: str, *, operator: bool = False, advisory: bool = False
+    ) -> ModelRequest:
+        if operator:
+            content = (
+                "Stop your previous line of attack. "
+                "Highest priority guidance from the operator:\n\n"
+                f"{insights}\n\n"
+                "Do this first. Verify or refute it before returning to earlier exploration."
+            )
+        elif advisory:
+            content = (
+                "Prioritize this lane advisory for your next 1-2 actions:\n\n"
+                f"{insights}\n\n"
+                "Validate or falsify it before returning to broader search."
+            )
+        else:
+            content = (
+                "Your previous attempt did not find the flag. Here are insights "
+                "from other agents working on the same challenge:\n\n"
+                f"{insights}\n\n"
+                "Use these insights to try a different approach. "
+                "Do NOT repeat what has already been tried."
+            )
+        return ModelRequest(parts=[UserPromptPart(content=content)])
 
     def _result(self, status: str, run_steps: int | None = None, run_cost: float | None = None) -> SolverResult:
         agent_usage = self.cost_tracker.by_agent.get(self.agent_name)
