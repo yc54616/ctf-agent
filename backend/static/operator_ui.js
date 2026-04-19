@@ -20,6 +20,7 @@ const state = {
 
 const els = {
   updatedAt: document.getElementById("updatedAt"),
+  runningFor: document.getElementById("runningFor"),
   syncMode: document.getElementById("syncMode"),
   summaryGrid: document.getElementById("summaryGrid"),
   challengeCount: document.getElementById("challengeCount"),
@@ -30,7 +31,8 @@ const els = {
   laneFocus: document.getElementById("laneFocus"),
   coordinatorAdvisoryText: document.getElementById("coordinatorAdvisoryText"),
   laneAdvisoryText: document.getElementById("laneAdvisoryText"),
-  sharedFindingText: document.getElementById("sharedFindingText"),
+  sharedFindingList: document.getElementById("sharedFindingList"),
+  flagCandidatesList: document.getElementById("flagCandidatesList"),
   advisoryHistory: document.getElementById("advisoryHistory"),
   laneStrip: document.getElementById("laneStrip"),
   hideErrorLanesToggle: document.getElementById("hideErrorLanesToggle"),
@@ -51,17 +53,24 @@ const els = {
 function challengeBuckets(snapshot) {
   const active = snapshot?.active_swarms ?? {};
   const finished = { ...(snapshot?.finished_swarms ?? {}) };
-  const pending = snapshot?.pending_challenges ?? [];
+  const pending = [...(snapshot?.pending_challenges ?? [])];
   const results = snapshot?.results ?? {};
   for (const [name, result] of Object.entries(results)) {
-    if (!active[name] && !finished[name]) {
+    const solved = result?.status === "flag_found";
+    if (!active[name] && !finished[name] && solved) {
       finished[name] = {
         challenge: name,
         winner: result.flag || result.status || "done",
         restored: true,
         agents: {},
         step_count: Number(result.step_count || 0),
+        flag_candidates: result.flag_candidates || {},
+        coordinator_advisor_note: result.coordinator_advisor_note || "",
+        shared_finding: result.shared_finding || "",
+        shared_findings: result.shared_findings || {},
       };
+    } else if (!active[name] && !finished[name] && !pending.includes(name)) {
+      pending.push(name);
     } else if (finished[name] && result && typeof result === "object") {
       finished[name] = {
         ...finished[name],
@@ -69,10 +78,12 @@ function challengeBuckets(snapshot) {
           Number(finished[name].step_count || 0),
           Number(result.step_count || 0)
         ),
+        flag_candidates: result.flag_candidates || finished[name].flag_candidates || {},
+        shared_findings: result.shared_findings || finished[name].shared_findings || {},
       };
     }
   }
-  return { active, finished, pending };
+  return { active, finished, pending, results };
 }
 
 function laneEntries(challenge) {
@@ -114,7 +125,19 @@ function getSelectedChallengeData() {
     return { bucket: "finished", data: buckets.finished[state.selectedChallenge] };
   }
   if (state.selectedChallenge && buckets.pending.includes(state.selectedChallenge)) {
-    return { bucket: "pending", data: { challenge: state.selectedChallenge, agents: {} } };
+    const result = buckets.results?.[state.selectedChallenge] || {};
+    return {
+      bucket: "pending",
+      data: {
+        challenge: state.selectedChallenge,
+        agents: {},
+        step_count: Number(result.step_count || 0),
+        flag_candidates: result.flag_candidates || {},
+        coordinator_advisor_note: result.coordinator_advisor_note || "",
+        shared_finding: result.shared_finding || "",
+        shared_findings: result.shared_findings || {},
+      },
+    };
   }
   return { bucket: "", data: null };
 }
@@ -153,6 +176,12 @@ function shortModelName(spec) {
   return String(spec || "").split("/").slice(-1)[0] || String(spec || "");
 }
 
+function humanizeProgressKind(kind) {
+  return String(kind || "")
+    .replaceAll("_", " ")
+    .trim();
+}
+
 function badgeClass(value) {
   return `badge ${String(value || "").replace(/[^a-z_]/gi, "")}`;
 }
@@ -170,15 +199,85 @@ function formatTime(ts) {
   });
 }
 
+function parseTraceStartedAt(traceName) {
+  const match = String(traceName || "").match(/-(\d{8})-(\d{6})\.jsonl$/);
+  if (!match) {
+    return null;
+  }
+  const [, datePart, timePart] = match;
+  const year = Number(datePart.slice(0, 4));
+  const month = Number(datePart.slice(4, 6)) - 1;
+  const day = Number(datePart.slice(6, 8));
+  const hour = Number(timePart.slice(0, 2));
+  const minute = Number(timePart.slice(2, 4));
+  const second = Number(timePart.slice(4, 6));
+  const startedAt = new Date(year, month, day, hour, minute, second).getTime();
+  return Number.isNaN(startedAt) ? null : startedAt;
+}
+
+function formatElapsed(secondsTotal) {
+  if (!Number.isFinite(secondsTotal) || secondsTotal < 0) {
+    return "-";
+  }
+  const total = Math.max(0, Math.floor(secondsTotal));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (days > 0) {
+    return `${days}일 ${hours}시 ${minutes}분 ${seconds}초`;
+  }
+  return `${hours}시 ${minutes}분 ${seconds}초`;
+}
+
+function currentRunStartedAtMs() {
+  const sessionStartedAt = state.snapshot?.session_started_at;
+  if (sessionStartedAt) {
+    return Number(sessionStartedAt) * 1000;
+  }
+  const challenge = getSelectedChallengeData().data;
+  const lane = state.selectedLane ? challenge?.agents?.[state.selectedLane] : null;
+  const traceStartedAt = parseTraceStartedAt(state.traceFiles[0] || state.selectedTrace);
+  if (traceStartedAt) {
+    return traceStartedAt;
+  }
+  if (lane?.current_started_at) {
+    return Number(lane.current_started_at) * 1000;
+  }
+  if (lane?.watchdog_started_at) {
+    return Number(lane.watchdog_started_at) * 1000;
+  }
+  return null;
+}
+
+function renderRunningFor() {
+  if (!els.runningFor) {
+    return;
+  }
+  const startedAtMs = currentRunStartedAtMs();
+  if (!startedAtMs) {
+    els.runningFor.textContent = "-";
+    return;
+  }
+  els.runningFor.textContent = formatElapsed((Date.now() - startedAtMs) / 1000);
+}
+
 function challengeSummary(name, challenge) {
   const lanes = laneEntries(challenge);
   const busy = lanes.filter(([, lane]) => lane.lifecycle === "busy").length;
   const laneSteps = lanes.reduce((sum, [, lane]) => sum + Number(lane.step_count || 0), 0);
   const stepCount = Math.max(laneSteps, Number(challenge.step_count || 0));
+  const candidateEntries = Object.values(challenge.flag_candidates || {});
+  const pendingCandidates = candidateEntries.filter((candidate) =>
+    ["pending", "pending_coordinator"].includes(String(candidate.status || ""))
+  ).length;
   const lead = challenge.winner ? `winner ${challenge.winner}` : `${lanes.length} lanes`;
   const details = [lead];
   if (lanes.length) {
     details.push(`busy ${busy}`);
+  }
+  if (pendingCandidates) {
+    details.push(`candidates ${pendingCandidates}`);
   }
   details.push(`steps ${stepCount}`);
   return details.join(" · ");
@@ -189,6 +288,165 @@ function escapeHtml(text) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function renderFlagCandidates(challenge) {
+  const entries = Object.values(challenge?.flag_candidates || {}).sort((left, right) => {
+    const priority = {
+      pending: 0,
+      pending_coordinator: 1,
+      rejected: 2,
+      confirmed: 3,
+    };
+    const leftPriority = priority[String(left?.status || "")] ?? 99;
+    const rightPriority = priority[String(right?.status || "")] ?? 99;
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+    return Number(right?.last_seen_at || 0) - Number(left?.last_seen_at || 0);
+  });
+  if (!entries.length) {
+    return '<li class="empty">No candidate flags yet.</li>';
+  }
+  return entries
+    .map((candidate) => {
+      const sourceModels = Array.isArray(candidate.source_models) ? candidate.source_models.join(", ") : "";
+      const evidenceDigests =
+        candidate && typeof candidate.evidence_digest_paths === "object" && candidate.evidence_digest_paths
+          ? Object.values(candidate.evidence_digest_paths)
+              .map((value) => String(value || "").trim())
+              .filter(Boolean)
+          : [];
+      const evidencePointers =
+        candidate && typeof candidate.evidence_pointer_paths === "object" && candidate.evidence_pointer_paths
+          ? Object.values(candidate.evidence_pointer_paths)
+              .map((value) => String(value || "").trim())
+              .filter(Boolean)
+          : [];
+      const evidenceDigest = evidenceDigests[0] || "";
+      const evidencePointer = evidencePointers[0] || "";
+      const evidence = evidenceDigest || evidencePointer || (
+        Array.isArray(candidate.evidence_snippets)
+          ? String(candidate.evidence_snippets[0] || "").trim()
+          : ""
+      );
+      const submitDisplay = String(candidate.submit_display || "").trim();
+      const note = String(candidate.advisor_note || "").trim();
+      return `
+        <li>
+          <div class="candidate-head">
+            <div class="candidate-flag">${escapeHtml(candidate.flag || "-")}</div>
+            <span class="${badgeClass(candidate.status)}">${escapeHtml(candidate.status || "pending")}</span>
+          </div>
+          <div class="candidate-meta">
+            <span class="event-tag">advisor ${escapeHtml(candidate.advisor_decision || "insufficient")}</span>
+            ${sourceModels ? `<span class="event-tag">${escapeHtml(sourceModels)}</span>` : ""}
+          </div>
+          ${
+            note
+              ? `<div class="candidate-subtle"><strong>Advisor:</strong> ${escapeHtml(note)}</div>`
+              : ""
+          }
+          ${
+            submitDisplay
+              ? `<div class="candidate-subtle"><strong>Submit:</strong> ${escapeHtml(submitDisplay)}</div>`
+              : ""
+          }
+          ${
+            evidenceDigest
+              ? `<div class="candidate-subtle"><strong>Evidence digest:</strong> ${escapeHtml(evidenceDigest)}</div>`
+              : ""
+          }
+          ${
+            evidencePointer && evidencePointer !== evidenceDigest
+              ? `<div class="candidate-subtle"><strong>Evidence pointer:</strong> ${escapeHtml(evidencePointer)}</div>`
+              : ""
+          }
+          ${
+            evidence && evidence !== evidenceDigest && evidence !== evidencePointer
+              ? `<div class="candidate-subtle"><strong>Evidence:</strong> ${escapeHtml(evidence)}</div>`
+              : ""
+          }
+        </li>
+      `;
+    })
+    .join("");
+}
+
+function sharedFindingEntries(challenge) {
+  const raw = challenge?.shared_findings;
+  const entries = [];
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [modelSpec, finding] of Object.entries(raw)) {
+      if (!finding || typeof finding !== "object") {
+        continue;
+      }
+      const summary = String(finding.summary || finding.content || "").trim();
+      const pointerPath = String(finding.pointer_path || "").trim();
+      const digestPath = String(finding.digest_path || "").trim();
+      if (!summary && !pointerPath && !digestPath) {
+        continue;
+      }
+      entries.push({
+        modelSpec,
+        summary,
+        pointerPath,
+        digestPath,
+        kind: String(finding.kind || "finding_ref"),
+      });
+    }
+  }
+  if (entries.length) {
+    return entries.sort((left, right) => String(left.modelSpec).localeCompare(String(right.modelSpec)));
+  }
+  const legacy = String(challenge?.shared_finding || "").trim();
+  if (!legacy) {
+    return [];
+  }
+  return [
+    {
+      modelSpec: "",
+      summary: legacy,
+      pointerPath: "",
+      digestPath: "",
+      kind: "message",
+    },
+  ];
+}
+
+function renderSharedFindings(challenge) {
+  const entries = sharedFindingEntries(challenge);
+  if (!entries.length) {
+    return '<li class="empty">No shared findings yet.</li>';
+  }
+  return entries
+    .map((entry) => {
+      const modelTag = entry.modelSpec
+        ? `<span class="event-tag">${escapeHtml(shortModelName(entry.modelSpec))}</span>`
+        : "";
+      const kindTag = entry.kind ? `<span class="event-tag">${escapeHtml(entry.kind)}</span>` : "";
+      const summary = entry.summary || entry.pointerPath || entry.digestPath || "-";
+      return `
+        <li>
+          <div class="shared-finding-head">
+            ${modelTag}
+            ${kindTag}
+          </div>
+          <div class="shared-finding-summary">${escapeHtml(summary)}</div>
+          ${
+            entry.digestPath
+              ? `<div class="shared-finding-path"><strong>Digest:</strong> ${escapeHtml(entry.digestPath)}</div>`
+              : ""
+          }
+          ${
+            entry.pointerPath
+              ? `<div class="shared-finding-path"><strong>Pointer:</strong> ${escapeHtml(entry.pointerPath)}</div>`
+              : ""
+          }
+        </li>
+      `;
+    })
+    .join("");
 }
 
 function pushActivity(message, tone = "") {
@@ -335,7 +593,8 @@ function renderSelectedChallenge() {
     els.selectedLaneMeta.textContent = "Select a lane to inspect it.";
     els.coordinatorAdvisoryText.textContent = "-";
     els.laneAdvisoryText.textContent = "-";
-    els.sharedFindingText.textContent = "-";
+    els.sharedFindingList.innerHTML = '<li class="empty">No shared findings yet.</li>';
+    els.flagCandidatesList.innerHTML = '<li class="empty">No candidate flags yet.</li>';
     els.advisoryHistory.innerHTML = '<li class="empty">No advisory history yet.</li>';
     els.laneStrip.innerHTML = '<div class="empty">No challenge selected.</div>';
     els.laneFocus.innerHTML = '<div class="empty">Select a lane to inspect current activity.</div>';
@@ -354,7 +613,8 @@ function renderSelectedChallenge() {
   els.selectedChallengeMeta.textContent =
     `${selected.bucket || "challenge"} · ${challengeSummary(state.selectedChallenge, challenge)}`;
   els.coordinatorAdvisoryText.textContent = challenge.coordinator_advisor_note || "-";
-  els.sharedFindingText.textContent = challenge.shared_finding || "-";
+  els.sharedFindingList.innerHTML = renderSharedFindings(challenge);
+  els.flagCandidatesList.innerHTML = renderFlagCandidates(challenge);
   els.laneStrip.innerHTML = visibleLanes.length
     ? visibleLanes
         .map(([modelSpec, agent]) => {
@@ -391,9 +651,22 @@ function renderSelectedChallenge() {
   });
 
   const lane = state.selectedLane ? challenge.agents?.[state.selectedLane] : null;
-  els.selectedLaneMeta.textContent = lane
-    ? `${state.selectedLane} · ${lane.lifecycle || "unknown"} · step ${lane.step_count || 0}`
-    : "Select a lane to inspect it.";
+  if (lane) {
+    const meta = [
+      state.selectedLane,
+      lane.lifecycle || "unknown",
+      `step ${lane.step_count || 0}`,
+    ];
+    if (Number(lane.read_only_streak || 0) > 0) {
+      meta.push(`progress: read-only x${lane.read_only_streak}`);
+    }
+    if (lane.last_progress_kind) {
+      meta.push(`last progress: ${humanizeProgressKind(lane.last_progress_kind)}`);
+    }
+    els.selectedLaneMeta.textContent = meta.join(" · ");
+  } else {
+    els.selectedLaneMeta.textContent = "Select a lane to inspect it.";
+  }
   els.laneAdvisoryText.textContent = lane?.advisor_note || "-";
   els.laneFocus.innerHTML = lane
     ? `
@@ -504,6 +777,7 @@ function render() {
   renderSelectedChallenge();
   renderTraceSelector();
   renderTraceTable();
+  renderRunningFor();
 }
 
 async function fetchJson(url, options = {}) {
@@ -784,6 +1058,8 @@ async function main() {
   if (!startStatusStream()) {
     startStatusPolling();
   }
+  renderRunningFor();
+  setInterval(renderRunningFor, 1000);
   setInterval(() => {
     if (state.selectedTrace) {
       fetchTrace();

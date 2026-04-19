@@ -1,0 +1,963 @@
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["line_no"]` and value of type `int` on object of type `dict[str, str]`
+   --> backend/operator_ui.py:113:9
+    |
+111 |             event = {"type": "invalid_event", "raw": event}
+112 |         event.setdefault("type", "event")
+113 |         event["line_no"] = line_no
+    |         ^^^^^^^^^^^^^^^^^^^-------
+    |                            |
+    |                            Expected value of type `str`, got `int`
+114 |         events.append(event)
+    |
+info: The full type of the subscripted object is `(Any & Top[dict[Unknown, Unknown]]) | dict[str, str] | dict[str, str | Any]`
+
+error[invalid-argument-type]: Argument to bound method `get` is incorrect
+  --> backend/solver_base.py:45:33
+   |
+43 |     if isinstance(payload, dict):
+44 |         for key in ("command", "path", "filename", "url", "flag", "message", "uuid"):
+45 |             value = payload.get(key)
+   |                                 ^^^ Expected `Never`, found `Literal["command", "path", "filename", "url", "flag", "message", "uuid"]`
+46 |             if value:
+47 |                 if key == "command":
+   |
+info: Matching overload defined here
+    --> stdlib/builtins.pyi:3015:9
+     |
+3013 |     # Positional-only in dict, but not in MutableMapping
+3014 |     @overload  # type: ignore[override]
+3015 |     def get(self, key: _KT, default: None = None, /) -> _VT | None:
+     |         ^^^       -------- Parameter declared here
+3016 |         """Return the value for key if key is in the dictionary, else default."""
+     |
+info: Non-matching overloads for bound method `get`:
+info:   (self, key: _KT@dict, default: _VT@dict, /) -> _VT@dict
+info:   [_T](self, key: _KT@dict, default: _T, /) -> _VT@dict | _T
+
+error[invalid-argument-type]: Argument to function `login_password` is incorrect
+   --> pull_challenges.py:335:60
+    |
+333 |         else:
+334 |             print(f"Logging in to {base_url} as {username}...")
+335 |             if not await login_password(session, base_url, username, password):
+    |                                                            ^^^^^^^^ Expected `str`, found `str | None`
+336 |                 sys.exit(1)
+337 |             print("Login successful.\n")
+    |
+info: Element `None` of this union is not assignable to `str`
+info: Function defined here
+  --> pull_challenges.py:46:11
+   |
+46 | async def login_password(session: aiohttp.ClientSession, base_url: str, username: str, password: str) -> bool:
+   |           ^^^^^^^^^^^^^^                                                ------------- Parameter declared here
+47 |     """Login to CTFd and populate session cookies. Returns True on success."""
+48 |     # Fetch login page to get nonce + initial cookies
+   |
+
+error[invalid-argument-type]: Argument to function `login_password` is incorrect
+   --> pull_challenges.py:335:70
+    |
+333 |         else:
+334 |             print(f"Logging in to {base_url} as {username}...")
+335 |             if not await login_password(session, base_url, username, password):
+    |                                                                      ^^^^^^^^ Expected `str`, found `str | None`
+336 |                 sys.exit(1)
+337 |             print("Login successful.\n")
+    |
+info: Element `None` of this union is not assignable to `str`
+info: Function defined here
+  --> pull_challenges.py:46:11
+   |
+46 | async def login_password(session: aiohttp.ClientSession, base_url: str, username: str, password: str) -> bool:
+   |           ^^^^^^^^^^^^^^                                                               ------------- Parameter declared here
+47 |     """Login to CTFd and populate session cookies. Returns True on success."""
+48 |     # Fetch login page to get nonce + initial cookies
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_artifacts.py:476:9
+    |
+474 |     swarm = ChallengeSwarm(
+475 |         challenge_dir=str(challenge_dir),
+476 |         meta=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `ChallengeMeta`, found `object`
+477 |         ctfd=object(),  # type: ignore[arg-type]
+478 |         cost_tracker=object(),  # type: ignore[arg-type]
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_artifacts.py:477:9
+    |
+475 |         challenge_dir=str(challenge_dir),
+476 |         meta=object(),  # type: ignore[arg-type]
+477 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+478 |         cost_tracker=object(),  # type: ignore[arg-type]
+479 |         settings=object(),  # type: ignore[arg-type]
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_artifacts.py:478:9
+    |
+476 |         meta=object(),  # type: ignore[arg-type]
+477 |         ctfd=object(),  # type: ignore[arg-type]
+478 |         cost_tracker=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^^^^^^^^^ Expected `CostTracker`, found `object`
+479 |         settings=object(),  # type: ignore[arg-type]
+480 |         model_specs=[],
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_artifacts.py:479:9
+    |
+477 |         ctfd=object(),  # type: ignore[arg-type]
+478 |         cost_tracker=object(),  # type: ignore[arg-type]
+479 |         settings=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^^^^^ Expected `Settings`, found `object`
+480 |         model_specs=[],
+481 |     )
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_claude_advisor.py:107:9
+    |
+105 |       return ChallengeSwarm(
+106 |           challenge_dir=str(tmp_path / "challenge"),
+107 | /         meta=SimpleNamespace(
+108 | |             name="advisor-test",
+109 | |             category="web",
+110 | |             value=300,
+111 | |             description="Investigate the shared login surface and recover the real flag.",
+112 | |             connection_info="https://ctf.example/challenge",
+113 | |             hints=[{"content": "The admin route is not linked from the main page."}],
+114 | |         ),
+    | |_________^ Expected `ChallengeMeta`, found `SimpleNamespace`
+115 |           ctfd=object(),  # type: ignore[arg-type]
+116 |           cost_tracker=CostTracker(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_claude_advisor.py:115:9
+    |
+113 |             hints=[{"content": "The admin route is not linked from the main page."}],
+114 |         ),
+115 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+116 |         cost_tracker=CostTracker(),
+117 |         settings=object(),  # type: ignore[arg-type]
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_claude_advisor.py:117:9
+    |
+115 |         ctfd=object(),  # type: ignore[arg-type]
+116 |         cost_tracker=CostTracker(),
+117 |         settings=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^^^^^ Expected `Settings`, found `object`
+118 |         model_specs=["codex/gpt-5.4"],
+119 |         coordinator_inbox=asyncio.Queue(),
+    |
+
+error[invalid-argument-type]: Argument to function `_validate_runtime_auth` is incorrect
+   --> tests/test_claude_advisor.py:126:13
+    |
+124 |     with pytest.raises(ValueError, match="Claude solver lanes are disabled"):
+125 |         _validate_runtime_auth(
+126 |             SimpleNamespace(use_home_auth=False),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `Settings`, found `SimpleNamespace`
+127 |             ["claude-sdk/claude-opus-4-6/medium"],
+128 |             "codex",
+    |
+info: Function defined here
+   --> backend/cli.py:713:5
+    |
+713 | def _validate_runtime_auth(
+    |     ^^^^^^^^^^^^^^^^^^^^^^
+714 |     settings: Settings,
+    |     ------------------ Parameter declared here
+715 |     model_specs: list[str],
+716 |     coordinator_backend: str,
+    |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["codex/gpt-5.4"]` and value of type `_FakeLaneSolver` on object of type `dict[str, SolverProtocol]`
+   --> tests/test_claude_advisor.py:156:5
+    |
+154 |     advisor = _FakeAdvisor(lane_reply="Pivot from broad grep to the shared login artifact first.")
+155 |     swarm._advisors["codex"] = advisor
+156 |     swarm.solvers["codex/gpt-5.4"] = _FakeLaneSolver()
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------------
+    |                                      |
+    |                                      Expected value of type `SolverProtocol`, got `_FakeLaneSolver`
+157 |     swarm.solvers["gemini/gemini-2.5-flash"] = _FakeLaneSolver()
+158 |     manifest_path = swarm.shared_artifacts_dir / "manifest.md"
+    |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["gemini/gemini-2.5-flash"]` and value of type `_FakeLaneSolver` on object of type `dict[str, SolverProtocol]`
+   --> tests/test_claude_advisor.py:157:5
+    |
+155 |     swarm._advisors["codex"] = advisor
+156 |     swarm.solvers["codex/gpt-5.4"] = _FakeLaneSolver()
+157 |     swarm.solvers["gemini/gemini-2.5-flash"] = _FakeLaneSolver()
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------------
+    |                                                |
+    |                                                Expected value of type `SolverProtocol`, got `_FakeLaneSolver`
+158 |     manifest_path = swarm.shared_artifacts_dir / "manifest.md"
+159 |     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    |
+
+error[unresolved-attribute]: Attribute `qsize` is not defined on `None` in union `Queue[Unknown] | None`
+   --> tests/test_claude_advisor.py:181:16
+    |
+179 |     assert swarm.lane_advisor_notes["codex/gpt-5.4"] == swarm.last_advisor_note
+180 |     assert swarm.advisor_lane_hint_count == 1
+181 |     assert not swarm.coordinator_inbox.qsize()
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+182 |     assert not swarm.solvers["codex/gpt-5.4"].bumped
+183 |     assert swarm.solvers["codex/gpt-5.4"].advisory_bumped
+    |
+
+error[unresolved-attribute]: Object of type `SolverProtocol` has no attribute `bumped`
+   --> tests/test_claude_advisor.py:182:16
+    |
+180 |     assert swarm.advisor_lane_hint_count == 1
+181 |     assert not swarm.coordinator_inbox.qsize()
+182 |     assert not swarm.solvers["codex/gpt-5.4"].bumped
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+183 |     assert swarm.solvers["codex/gpt-5.4"].advisory_bumped
+184 |     assert (
+    |
+
+error[unresolved-attribute]: Object of type `SolverProtocol` has no attribute `advisory_bumped`
+   --> tests/test_claude_advisor.py:183:12
+    |
+181 |     assert not swarm.coordinator_inbox.qsize()
+182 |     assert not swarm.solvers["codex/gpt-5.4"].bumped
+183 |     assert swarm.solvers["codex/gpt-5.4"].advisory_bumped
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+184 |     assert (
+185 |         "Private advisor note for this lane"
+    |
+
+error[unresolved-attribute]: Object of type `SolverProtocol` has no attribute `advisory_bumped`
+   --> tests/test_claude_advisor.py:186:12
+    |
+184 |     assert (
+185 |         "Private advisor note for this lane"
+186 |         in swarm.solvers["codex/gpt-5.4"].advisory_bumped[0]
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+187 |     )
+188 |     assert advisor.lane_calls
+    |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["codex/gpt-5.4"]` and value of type `_FakeLaneSolver` on object of type `dict[str, SolverProtocol]`
+   --> tests/test_claude_advisor.py:200:5
+    |
+198 |     advisor = _FakeAdvisor(lane_reply="Read the shared bundle before another broad search.")
+199 |     swarm._advisors["codex"] = advisor
+200 |     swarm.solvers["codex/gpt-5.4"] = _FakeLaneSolver()
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------------
+    |                                      |
+    |                                      Expected value of type `SolverProtocol`, got `_FakeLaneSolver`
+201 |     manifest_path = swarm.shared_artifacts_dir / "manifest.md"
+202 |     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["codex/gpt-5.4"]` and value of type `_FakeLaneSolver` on object of type `dict[str, SolverProtocol]`
+   --> tests/test_claude_advisor.py:227:5
+    |
+225 |     advisor = _FakeAdvisor(lane_reply="Validate the sibling hypothesis before another broad grep.")
+226 |     swarm._advisors["codex"] = advisor
+227 |     swarm.solvers["codex/gpt-5.4"] = _FakeLaneSolver()
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-----------------
+    |                                      |
+    |                                      Expected value of type `SolverProtocol`, got `_FakeLaneSolver`
+228 |     manifest_path = swarm.shared_artifacts_dir / "manifest.md"
+229 |     manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    |
+
+error[unresolved-attribute]: Object of type `SolverProtocol` has no attribute `advisory_bumped`
+   --> tests/test_claude_advisor.py:246:12
+    |
+244 |     assert advisor.lane_calls[0]["artifact_previews"] == ""
+245 |     assert advisor.lane_calls[0]["manifest_excerpt"]
+246 |     assert swarm.solvers["codex/gpt-5.4"].advisory_bumped
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+
+error[invalid-assignment]: Object of type `def fake_query(prompt: str) -> CoroutineType[Any, Any, str]` is not assignable to attribute `_query` of type `def _query(self, prompt: str) -> CoroutineType[Any, Any, str]`
+   --> tests/test_claude_advisor.py:300:5
+    |
+298 |         return "Check whether the route is auth-gated."
+299 |
+300 |     advisor._query = fake_query  # type: ignore[method-assign]
+    |     ^^^^^^^^^^^^^^
+301 |
+302 |     result = await advisor.annotate_finding(
+    |
+info: Implicit shadowing of function `_query`. Add an annotation to make it explicit if this is intentional
+
+error[invalid-assignment]: Object of type `def fake_query(prompt: str) -> CoroutineType[Any, Any, str]` is not assignable to attribute `_query` of type `def _query(self, prompt: str) -> CoroutineType[Any, Any, str]`
+   --> tests/test_claude_advisor.py:322:5
+    |
+320 |         return "Keep the bump focused on auth gates."
+321 |
+322 |     advisor._query = fake_query  # type: ignore[method-assign]
+    |     ^^^^^^^^^^^^^^
+323 |
+324 |     result = await advisor.annotate_coordinator_message(
+    |
+info: Implicit shadowing of function `_query`. Add an annotation to make it explicit if this is intentional
+
+error[invalid-assignment]: Object of type `def fake_query(prompt: str) -> CoroutineType[Any, Any, str]` is not assignable to attribute `_query` of type `def _query(self, prompt: str) -> CoroutineType[Any, Any, str]`
+   --> tests/test_claude_advisor.py:348:5
+    |
+346 |         return "Read the shared login artifact before another broad grep."
+347 |
+348 |     advisor._query = fake_query  # type: ignore[method-assign]
+    |     ^^^^^^^^^^^^^^
+349 |
+350 |     result = await advisor.suggest_lane_hint(
+    |
+info: Implicit shadowing of function `_query`. Add an annotation to make it explicit if this is intentional
+
+error[invalid-argument-type]: Argument to bound method `__init__` is incorrect
+  --> tests/test_codex_solver.py:16:9
+   |
+14 |         challenge_dir=".",
+15 |         meta=ChallengeMeta(name="test"),
+16 |         ctfd=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+17 |         cost_tracker=object(),  # type: ignore[arg-type]
+18 |         settings=object(),
+   |
+info: Method defined here
+   --> backend/agents/codex_solver.py:212:9
+    |
+210 |     """Codex solver speaking the actual app-server JSON-RPC 2.0 protocol."""
+211 |
+212 |     def __init__(
+    |         ^^^^^^^^
+213 |         self,
+214 |         model_spec: str,
+215 |         challenge_dir: str,
+216 |         meta: ChallengeMeta,
+217 |         ctfd: CTFdClient,
+    |         ---------------- Parameter declared here
+218 |         cost_tracker: CostTracker,
+219 |         settings: object,
+    |
+
+error[invalid-argument-type]: Argument to bound method `__init__` is incorrect
+  --> tests/test_codex_solver.py:17:9
+   |
+15 |         meta=ChallengeMeta(name="test"),
+16 |         ctfd=object(),  # type: ignore[arg-type]
+17 |         cost_tracker=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^^^^^^^^^ Expected `CostTracker`, found `object`
+18 |         settings=object(),
+19 |         no_submit=True,
+   |
+info: Method defined here
+   --> backend/agents/codex_solver.py:212:9
+    |
+210 |     """Codex solver speaking the actual app-server JSON-RPC 2.0 protocol."""
+211 |
+212 |     def __init__(
+    |         ^^^^^^^^
+213 |         self,
+214 |         model_spec: str,
+    |
+   ::: backend/agents/codex_solver.py:218:9
+    |
+216 |         meta: ChallengeMeta,
+217 |         ctfd: CTFdClient,
+218 |         cost_tracker: CostTracker,
+    |         ------------------------- Parameter declared here
+219 |         settings: object,
+220 |         cancel_event: asyncio.Event | None = None,
+    |
+
+error[invalid-argument-type]: Argument to function `_run_coordinator` is incorrect
+  --> tests/test_coordinator_fallback.py:44:9
+   |
+43 |     await _run_coordinator(
+44 |         settings=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^^^^^ Expected `Settings`, found `object`
+45 |         model_specs=["codex/gpt-5.4"],
+46 |         challenges_dir="challenges",
+   |
+info: Function defined here
+   --> backend/cli.py:877:11
+    |
+877 | async def _run_coordinator(
+    |           ^^^^^^^^^^^^^^^^
+878 |     settings: Settings,
+    |     ------------------ Parameter declared here
+879 |     model_specs: list[str],
+880 |     challenges_dir: str,
+    |
+
+error[invalid-argument-type]: Argument to function `_run_coordinator` is incorrect
+  --> tests/test_coordinator_fallback.py:81:9
+   |
+80 |     await _run_coordinator(
+81 |         settings=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^^^^^ Expected `Settings`, found `object`
+82 |         model_specs=["codex/gpt-5.4"],
+83 |         challenges_dir="challenges",
+   |
+info: Function defined here
+   --> backend/cli.py:877:11
+    |
+877 | async def _run_coordinator(
+    |           ^^^^^^^^^^^^^^^^
+878 |     settings: Settings,
+    |     ------------------ Parameter declared here
+879 |     model_specs: list[str],
+880 |     challenges_dir: str,
+    |
+
+error[invalid-argument-type]: Argument to function `run_codex_coordinator` is incorrect
+   --> tests/test_coordinator_fallback.py:162:9
+    |
+161 |     result = await run_codex_coordinator(
+162 |         settings=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^^^^^ Expected `Settings`, found `object`
+163 |         model_specs=["codex/gpt-5.4-mini"],
+164 |         challenges_root="challenges",
+    |
+info: Function defined here
+   --> backend/agents/codex_coordinator.py:328:11
+    |
+328 | async def run_codex_coordinator(
+    |           ^^^^^^^^^^^^^^^^^^^^^
+329 |     settings: Settings,
+    |     ------------------ Parameter declared here
+330 |     model_specs: list[str] | None = None,
+331 |     challenges_root: str = "challenges",
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_coordinator_queue.py:64:9
+   |
+62 | async def test_do_spawn_swarm_queues_when_capacity_is_full() -> None:
+63 |     deps = CoordinatorDeps(
+64 |         ctfd=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+65 |         cost_tracker=CostTracker(),
+66 |         settings=object(),
+   |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["challenge-a"]` and value of type `_FakeTask` on object of type `dict[str, Task[Unknown]]`
+  --> tests/test_coordinator_queue.py:70:5
+   |
+68 |     )
+69 |     deps.swarms["challenge-a"] = _FakeSwarm()
+70 |     deps.swarm_tasks["challenge-a"] = _FakeTask(False)  # type: ignore[assignment]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^----------------
+   |                                       |
+   |                                       Expected value of type `Task[Unknown]`, got `_FakeTask`
+71 |
+72 |     result = await do_spawn_swarm(deps, "challenge-b")
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_coordinator_queue.py:82:9
+   |
+80 | async def test_fill_swarm_capacity_starts_queued_challenges_in_fifo_order(monkeypatch) -> None:
+81 |     deps = CoordinatorDeps(
+82 |         ctfd=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+83 |         cost_tracker=CostTracker(),
+84 |         settings=object(),
+   |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `str` and value of type `_FakeTask` on object of type `dict[str, Task[Unknown]]`
+  --> tests/test_coordinator_queue.py:95:9
+   |
+93 |         spawned.append(challenge_name)
+94 |         deps_obj.swarms[challenge_name] = _FakeSwarm()
+95 |         deps_obj.swarm_tasks[challenge_name] = _FakeTask(False)  # type: ignore[assignment]
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^----------------
+   |                                                |
+   |                                                Expected value of type `Task[Unknown]`, got `_FakeTask`
+96 |         return f"spawned {challenge_name}"
+   |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["challenge-b"]` and value of type `_FakeTask` on object of type `dict[str, Task[Unknown]]`
+   --> tests/test_coordinator_queue.py:106:5
+    |
+104 |     assert list(deps.pending_swarm_queue) == ["challenge-c"]
+105 |
+106 |     deps.swarm_tasks["challenge-b"] = _FakeTask(True)  # type: ignore[assignment]
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^---------------
+    |                                       |
+    |                                       Expected value of type `Task[Unknown]`, got `_FakeTask`
+107 |     retired = _retire_finished_swarms(deps)
+108 |     second = await _fill_swarm_capacity(deps)
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_coordinator_queue.py:119:9
+    |
+117 |   async def test_do_fetch_challenges_sorts_by_solves_descending() -> None:
+118 |       deps = CoordinatorDeps(
+119 | /         ctfd=_FakeCTFd(
+120 | |             [
+121 | |                 {"name": "charlie", "category": "misc", "value": 100, "solves": 3, "description": ""},
+122 | |                 {"name": "alpha", "category": "misc", "value": 100, "solves": 11, "description": ""},
+123 | |                 {"name": "bravo", "category": "misc", "value": 100, "solves": 11, "description": ""},
+124 | |             ],
+125 | |             solved={"bravo"},
+126 | |         ),
+    | |_________^ Expected `CTFdClient`, found `_FakeCTFd`
+127 |           cost_tracker=CostTracker(),
+128 |           settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_coordinator_queue.py:140:9
+    |
+138 |   async def test_do_fetch_challenges_includes_local_only_entries() -> None:
+139 |       deps = CoordinatorDeps(
+140 | /         ctfd=_FakeCTFd(
+141 | |             [
+142 | |                 {"name": "ctfd-only", "category": "misc", "value": 100, "solves": 5, "description": ""},
+143 | |             ],
+144 | |             solved=set(),
+145 | |         ),
+    | |_________^ Expected `CTFdClient`, found `_FakeCTFd`
+146 |           cost_tracker=CostTracker(),
+147 |           settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_coordinator_queue.py:166:9
+    |
+164 | async def test_do_fetch_challenges_falls_back_to_local_when_ctfd_is_unreachable() -> None:
+165 |     deps = CoordinatorDeps(
+166 |         ctfd=_FailingCTFd([]),
+    |         ^^^^^^^^^^^^^^^^^^^^^ Expected `CTFdClient`, found `_FailingCTFd`
+167 |         cost_tracker=CostTracker(),
+168 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_coordinator_queue.py:195:9
+    |
+193 |   async def test_auto_spawn_unsolved_prefers_most_solved_challenges(monkeypatch) -> None:
+194 |       deps = CoordinatorDeps(
+195 | /         ctfd=_FakeCTFd(
+196 | |             [
+197 | |                 {"name": "easy-but-popular", "solves": 120},
+198 | |                 {"name": "mid", "solves": 45},
+199 | |                 {"name": "hard", "solves": 3},
+200 | |             ]
+201 | |         ),
+    | |_________^ Expected `CTFdClient`, found `_FakeCTFd`
+202 |           cost_tracker=CostTracker(),
+203 |           settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_coordinator_queue.py:225:9
+    |
+223 |   async def test_auto_spawn_unsolved_includes_local_preloaded_challenges(monkeypatch) -> None:
+224 |       deps = CoordinatorDeps(
+225 | /         ctfd=_FakeCTFd(
+226 | |             [
+227 | |                 {"name": "ctfd-visible", "solves": 12},
+228 | |                 {"name": "another-ctfd", "solves": 2},
+229 | |             ]
+230 | |         ),
+    | |_________^ Expected `CTFdClient`, found `_FakeCTFd`
+231 |           cost_tracker=CostTracker(),
+232 |           settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_coordinator_status.py:37:9
+   |
+35 | def test_status_snapshot_reports_active_and_finished_swarms() -> None:
+36 |     deps = CoordinatorDeps(
+37 |         ctfd=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+38 |         cost_tracker=CostTracker(),
+39 |         settings=object(),
+   |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["challenge-a"]` and value of type `_FakeTask` on object of type `dict[str, Task[Unknown]]`
+  --> tests/test_coordinator_status.py:96:5
+   |
+94 |     )
+95 |
+96 |     deps.swarm_tasks["challenge-a"] = _FakeTask(False)  # type: ignore[assignment]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^----------------
+   |                                       |
+   |                                       Expected value of type `Task[Unknown]`, got `_FakeTask`
+97 |     deps.swarm_tasks["challenge-b"] = _FakeTask(True)  # type: ignore[assignment]
+98 |     deps.pending_swarm_queue.append("challenge-c")
+   |
+
+error[invalid-assignment]: Invalid subscript assignment with key of type `Literal["challenge-b"]` and value of type `_FakeTask` on object of type `dict[str, Task[Unknown]]`
+  --> tests/test_coordinator_status.py:97:5
+   |
+96 |     deps.swarm_tasks["challenge-a"] = _FakeTask(False)  # type: ignore[assignment]
+97 |     deps.swarm_tasks["challenge-b"] = _FakeTask(True)  # type: ignore[assignment]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^---------------
+   |                                       |
+   |                                       Expected value of type `Task[Unknown]`, got `_FakeTask`
+98 |     deps.pending_swarm_queue.append("challenge-c")
+99 |     deps.pending_swarm_set.add("challenge-c")
+   |
+
+error[invalid-assignment]: Object of type `_TimeoutClient` is not assignable to attribute `_client` of type `AsyncClient | None`
+  --> tests/test_ctfd.py:19:5
+   |
+17 | async def test_ctfd_get_includes_path_on_timeout() -> None:
+18 |     client = CTFdClient(base_url="https://ctfd.example", token="token")
+19 |     client._client = _TimeoutClient()  # type: ignore[assignment]
+   |     ^^^^^^^^^^^^^^
+20 |
+21 |     with pytest.raises(RuntimeError, match=r"CTFd GET timed out: /api/v1/challenges\?per_page=500"):
+   |
+
+error[invalid-assignment]: Object of type `def _boom(_path: str) -> CoroutineType[Any, Any, Unknown]` is not assignable to attribute `_get` of type `def _get(self, path: str) -> CoroutineType[Any, Any, Any]`
+  --> tests/test_ctfd.py:32:5
+   |
+30 |         raise httpx.ConnectError("All connection attempts failed")
+31 |
+32 |     client._get = _boom  # type: ignore[method-assign]
+   |     ^^^^^^^^^^^
+33 |
+34 |     with caplog.at_level(logging.WARNING):
+   |
+info: Implicit shadowing of function `_get`. Add an annotation to make it explicit if this is intentional
+
+error[invalid-argument-type]: Argument to bound method `__init__` is incorrect
+  --> tests/test_gemini_solver.py:17:9
+   |
+15 |         challenge_dir="challenge-dir",
+16 |         meta=ChallengeMeta(name="chal"),
+17 |         ctfd=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+18 |         cost_tracker=CostTracker(),
+19 |         settings=SimpleNamespace(sandbox_image="ctf-sandbox"),
+   |
+info: Method defined here
+  --> backend/agents/gemini_solver.py:66:9
+   |
+64 |     """Gemini CLI solver with Docker sandbox redirection via hooks."""
+65 |
+66 |     def __init__(
+   |         ^^^^^^^^
+67 |         self,
+68 |         model_spec: str,
+69 |         challenge_dir: str,
+70 |         meta: ChallengeMeta,
+71 |         ctfd: CTFdClient,
+   |         ---------------- Parameter declared here
+72 |         cost_tracker: CostTracker,
+73 |         settings: object,
+   |
+
+error[invalid-argument-type]: Argument to bound method `__init__` is incorrect
+  --> tests/test_gemini_solver.py:84:9
+   |
+82 |         challenge_dir="challenge-dir",
+83 |         meta=ChallengeMeta(name="chal"),
+84 |         ctfd=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+85 |         cost_tracker=CostTracker(),
+86 |         settings=SimpleNamespace(sandbox_image="ctf-sandbox"),
+   |
+info: Method defined here
+  --> backend/agents/gemini_solver.py:66:9
+   |
+64 |     """Gemini CLI solver with Docker sandbox redirection via hooks."""
+65 |
+66 |     def __init__(
+   |         ^^^^^^^^
+67 |         self,
+68 |         model_spec: str,
+69 |         challenge_dir: str,
+70 |         meta: ChallengeMeta,
+71 |         ctfd: CTFdClient,
+   |         ---------------- Parameter declared here
+72 |         cost_tracker: CostTracker,
+73 |         settings: object,
+   |
+
+error[invalid-argument-type]: Argument to bound method `__init__` is incorrect
+   --> tests/test_gemini_solver.py:146:9
+    |
+144 |         challenge_dir="challenge-dir",
+145 |         meta=ChallengeMeta(name="chal"),
+146 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+147 |         cost_tracker=CostTracker(),
+148 |         settings=SimpleNamespace(sandbox_image="ctf-sandbox"),
+    |
+info: Method defined here
+  --> backend/agents/gemini_solver.py:66:9
+   |
+64 |     """Gemini CLI solver with Docker sandbox redirection via hooks."""
+65 |
+66 |     def __init__(
+   |         ^^^^^^^^
+67 |         self,
+68 |         model_spec: str,
+69 |         challenge_dir: str,
+70 |         meta: ChallengeMeta,
+71 |         ctfd: CTFdClient,
+   |         ---------------- Parameter declared here
+72 |         cost_tracker: CostTracker,
+73 |         settings: object,
+   |
+
+error[invalid-argument-type]: Argument to bound method `__init__` is incorrect
+   --> tests/test_gemini_solver.py:166:9
+    |
+164 |         challenge_dir="challenge-dir",
+165 |         meta=ChallengeMeta(name="chal"),
+166 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+167 |         cost_tracker=CostTracker(),
+168 |         settings=SimpleNamespace(sandbox_image="ctf-sandbox"),
+    |
+info: Method defined here
+  --> backend/agents/gemini_solver.py:66:9
+   |
+64 |     """Gemini CLI solver with Docker sandbox redirection via hooks."""
+65 |
+66 |     def __init__(
+   |         ^^^^^^^^
+67 |         self,
+68 |         model_spec: str,
+69 |         challenge_dir: str,
+70 |         meta: ChallengeMeta,
+71 |         ctfd: CTFdClient,
+   |         ---------------- Parameter declared here
+72 |         cost_tracker: CostTracker,
+73 |         settings: object,
+   |
+
+error[invalid-assignment]: Object of type `SimpleNamespace` is not assignable to attribute `_proc` of type `Process | None`
+   --> tests/test_gemini_solver.py:171:5
+    |
+169 |     )
+170 |     solver._runtime.mark_ready()
+171 |     solver._proc = SimpleNamespace(returncode=None)
+    |     ^^^^^^^^^^^^
+172 |     state = {"stalled_reason": ""}
+173 |     terminated: list[bool] = []
+    |
+
+error[invalid-assignment]: Object of type `Literal[1]` is not assignable to attribute `returncode` on type `Process | None`
+   --> tests/test_gemini_solver.py:182:9
+    |
+180 |     async def fake_terminate() -> None:
+181 |         terminated.append(True)
+182 |         solver._proc.returncode = 1
+    |         ^^^^^^^^^^^^^^^^^^^^^^^
+183 |
+184 |     monkeypatch.setattr(solver, "_terminate_proc", fake_terminate)
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:118:9
+    |
+116 | def test_bump_endpoint_targets_requested_lane() -> None:
+117 |     deps = CoordinatorDeps(
+118 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+119 |         cost_tracker=CostTracker(),
+120 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:153:9
+    |
+151 | def test_bump_endpoint_falls_back_to_legacy_bump() -> None:
+152 |     deps = CoordinatorDeps(
+153 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+154 |         cost_tracker=CostTracker(),
+155 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument to bound method `__init__` is incorrect
+   --> tests/test_operator_endpoints.py:158:68
+    |
+156 |     )
+157 |     solver = _LegacyFakeSolver()
+158 |     deps.swarms["Midnight Roulette"] = _FakeSwarm("codex/gpt-5.4", solver)
+    |                                                                    ^^^^^^ Expected `_FakeSolver`, found `_LegacyFakeSolver`
+159 |
+160 |     async def _exercise() -> tuple[str, dict]:
+    |
+info: Method defined here
+  --> tests/test_operator_endpoints.py:32:9
+   |
+31 | class _FakeSwarm:
+32 |     def __init__(self, model_spec: str, solver: _FakeSolver) -> None:
+   |         ^^^^^^^^                        ------------------- Parameter declared here
+33 |         self.solvers = {model_spec: solver}
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:187:9
+    |
+185 | def test_bump_endpoint_rejects_missing_fields() -> None:
+186 |     deps = CoordinatorDeps(
+187 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+188 |         cost_tracker=CostTracker(),
+189 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:210:9
+    |
+208 | def test_ui_endpoint_serves_browser_console() -> None:
+209 |     deps = CoordinatorDeps(
+210 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+211 |         cost_tracker=CostTracker(),
+212 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:233:9
+    |
+231 | def test_status_stream_endpoint_emits_sse_payload() -> None:
+232 |     deps = CoordinatorDeps(
+233 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+234 |         cost_tracker=CostTracker(),
+235 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:257:9
+    |
+255 | def test_trace_endpoints_list_and_read_matching_lane_files(tmp_path, monkeypatch) -> None:
+256 |     deps = CoordinatorDeps(
+257 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+258 |         cost_tracker=CostTracker(),
+259 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:342:9
+    |
+340 | def test_trace_files_do_not_mix_codex_and_codex_spark(tmp_path, monkeypatch) -> None:
+341 |     deps = CoordinatorDeps(
+342 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+343 |         cost_tracker=CostTracker(),
+344 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:384:9
+    |
+382 | def test_trace_files_do_not_mix_codex_and_codex_mini(tmp_path, monkeypatch) -> None:
+383 |     deps = CoordinatorDeps(
+384 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+385 |         cost_tracker=CostTracker(),
+386 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+   --> tests/test_operator_endpoints.py:426:9
+    |
+424 | def test_advisories_endpoint_returns_recent_unique_lane_notes(tmp_path, monkeypatch) -> None:
+425 |     deps = CoordinatorDeps(
+426 |         ctfd=object(),  # type: ignore[arg-type]
+    |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+427 |         cost_tracker=CostTracker(),
+428 |         settings=object(),
+    |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_poller.py:17:25
+   |
+16 | def test_poller_uses_exponential_backoff_without_disabling() -> None:
+17 |     poller = CTFdPoller(ctfd=_FakeCTFd(), interval_s=5.0)
+   |                         ^^^^^^^^^^^^^^^^ Expected `CTFdClient`, found `_FakeCTFd`
+18 |
+19 |     poller._record_poll_failure(RuntimeError("offline"))
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_poller.py:31:25
+   |
+30 | def test_poller_success_resets_failure_count_and_backoff() -> None:
+31 |     poller = CTFdPoller(ctfd=_FakeCTFd(), interval_s=5.0)
+   |                         ^^^^^^^^^^^^^^^^ Expected `CTFdClient`, found `_FakeCTFd`
+32 |
+33 |     poller._record_poll_failure(RuntimeError("offline"))
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_poller.py:46:25
+   |
+45 | def test_poller_suppresses_repeated_warning_noise(caplog) -> None:
+46 |     poller = CTFdPoller(ctfd=_FakeCTFd(), interval_s=5.0)
+   |                         ^^^^^^^^^^^^^^^^ Expected `CTFdClient`, found `_FakeCTFd`
+47 |
+48 |     with caplog.at_level(logging.WARNING):
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_solve_artifacts.py:66:9
+   |
+64 |         challenge_dir=str(challenge_dir),
+65 |         meta=ChallengeMeta(name="challenge-a", category="web", value=100),
+66 |         ctfd=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^ Expected `CTFdClient`, found `object`
+67 |         cost_tracker=CostTracker(),
+68 |         settings=object(),  # type: ignore[arg-type]
+   |
+
+error[invalid-argument-type]: Argument is incorrect
+  --> tests/test_solve_artifacts.py:68:9
+   |
+66 |         ctfd=object(),  # type: ignore[arg-type]
+67 |         cost_tracker=CostTracker(),
+68 |         settings=object(),  # type: ignore[arg-type]
+   |         ^^^^^^^^^^^^^^^^^ Expected `Settings`, found `object`
+69 |         model_specs=["codex/gpt-5.4"],
+70 |     )
+   |
+
+error[invalid-argument-type]: Argument to bound method `_persist_solved_artifacts` is incorrect
+  --> tests/test_solve_artifacts.py:84:13
+   |
+82 |         swarm._persist_solved_artifacts(
+83 |             model_spec="codex/gpt-5.4",
+84 |             solver=_FakeSolver(workspace_dir),
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Expected `SolverProtocol`, found `_FakeSolver`
+85 |             result=result,
+86 |         )
+   |
+info: Method defined here
+   --> backend/agents/swarm.py:696:15
+    |
+694 |         )
+695 |
+696 |     async def _persist_solved_artifacts(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^
+697 |         self,
+698 |         *,
+699 |         model_spec: str,
+700 |         solver: SolverProtocol,
+    |         ---------------------- Parameter declared here
+701 |         result: SolverResult,
+702 |     ) -> None:
+    |
+
+Found 66 diagnostics

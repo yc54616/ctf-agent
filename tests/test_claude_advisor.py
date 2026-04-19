@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
+from backend.agents.advisor_base import ADVISOR_SYSTEM_PROMPT, CandidateReview
 from backend.agents.codex_advisor import CodexAdvisor
 from backend.agents.swarm import ChallengeSwarm
 from backend.cli import _validate_runtime_auth
 from backend.cost_tracker import CostTracker
+from backend.message_bus import SharedFindingRef
+from backend.prompts import ChallengeMeta
 
 
 class _FakeAdvisor:
@@ -16,9 +20,11 @@ class _FakeAdvisor:
         self.finding_reply = finding_reply
         self.coordinator_reply = coordinator_reply
         self.lane_reply = lane_reply
+        self.flag_review = CandidateReview()
         self.finding_calls: list[dict[str, str]] = []
         self.coordinator_calls: list[dict[str, str]] = []
         self.lane_calls: list[dict[str, str]] = []
+        self.flag_calls: list[dict[str, str]] = []
 
     async def annotate_finding(
         self,
@@ -78,6 +84,26 @@ class _FakeAdvisor:
         )
         return self.lane_reply
 
+    async def review_flag_candidate(
+        self,
+        *,
+        source_model: str,
+        challenge_brief: str,
+        flag: str,
+        evidence: str,
+        sibling_insights: str,
+    ) -> CandidateReview:
+        self.flag_calls.append(
+            {
+                "source_model": source_model,
+                "challenge_brief": challenge_brief,
+                "flag": flag,
+                "evidence": evidence,
+                "sibling_insights": sibling_insights,
+            }
+        )
+        return self.flag_review
+
 
 class _FakeLaneSolver:
     def __init__(self, lifecycle: str = "idle") -> None:
@@ -104,7 +130,7 @@ class _FakeLaneSolver:
 def _make_swarm(tmp_path) -> ChallengeSwarm:
     return ChallengeSwarm(
         challenge_dir=str(tmp_path / "challenge"),
-        meta=SimpleNamespace(
+        meta=ChallengeMeta(
             name="advisor-test",
             category="web",
             value=300,
@@ -112,19 +138,25 @@ def _make_swarm(tmp_path) -> ChallengeSwarm:
             connection_info="https://ctf.example/challenge",
             hints=[{"content": "The admin route is not linked from the main page."}],
         ),
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
-        settings=object(),  # type: ignore[arg-type]
+        settings=cast(Any, object()),
         model_specs=["codex/gpt-5.4"],
         coordinator_inbox=asyncio.Queue(),
     )
 
 
+def test_advisor_system_prompt_stays_compact() -> None:
+    assert "NO_ADVICE" in ADVISOR_SYSTEM_PROMPT
+    assert "Do not call tools." in ADVISOR_SYSTEM_PROMPT
+    assert len(ADVISOR_SYSTEM_PROMPT) < 900
+
+
 def test_validate_runtime_auth_rejects_claude_solver_specs() -> None:
     with pytest.raises(ValueError, match="Claude solver lanes are disabled"):
         _validate_runtime_auth(
-            SimpleNamespace(use_home_auth=False),
-            ["claude-sdk/claude-opus-4-6/medium"],
+            cast(Any, SimpleNamespace(use_home_auth=False)),
+            ["claude-sdk/claude-opus-4-7/medium"],
             "codex",
         )
 
@@ -153,8 +185,8 @@ async def test_lane_listener_adds_private_hint_without_reposting_to_bus(tmp_path
     swarm = _make_swarm(tmp_path)
     advisor = _FakeAdvisor(lane_reply="Pivot from broad grep to the shared login artifact first.")
     swarm._advisors["codex"] = advisor
-    swarm.solvers["codex/gpt-5.4"] = _FakeLaneSolver()
-    swarm.solvers["gemini/gemini-2.5-flash"] = _FakeLaneSolver()
+    swarm.solvers["codex/gpt-5.4"] = cast(Any, _FakeLaneSolver())
+    swarm.solvers["gemini/gemini-2.5-flash"] = cast(Any, _FakeLaneSolver())
     manifest_path = swarm.shared_artifacts_dir / "manifest.md"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
@@ -165,8 +197,20 @@ async def test_lane_listener_adds_private_hint_without_reposting_to_bus(tmp_path
         "<html><form><input name='csrf' value='token-123'></form></html>\n",
         encoding="utf-8",
     )
-    await swarm.message_bus.post("gemini/gemini-2.5-flash", "Artifact path: /challenge/shared-artifacts/login.html")
-    await swarm.message_bus.post("codex/gpt-5.4-mini", "Potential CSRF token at /challenge/shared-artifacts/login.html")
+    await swarm.message_bus.post(
+        "gemini/gemini-2.5-flash",
+        SharedFindingRef(
+            model="gemini/gemini-2.5-flash",
+            content="Artifact path: /challenge/shared-artifacts/login.html",
+        ),
+    )
+    await swarm.message_bus.post(
+        "codex/gpt-5.4-mini",
+        SharedFindingRef(
+            model="codex/gpt-5.4-mini",
+            content="Potential CSRF token at /challenge/shared-artifacts/login.html",
+        ),
+    )
 
     await swarm._maybe_issue_lane_advisories()
 
@@ -178,12 +222,14 @@ async def test_lane_listener_adds_private_hint_without_reposting_to_bus(tmp_path
     assert swarm.last_advisor_note == "Pivot from broad grep to the shared login artifact first."
     assert swarm.lane_advisor_notes["codex/gpt-5.4"] == swarm.last_advisor_note
     assert swarm.advisor_lane_hint_count == 1
+    assert swarm.coordinator_inbox is not None
+    lane_solver = cast(_FakeLaneSolver, swarm.solvers["codex/gpt-5.4"])
     assert not swarm.coordinator_inbox.qsize()
-    assert not swarm.solvers["codex/gpt-5.4"].bumped
-    assert swarm.solvers["codex/gpt-5.4"].advisory_bumped
+    assert not lane_solver.bumped
+    assert lane_solver.advisory_bumped
     assert (
         "Private advisor note for this lane"
-        in swarm.solvers["codex/gpt-5.4"].advisory_bumped[0]
+        in lane_solver.advisory_bumped[0]
     )
     assert advisor.lane_calls
     assert "The admin route is not linked" in advisor.lane_calls[0]["challenge_brief"]
@@ -197,7 +243,7 @@ async def test_lane_listener_deduplicates_same_context(tmp_path) -> None:
     swarm = _make_swarm(tmp_path)
     advisor = _FakeAdvisor(lane_reply="Read the shared bundle before another broad search.")
     swarm._advisors["codex"] = advisor
-    swarm.solvers["codex/gpt-5.4"] = _FakeLaneSolver()
+    swarm.solvers["codex/gpt-5.4"] = cast(Any, _FakeLaneSolver())
     manifest_path = swarm.shared_artifacts_dir / "manifest.md"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
@@ -208,8 +254,20 @@ async def test_lane_listener_deduplicates_same_context(tmp_path) -> None:
         ("fetch('/api/v1/app')\nconst csrf = 'abc123';\n" * 600),
         encoding="utf-8",
     )
-    await swarm.message_bus.post("gemini/gemini-2.5-flash", "Artifact path: /challenge/shared-artifacts/app.js")
-    await swarm.message_bus.post("codex/gpt-5.4-mini", "Artifact path: /challenge/shared-artifacts/app.js")
+    await swarm.message_bus.post(
+        "gemini/gemini-2.5-flash",
+        SharedFindingRef(
+            model="gemini/gemini-2.5-flash",
+            content="Artifact path: /challenge/shared-artifacts/app.js",
+        ),
+    )
+    await swarm.message_bus.post(
+        "codex/gpt-5.4-mini",
+        SharedFindingRef(
+            model="codex/gpt-5.4-mini",
+            content="Artifact path: /challenge/shared-artifacts/app.js",
+        ),
+    )
 
     await swarm._maybe_issue_lane_advisories()
     await swarm._maybe_issue_lane_advisories()
@@ -224,7 +282,7 @@ async def test_lane_listener_skips_artifact_previews_without_explicit_artifact_p
     swarm = _make_swarm(tmp_path)
     advisor = _FakeAdvisor(lane_reply="Validate the sibling hypothesis before another broad grep.")
     swarm._advisors["codex"] = advisor
-    swarm.solvers["codex/gpt-5.4"] = _FakeLaneSolver()
+    swarm.solvers["codex/gpt-5.4"] = cast(Any, _FakeLaneSolver())
     manifest_path = swarm.shared_artifacts_dir / "manifest.md"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
@@ -235,15 +293,28 @@ async def test_lane_listener_skips_artifact_previews_without_explicit_artifact_p
         "<html><form><input name='csrf' value='token-123'></form></html>\n",
         encoding="utf-8",
     )
-    await swarm.message_bus.post("gemini/gemini-2.5-flash", "Potential CSRF token in shared login page")
-    await swarm.message_bus.post("codex/gpt-5.4-mini", "Repeated auth failure after broad grep")
+    await swarm.message_bus.post(
+        "gemini/gemini-2.5-flash",
+        SharedFindingRef(
+            model="gemini/gemini-2.5-flash",
+            content="Potential CSRF token in shared login page",
+        ),
+    )
+    await swarm.message_bus.post(
+        "codex/gpt-5.4-mini",
+        SharedFindingRef(
+            model="codex/gpt-5.4-mini",
+            content="Repeated auth failure after broad grep",
+        ),
+    )
 
     await swarm._maybe_issue_lane_advisories()
 
     assert advisor.lane_calls
     assert advisor.lane_calls[0]["artifact_previews"] == ""
     assert advisor.lane_calls[0]["manifest_excerpt"]
-    assert swarm.solvers["codex/gpt-5.4"].advisory_bumped
+    lane_solver = cast(_FakeLaneSolver, swarm.solvers["codex/gpt-5.4"])
+    assert lane_solver.advisory_bumped
 
 
 @pytest.mark.asyncio
@@ -297,7 +368,7 @@ async def test_codex_advisor_builds_finding_prompt_via_query() -> None:
         assert "Sibling insights:" in prompt
         return "Check whether the route is auth-gated."
 
-    advisor._query = fake_query  # type: ignore[method-assign]
+    advisor._query = cast(Any, fake_query)
 
     result = await advisor.annotate_finding(
         source_model="codex/gpt-5.4",
@@ -319,7 +390,7 @@ async def test_codex_advisor_builds_coordinator_prompt_via_query() -> None:
         assert "Challenge brief:" in prompt
         return "Keep the bump focused on auth gates."
 
-    advisor._query = fake_query  # type: ignore[method-assign]
+    advisor._query = cast(Any, fake_query)
 
     result = await advisor.annotate_coordinator_message(
         source_model="codex/gpt-5.4",
@@ -345,7 +416,7 @@ async def test_codex_advisor_builds_lane_hint_prompt_via_query() -> None:
         assert "csrf token here" in prompt
         return "Read the shared login artifact before another broad grep."
 
-    advisor._query = fake_query  # type: ignore[method-assign]
+    advisor._query = cast(Any, fake_query)
 
     result = await advisor.suggest_lane_hint(
         target_model="codex/gpt-5.4",

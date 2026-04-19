@@ -5,13 +5,7 @@ from pydantic_ai import RunContext
 from backend.deps import SolverDeps
 from backend.tools.core import (
     do_bash,
-    do_check_findings,
-    do_list_files,
-    do_read_file,
-    do_web_fetch,
-    do_webhook_create,
-    do_webhook_get_requests,
-    do_write_file,
+    do_fs_query,
 )
 
 
@@ -23,38 +17,87 @@ async def bash(ctx: RunContext[SolverDeps], command: str, timeout_seconds: int =
     Large stdout/stderr is automatically saved under /challenge/shared-artifacts/
     and this tool returns a preview plus the saved path.
     Challenge services are reachable via host.docker.internal.
-    Run `cat /tools.txt` to see all installed tools.
+    Run `cat /tools.txt` to see all installed tools. The image is intentionally
+    headless-only; prefer CLI entrypoints such as `ghidra-headless`, `bpftool`,
+    `bpftrace`, `httpx`, `subfinder`, `amass`, `certipy`, `nxc`,
+    `impacket-*`, `nuclei`, `feroxbuster`, `smali`, `dex2jar`, `jefferson`,
+    `forge`, `slither`, and `sage`. Bundled wordlists live under
+    `/opt/wordlists/seclists` and `/opt/wordlists/assetnote`.
     """
     return await do_bash(ctx.deps.sandbox, command, timeout_seconds)
 
 
-async def read_file(ctx: RunContext[SolverDeps], path: str) -> str:
-    """Read a file from the container.
+async def fs_query(
+    ctx: RunContext[SolverDeps],
+    action: str,
+    path: str,
+    maxdepth: int = 3,
+    kind: str = "files",
+    pattern: str = "",
+    limit: int = 200,
+    mode: str = "text",
+    start_line: int = 1,
+    line_count: int = 120,
+    byte_offset: int = 0,
+    byte_count: int = 256,
+    query: str = "",
+    glob: str = "",
+    ignore_case: bool = True,
+    context_lines: int = 2,
+) -> str:
+    """Bounded read-only filesystem inspection.
 
-    Small text files are returned inline.
-    Large files return a preview plus a file path so you can inspect targeted ranges with bash.
-    Shared artifact files live at /challenge/shared-artifacts/.
-    For distfiles use paths like /challenge/distfiles/readme.txt.
+    Use this instead of broad shell pipelines when you need a quick preview or a
+    token-efficient artifact pointer. Supported actions are `find`, `peek`,
+    `search`, `inspect`, and `archive_list`.
     """
-    return await do_read_file(ctx.deps.sandbox, path)
+    return await do_fs_query(
+        ctx.deps.sandbox,
+        action=action,
+        path=path,
+        maxdepth=maxdepth,
+        kind=kind,
+        pattern=pattern,
+        limit=limit,
+        mode=mode,
+        start_line=start_line,
+        line_count=line_count,
+        byte_offset=byte_offset,
+        byte_count=byte_count,
+        query=query,
+        glob=glob,
+        ignore_case=ignore_case,
+        context_lines=context_lines,
+    )
 
 
-async def write_file(ctx: RunContext[SolverDeps], path: str, content: str) -> str:
-    """Write a file into the container."""
-    return await do_write_file(ctx.deps.sandbox, path, content)
-
-
-async def list_files(ctx: RunContext[SolverDeps], path: str = "/challenge/distfiles") -> str:
-    """List files in a directory inside the container."""
-    return await do_list_files(ctx.deps.sandbox, path)
-
-
-async def check_findings(ctx: RunContext[SolverDeps]) -> str:
-    """Check for new findings from other agents working on the same challenge.
-
-    Call this periodically to see if siblings have discovered useful information.
-    """
-    return await do_check_findings(ctx.deps.message_bus, ctx.deps.model_spec)
+async def report_flag_candidate(
+    ctx: RunContext[SolverDeps],
+    flag: str,
+    evidence: str = "",
+    confidence: str = "medium",
+) -> str:
+    """Queue a candidate flag for advisor/coordinator review without submitting it."""
+    if not ctx.deps.report_flag_candidate_fn:
+        return "No candidate reporter connected."
+    runtime = ctx.deps.runtime_status_getter() if ctx.deps.runtime_status_getter else {}
+    step_count = 0
+    if isinstance(runtime, dict):
+        raw_step_count = runtime.get("step_count", 0)
+        if isinstance(raw_step_count, int):
+            step_count = raw_step_count
+        elif isinstance(raw_step_count, str):
+            try:
+                step_count = int(raw_step_count)
+            except ValueError:
+                step_count = 0
+    return await ctx.deps.report_flag_candidate_fn(
+        flag.strip(),
+        evidence,
+        confidence,
+        step_count,
+        ctx.deps.trace_path,
+    )
 
 
 async def notify_coordinator(ctx: RunContext[SolverDeps], message: str) -> str:
@@ -71,21 +114,3 @@ async def notify_coordinator(ctx: RunContext[SolverDeps], message: str) -> str:
         except Exception as e:
             return f"Notification failed: {e}"
     return "No coordinator connected."
-
-
-async def web_fetch(ctx: RunContext[SolverDeps], url: str, method: str = "GET", body: str = "") -> str:
-    """Fetch a URL from the host. Useful for web challenges.
-
-    Prefer bash+curl inside the sandbox for cookies/sessions.
-    """
-    return await do_web_fetch(url, method, body)
-
-
-async def webhook_create(ctx: RunContext[SolverDeps]) -> str:
-    """Create a webhook.site token for out-of-band HTTP callbacks (XSS, SSRF, bot challenges)."""
-    return await do_webhook_create()
-
-
-async def webhook_get_requests(ctx: RunContext[SolverDeps], uuid: str) -> str:
-    """Retrieve HTTP requests received by a webhook.site token."""
-    return await do_webhook_get_requests(uuid)

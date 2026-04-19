@@ -1,0 +1,99 @@
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-22:COPY configs/busybox.config                 /buildroot-2022.11/package/busybox/busybox.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-23:COPY configs/linux.config                   /buildroot-2022.11/board/qemu/aarch64-virt/linux.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md:24:COPY ebpf-nonconst-bounds-tracking.patch    /buildroot-2022.11/ebpf-nonconst-bounds-tracking.patc...
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-25:
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-26:## URLs
+--
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-15:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/Dockerfile
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-16:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md:17:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-18:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src...
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-19:
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-3:- file_size: 2958
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-3:- file_size: 1803
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-10:- file_size: 2958
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-45:
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-46:## Routes
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md:47:- /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-48:- /gcc.gnu.org/bugzilla/show_bug.cgi
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-49:- /github.com/llvm/llvm-project/commit/a88c722e687e6780dcd6a58718350dc76fcc4cc9
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-3:- file_size: 1976
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-10:- file_size: 1803
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-17:- file_size: 2958
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-18:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-47:
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-48:## Routes
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:49:- /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:50:- /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-51:- /gcc.gnu.org/bugzilla/show_bug.cgi
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-52:- /github.com/llvm/llvm-project/commit/a88c722e687e6780dcd6a58718350dc76fcc4cc9
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-3:- file_size: 2059
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-10:- file_size: 1976
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:16:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-17:- file_size: 1803
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-18:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-21:## Head sample
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:23:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-24:- file_size: 2958
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-25:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-47:
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-48:## Routes
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:49:- /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:50:- /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:51:- /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-52:- /gcc.gnu.org/bugzilla/show_bug.cgi
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-53:- /github.com/llvm/llvm-project/commit/a88c722e687e6780dcd6a58718350dc76fcc4cc9
+--
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-14:      444  2025-12-23 08:56   src/buildroot/init
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-15:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md:16:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-17:     1040  2025-12-23 08:56   src/buildroot/Dockerfile
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-18:     1002  2025-12-23 08:56   src/buildroot/mdev.conf
+--
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-21:      444  2025-12-23 08:56   src/buildroot/init
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-22:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md:23:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+... [stopped after 20 matches]

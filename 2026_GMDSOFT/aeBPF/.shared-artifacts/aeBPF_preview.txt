@@ -1,0 +1,189 @@
+===== build.sh =====
+#!/bin/bash
+
+# if [ -f ../flag ]; then
+#     cp ../flag buildroot/flag
+#     echo "Injected flag file into Docker build context."
+# else 
+#     echo "DH{fake_flag}" > buildroot/flag
+#     echo "Injected fake flag into Docker build context."
+# fi
+
+echo "Building Docker image..."
+
+IMAGE_DIGEST=$(docker build -q buildroot)
+CONTAINER_DIGEST=$(docker create $IMAGE_DIGEST)
+
+echo "Image Digest:     $IMAGE_DIGEST"
+echo "Container Digest: $CONTAINER_DIGEST"
+
+echo "Starting build..."
+docker start -ai $CONTAINER_DIGEST
+
+echo "Completed build. Copying files..."
+mkdir -p output
+docker cp $CONTAINER_DIGEST:/output/Image.gz                ./output/
+docker cp $CONTAINER_DIGEST:/output/rootfs.cpio.gz          ./output/
+
+echo "Completed copy. Removing artifacts..."
+docker rm $CONTAINER_DIGEST
+docker rmi $IMAGE_DIGEST
+
+cd output; ls -alF
+===== init =====
+#!/bin/sh
+
+echo -e "\nRunning init script...\n"
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mdev -s
+mkdir -p /dev/pts
+mount -vt devpts -o gid=4,mode=620 none /dev/pts
+
+echo 0 0 0 0 > /proc/sys/kernel/printk
+echo 1 > /proc/sys/kernel/kptr_restrict
+echo 1 > /proc/sys/kernel/dmesg_restrict
+
+echo -e "\nBoot took $(cut -d' ' -f1 /proc/uptime) seconds\n"
+
+setsid cttyhack setuidgid 1000 /bin/sh
+
+poweroff -f
+===== build_script.sh =====
+#!/bin/bash
+
+BUILDROOT=$(pwd)
+
+# Build kernel & rootfs
+make
+
+# Copy kernel image into /output
+mkdir -p /output
+cp $BUILDROOT/output/images/Image.gz /output/Image.gz
+
+# Trim rootfs
+mkdir /rootfs
+cd /rootfs
+gunzip -c $BUILDROOT/output/images/rootfs.cpio.gz | cpio -vid
+
+# Copy init script & mdev.conf into rootfs
+cp /init init && chmod 755 init
+cp /mdev.conf etc/mdev.conf && chmod 644 etc/mdev.conf
+
+# Create rootfs with fake flag (public)
+echo 'DH{fake_flag}' > flag
+chmod 400 flag
+find . | cpio -H newc --owner root -o | gzip > /output/rootfs.cpio.gz
+
+cd /output
+rm -rf /rootfs
+
+pwd && ls -alF
+echo 'Done!'
+===== patch =====
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index 9d3cbe7..b611339 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -1677,7 +1677,8 @@ config ARM64_BTI_KERNEL
+ 	# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=94697
+ 	depends on !CC_IS_GCC || GCC_VERSION >= 100100
+ 	# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=106671
+-	depends on !CC_IS_GCC
++	# Force enable BTI regardless of compiler bugs
++	# depends on !CC_IS_GCC
+ 	# https://github.com/llvm/llvm-project/commit/a88c722e687e6780dcd6a58718350dc76fcc4cc9
+ 	depends on !CC_IS_CLANG || CLANG_VERSION >= 120000
+ 	depends on (!FUNCTION_GRAPH_TRACER || DYNAMIC_FTRACE_WITH_REGS)
+diff --git a/arch/arm64/mm/init.c b/arch/arm64/mm/init.c
+index 3b269c7..dc159a5 100644
+--- a/arch/arm64/mm/init.c
++++ b/arch/arm64/mm/init.c
+@@ -308,11 +308,8 @@ void __init arm64_memblock_init(void)
+ 
+ 	if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+ 		extern u16 memstart_offset_seed;
+-		u64 mmfr0 = read_cpuid(ID_AA64MMFR0_EL1);
+-		int parange = cpuid_feature_extract_unsigned_field(
+-					mmfr0, ID_AA64MMFR0_PARANGE_SHIFT);
+ 		s64 range = linear_region_size -
+-			    BIT(id_aa64mmfr0_parange_to_phys_shift(parange));
++			    (memblock_end_of_DRAM() - memblock_start_of_DRAM());
+ 
+ 		/*
+ 		 * If the size of the linear region exceeds, by a sufficient
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index 1c95d97..dd62e4f 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -2706,16 +2706,21 @@ static int check_stack_write_fixed_off(struct bpf_verifier_env *env,
+ 		save_register_state(state, spi, reg, size);
+ 	} else if (reg && is_spillable_regtype(reg->type)) {
+ 		/* register containing pointer is being spilled into stack */
+-		if (size != BPF_REG_SIZE) {
+-			verbose_linfo(env, insn_idx, "; ");
+-			verbose(env, "invalid size of register spill\n");
+-			return -EACCES;
+-		}
+-		if (state != cur && reg->type == PTR_TO_STACK) {
+-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+-			return -EINVAL;
++		if (env->allow_ptr_leaks) {
++			if (size != BPF_REG_SIZE) {
++				verbose_linfo(env, insn_idx, "; ");
++				verbose(env, "invalid size of register spill\n");
++				return -EACCES;
++			}
++			if (state != cur && reg->type == PTR_TO_STACK) {
++				verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
++				return -EINVAL;
++			}
++			save_register_state(state, spi, reg, size);
++		} else {
++			verbose(env, "pointer spill to stack is allowed only to CAP_PERFMON and CAP_SYS_ADMIN\n");
++			return -EPERM;
+ 		}
+-		save_register_state(state, spi, reg, size);
+ 	} else {
+ 		u8 type = STACK_MISC;
+ 
+@@ -7893,12 +7898,6 @@ static int adjust_scalar_min_max_vals(struct bpf_verifier_env *env,
+ 		}
+ 	}
+ 
+-	if (!src_known &&
+-	    opcode != BPF_ADD && opcode != BPF_SUB && opcode != BPF_AND) {
+-		__mark_reg_unknown(env, dst_reg);
+-		return 0;
+-	}
+-
+ 	if (sanitize_needed(opcode)) {
+ 		ret = sanitize_val_alu(env, insn);
+ 		if (ret < 0)
+===== Dockerfile =====
+FROM ubuntu:22.04
+
+RUN sed -i "s/http:\/\/archive.ubuntu.com/http:\/\/mirror.kakao.com/g" /etc/apt/sources.list \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive \
+    apt-get install --no-install-recommends -y \
+      sed make binutils build-essential diffutils gcc g++ \
+      bash patch gzip bzip2 perl tar cpio unzip rsync file bc wget \
+      python3 libncurses5-dev libelf-dev libssl-dev ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN wget -qO- https://buildroot.org/downloads/buildroot-2022.11.tar.gz | tar xvz
+
+COPY configs/buildroot.config               /buildroot-2022.11/.config
+COPY configs/busybox.config                 /buildroot-2022.11/package/busybox/busybox.config
+COPY configs/linux.config                   /buildroot-2022.11/board/qemu/aarch64-virt/linux.config
+COPY ebpf-nonconst-bounds-tracking.patch    /buildroot-2022.11/ebpf-nonconst-bounds-tracking.patch
+COPY init mdev.conf /
+
+COPY build_script.sh /build_script.sh
+RUN chmod +x /build_script.sh
+
+WORKDIR /buildroot-2022.11/
+CMD /build_script.sh

@@ -1,4 +1,4 @@
-"""Background CTFd poller — detects new and solved challenges every 5 seconds."""
+"""Background CTFd poller — detects new and solved challenges with quiet retries."""
 
 import asyncio
 import logging
@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from backend.ctfd import CTFdClient
 
 logger = logging.getLogger(__name__)
+
+MAX_POLL_BACKOFF_SECONDS = 300.0
+POLL_BACKOFF_MULTIPLIER = 2.0
+POLL_WARNING_REPEAT_INTERVAL = 5
 
 
 @dataclass
@@ -28,9 +32,14 @@ class CTFdPoller:
     _event_queue: asyncio.Queue[PollEvent] = field(default_factory=asyncio.Queue)
     _task: asyncio.Task | None = field(default=None, repr=False)
     _stop: asyncio.Event = field(default_factory=asyncio.Event)
+    _failure_count: int = field(default=0, init=False, repr=False)
+    _current_interval_s: float = field(default=0.0, init=False, repr=False)
+    _last_error_text: str = field(default="", init=False, repr=False)
+    _suppressed_warning_count: int = field(default=0, init=False, repr=False)
 
     async def start(self) -> None:
         """Do initial poll (silent — no events) and start the background loop."""
+        self._current_interval_s = float(self.interval_s)
         await self._seed()
         logger.info(
             "Poller initialized: %d challenges, %d solved",
@@ -45,8 +54,9 @@ class CTFdPoller:
             stubs = await self.ctfd.fetch_challenge_stubs()
             self._known_challenges = {ch["name"] for ch in stubs}
             self._known_solved = await self.ctfd.fetch_solved_names()
+            self._mark_poll_success()
         except Exception as e:
-            logger.warning("Initial poll error: %s", e)
+            self._record_poll_failure(e, initial=True)
 
     async def stop(self) -> None:
         self._stop.set()
@@ -115,11 +125,61 @@ class CTFdPoller:
 
             self._known_challenges = current_names
             self._known_solved = current_solved
+            self._mark_poll_success()
 
         except Exception as e:
-            logger.warning(f"Poll error: {e}")
+            self._record_poll_failure(e)
+
+    def _mark_poll_success(self) -> None:
+        if self._failure_count > 0:
+            logger.info(
+                "CTFd poll recovered after %d failures",
+                self._failure_count,
+            )
+        self._failure_count = 0
+        self._current_interval_s = float(self.interval_s)
+        self._last_error_text = ""
+        self._suppressed_warning_count = 0
+
+    def _record_poll_failure(self, exc: Exception, *, initial: bool = False) -> None:
+        self._failure_count += 1
+        self._current_interval_s = min(
+            float(self.interval_s) * (POLL_BACKOFF_MULTIPLIER ** self._failure_count),
+            MAX_POLL_BACKOFF_SECONDS,
+        )
+        prefix = "Initial poll error" if initial else "Poll error"
+        error_text = str(exc)
+        should_log = (
+            self._failure_count == 1
+            or error_text != self._last_error_text
+            or self._failure_count % POLL_WARNING_REPEAT_INTERVAL == 0
+        )
+        if should_log:
+            if self._suppressed_warning_count > 0 and error_text == self._last_error_text:
+                logger.warning(
+                    "%s persists: %s (%d consecutive failures, suppressed %d similar warnings, retry in %ds)",
+                    prefix,
+                    error_text,
+                    self._failure_count,
+                    self._suppressed_warning_count,
+                    int(self._current_interval_s),
+                )
+            else:
+                logger.warning(
+                    "%s: %s (%d consecutive failures, retry in %ds)",
+                    prefix,
+                    error_text,
+                    self._failure_count,
+                    int(self._current_interval_s),
+                )
+            self._suppressed_warning_count = 0
+        else:
+            self._suppressed_warning_count += 1
+        self._last_error_text = error_text
 
     async def _loop(self) -> None:
         while not self._stop.is_set():
-            await asyncio.sleep(self.interval_s)
+            await asyncio.sleep(self._current_interval_s or self.interval_s)
+            if self._stop.is_set():
+                break
             await self._poll_once()

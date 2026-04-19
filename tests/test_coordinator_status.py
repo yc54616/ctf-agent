@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 from click.testing import CliRunner
 
 import backend.cli as cli_module
@@ -34,12 +36,13 @@ class _FakeTask:
 
 def test_status_snapshot_reports_active_and_finished_swarms() -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
         model_specs=["gemini/gemini-2.5-flash", "codex/gpt-5.4"],
         max_concurrent_challenges=3,
     )
+    deps.session_started_at = 1_700_000_000.0
     deps.cost_tracker.record_tokens(
         "challenge-a/gpt-5.4",
         "gpt-5.4",
@@ -52,6 +55,7 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
             "challenge": "challenge-a",
             "coordinator_advisor_note": "",
             "shared_finding": "",
+            "shared_findings": {},
             "signals": {
                 "total_posts": 0,
                 "total_checks": 0,
@@ -70,6 +74,14 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
             "advisor_note": "Check whether the login bypass requires CSRF.",
             "coordinator_advisor_note": "Check whether the login bypass requires CSRF.",
             "shared_finding": "Potential admin API at /api/v1/k8s/get",
+            "shared_findings": {
+                "codex/gpt-5.4": {
+                    "kind": "finding_ref",
+                    "summary": "Potential admin API at /api/v1/k8s/get",
+                    "pointer_path": "/challenge/shared-artifacts/finding.txt",
+                    "digest_path": "/challenge/shared-artifacts/.advisor/finding.digest.md",
+                }
+            },
             "signals": {
                 "total_posts": 3,
                 "total_checks": 5,
@@ -93,8 +105,8 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
         }
     )
 
-    deps.swarm_tasks["challenge-a"] = _FakeTask(False)  # type: ignore[assignment]
-    deps.swarm_tasks["challenge-b"] = _FakeTask(True)  # type: ignore[assignment]
+    deps.swarm_tasks["challenge-a"] = cast(Any, _FakeTask(False))
+    deps.swarm_tasks["challenge-b"] = cast(Any, _FakeTask(True))
     deps.pending_swarm_queue.append("challenge-c")
     deps.pending_swarm_set.add("challenge-c")
     deps.known_challenge_count = 10
@@ -116,6 +128,7 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
     snapshot = _status_snapshot(deps)
 
     assert snapshot["models"] == ["gemini/gemini-2.5-flash", "codex/gpt-5.4"]
+    assert snapshot["session_started_at"] == 1_700_000_000.0
     assert snapshot["active_swarm_count"] == 1
     assert snapshot["finished_swarm_count"] == 1
     assert snapshot["pending_challenge_count"] == 1
@@ -129,6 +142,10 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
         == "Check whether the login bypass requires CSRF."
     )
     assert snapshot["finished_swarms"]["challenge-b"]["shared_finding"] == "Potential admin API at /api/v1/k8s/get"
+    assert (
+        snapshot["finished_swarms"]["challenge-b"]["shared_findings"]["codex/gpt-5.4"]["digest_path"]
+        == "/challenge/shared-artifacts/.advisor/finding.digest.md"
+    )
     assert snapshot["finished_swarms"]["challenge-b"]["signals"]["total_posts"] == 3
     assert snapshot["finished_swarms"]["challenge-b"]["agents"]["codex/gpt-5.4"]["lifecycle"] == "won"
     assert snapshot["finished_swarms"]["challenge-b"]["agents"]["codex/gpt-5.4"]["findings"] == "found flag via login bypass"
@@ -208,6 +225,14 @@ def test_render_status_lines_builds_dashboard_sections() -> None:
                     "winner": None,
                     "advisor_note": "Verify whether the API route is auth-gated.",
                     "shared_finding": "Potential admin API at /api/v1/k8s/get",
+                    "shared_findings": {
+                        "gemini/gemini-2.5-flash": {
+                            "kind": "finding_ref",
+                            "summary": "Potential admin API at /api/v1/k8s/get",
+                            "pointer_path": "/challenge/shared-artifacts/finding.txt",
+                            "digest_path": "/challenge/shared-artifacts/.advisor/finding.digest.md",
+                        }
+                    },
                     "signals": {
                         "total_posts": 4,
                         "total_checks": 6,
@@ -238,6 +263,14 @@ def test_render_status_lines_builds_dashboard_sections() -> None:
                     "winner": "flag{done}",
                     "advisor_note": "Check whether the login bypass requires CSRF.",
                     "shared_finding": "Recovered hidden ZIP header from audio stream",
+                    "shared_findings": {
+                        "codex/gpt-5.4": {
+                            "kind": "finding_ref",
+                            "summary": "Recovered hidden ZIP header from audio stream",
+                            "pointer_path": "/challenge/shared-artifacts/audio-find.txt",
+                            "digest_path": "/challenge/shared-artifacts/.advisor/audio-find.digest.md",
+                        }
+                    },
                     "signals": {
                         "total_posts": 7,
                         "total_checks": 9,
@@ -299,6 +332,8 @@ def test_render_status_lines_builds_dashboard_sections() -> None:
     assert "gemini/gemini-2.5-flash" in rendered
     assert "[Advisor] Verify whether the API route is auth-gated." in rendered
     assert "Potential admin API at /api/v1/k8s/get" in rendered
+    assert "gemini/gemini-2.5-flash" in rendered
+    assert "digest /challenge/shared-artifacts/.advisor/finding.digest.md" in rendered
     assert "challenge-a               4      6          5         1        1       1" in rendered
     assert "ignored idle lane" in rendered
     assert "Lane                              Step  State        Detail" in rendered
@@ -364,6 +399,14 @@ def test_render_status_lines_verbose_shows_idle_and_won_lanes() -> None:
                 "challenge-a": {
                     "winner": None,
                     "shared_finding": "Potential admin API at /api/v1/k8s/get",
+                    "shared_findings": {
+                        "codex/gpt-5.4": {
+                            "kind": "finding_ref",
+                            "summary": "Potential admin API at /api/v1/k8s/get",
+                            "pointer_path": "/challenge/shared-artifacts/finding.txt",
+                            "digest_path": "/challenge/shared-artifacts/.advisor/finding.digest.md",
+                        }
+                    },
                     "signals": {
                         "total_posts": 1,
                         "total_checks": 2,
@@ -386,6 +429,14 @@ def test_render_status_lines_verbose_shows_idle_and_won_lanes() -> None:
                 "challenge-b": {
                     "winner": "flag{done}",
                     "shared_finding": "Recovered hidden ZIP header from audio stream",
+                    "shared_findings": {
+                        "codex/gpt-5.4": {
+                            "kind": "finding_ref",
+                            "summary": "Recovered hidden ZIP header from audio stream",
+                            "pointer_path": "/challenge/shared-artifacts/audio-find.txt",
+                            "digest_path": "/challenge/shared-artifacts/.advisor/audio-find.digest.md",
+                        }
+                    },
                     "signals": {
                         "total_posts": 2,
                         "total_checks": 3,

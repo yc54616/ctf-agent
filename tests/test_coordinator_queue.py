@@ -2,19 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
+from backend.agents.advisor_base import CandidateReview
 from backend.agents.coordinator_core import (
     _fill_swarm_capacity,
     _retire_finished_swarms,
     do_fetch_challenges,
     do_spawn_swarm,
+    do_submit_flag,
 )
 from backend.agents.coordinator_loop import _auto_spawn_unsolved
+from backend.agents.swarm import ChallengeSwarm, FlagCandidateRecord
 from backend.cost_tracker import CostTracker
+from backend.ctfd import SubmitResult
 from backend.deps import CoordinatorDeps
+from backend.message_bus import CandidateRef
+from backend.prompts import ChallengeMeta
 
 
 class _FakeSwarm:
@@ -58,16 +66,30 @@ class _FailingCTFd(_FakeCTFd):
         raise RuntimeError("All connection attempts failed")
 
 
+class _FakeCandidateAdvisor:
+    async def annotate_finding(self, **kwargs) -> str:
+        return ""
+
+    async def annotate_coordinator_message(self, **kwargs) -> str:
+        return ""
+
+    async def suggest_lane_hint(self, **kwargs) -> str:
+        return ""
+
+    async def review_flag_candidate(self, **kwargs) -> CandidateReview:
+        return CandidateReview("likely", "Route and evidence look plausible.")
+
+
 @pytest.mark.asyncio
 async def test_do_spawn_swarm_queues_when_capacity_is_full() -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
         max_concurrent_challenges=1,
     )
     deps.swarms["challenge-a"] = _FakeSwarm()
-    deps.swarm_tasks["challenge-a"] = _FakeTask(False)  # type: ignore[assignment]
+    deps.swarm_tasks["challenge-a"] = cast(Any, _FakeTask(False))
 
     result = await do_spawn_swarm(deps, "challenge-b")
 
@@ -79,7 +101,7 @@ async def test_do_spawn_swarm_queues_when_capacity_is_full() -> None:
 @pytest.mark.asyncio
 async def test_fill_swarm_capacity_starts_queued_challenges_in_fifo_order(monkeypatch) -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
         max_concurrent_challenges=1,
@@ -92,7 +114,7 @@ async def test_fill_swarm_capacity_starts_queued_challenges_in_fifo_order(monkey
     async def fake_spawn(deps_obj: CoordinatorDeps, challenge_name: str) -> str:
         spawned.append(challenge_name)
         deps_obj.swarms[challenge_name] = _FakeSwarm()
-        deps_obj.swarm_tasks[challenge_name] = _FakeTask(False)  # type: ignore[assignment]
+        deps_obj.swarm_tasks[challenge_name] = cast(Any, _FakeTask(False))
         return f"spawned {challenge_name}"
 
     monkeypatch.setattr("backend.agents.coordinator_core._spawn_swarm_now", fake_spawn)
@@ -103,7 +125,7 @@ async def test_fill_swarm_capacity_starts_queued_challenges_in_fifo_order(monkey
     assert spawned == ["challenge-b"]
     assert list(deps.pending_swarm_queue) == ["challenge-c"]
 
-    deps.swarm_tasks["challenge-b"] = _FakeTask(True)  # type: ignore[assignment]
+    deps.swarm_tasks["challenge-b"] = cast(Any, _FakeTask(True))
     retired = _retire_finished_swarms(deps)
     second = await _fill_swarm_capacity(deps)
 
@@ -116,14 +138,16 @@ async def test_fill_swarm_capacity_starts_queued_challenges_in_fifo_order(monkey
 @pytest.mark.asyncio
 async def test_do_fetch_challenges_sorts_by_solves_descending() -> None:
     deps = CoordinatorDeps(
-        ctfd=_FakeCTFd(
+        ctfd=cast(
+            Any,
+            _FakeCTFd(
             [
                 {"name": "charlie", "category": "misc", "value": 100, "solves": 3, "description": ""},
                 {"name": "alpha", "category": "misc", "value": 100, "solves": 11, "description": ""},
                 {"name": "bravo", "category": "misc", "value": 100, "solves": 11, "description": ""},
             ],
             solved={"bravo"},
-        ),
+        )),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -137,12 +161,14 @@ async def test_do_fetch_challenges_sorts_by_solves_descending() -> None:
 @pytest.mark.asyncio
 async def test_do_fetch_challenges_includes_local_only_entries() -> None:
     deps = CoordinatorDeps(
-        ctfd=_FakeCTFd(
+        ctfd=cast(
+            Any,
+            _FakeCTFd(
             [
                 {"name": "ctfd-only", "category": "misc", "value": 100, "solves": 5, "description": ""},
             ],
             solved=set(),
-        ),
+        )),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -163,7 +189,7 @@ async def test_do_fetch_challenges_includes_local_only_entries() -> None:
 @pytest.mark.asyncio
 async def test_do_fetch_challenges_falls_back_to_local_when_ctfd_is_unreachable() -> None:
     deps = CoordinatorDeps(
-        ctfd=_FailingCTFd([]),
+        ctfd=cast(Any, _FailingCTFd([])),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -192,13 +218,15 @@ async def test_do_fetch_challenges_falls_back_to_local_when_ctfd_is_unreachable(
 @pytest.mark.asyncio
 async def test_auto_spawn_unsolved_prefers_most_solved_challenges(monkeypatch) -> None:
     deps = CoordinatorDeps(
-        ctfd=_FakeCTFd(
+        ctfd=cast(
+            Any,
+            _FakeCTFd(
             [
                 {"name": "easy-but-popular", "solves": 120},
                 {"name": "mid", "solves": 45},
                 {"name": "hard", "solves": 3},
             ]
-        ),
+        )),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -220,14 +248,99 @@ async def test_auto_spawn_unsolved_prefers_most_solved_challenges(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_swarm_report_flag_candidate_queues_coordinator_review(monkeypatch, tmp_path) -> None:
+    inbox: asyncio.Queue[object] = asyncio.Queue()
+    swarm = ChallengeSwarm(
+        challenge_dir=str(tmp_path),
+        meta=ChallengeMeta(name="candidate-chal"),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+        coordinator_inbox=inbox,
+    )
+    monkeypatch.setattr(swarm, "_get_advisor", lambda _model_spec: _FakeCandidateAdvisor())
+
+    message = await swarm.report_flag_candidate(
+        "flag{candidate}",
+        "codex/gpt-5.4",
+        evidence="matched hidden admin route",
+        confidence="high",
+        step_count=12,
+        trace_path="/tmp/trace.jsonl",
+    )
+
+    assert "Queued flag candidate" in message
+    for task in list(swarm._background_tasks):
+        await task
+
+    candidate = swarm.flag_candidates["flag{candidate}"]
+    assert candidate.status == "pending_coordinator"
+    assert candidate.advisor_decision == "likely"
+    assert candidate.evidence_digest_paths["codex/gpt-5.4"].startswith("/challenge/shared-artifacts/.advisor/")
+    assert candidate.evidence_pointer_paths["codex/gpt-5.4"].startswith("/challenge/shared-artifacts/")
+    queued = await inbox.get()
+    assert isinstance(queued, CandidateRef)
+    assert queued.flag == "flag{candidate}"
+    assert queued.advisor_decision == "likely"
+    evidence_digest_map = queued.evidence_digest_paths
+    assert str(evidence_digest_map["codex/gpt-5.4"]).startswith("/challenge/shared-artifacts/.advisor/")
+    evidence_pointer_map = queued.evidence_pointer_paths
+    assert str(evidence_pointer_map["codex/gpt-5.4"]).startswith("/challenge/shared-artifacts/")
+
+
+@pytest.mark.asyncio
+async def test_do_submit_flag_updates_candidate_state_and_results(tmp_path: Path) -> None:
+    class _FakeSubmitCTFd:
+        async def submit_flag(self, challenge_name: str, flag: str) -> SubmitResult:
+            assert challenge_name == "candidate-chal"
+            assert flag == "flag{candidate}"
+            return SubmitResult("correct", "accepted", 'CORRECT — "flag{candidate}" accepted.')
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, _FakeSubmitCTFd()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    swarm = ChallengeSwarm(
+        challenge_dir=str(tmp_path),
+        meta=ChallengeMeta(name="candidate-chal"),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store=deps.results,
+        model_specs=["codex/gpt-5.4"],
+    )
+    swarm.flag_candidates["flag{candidate}"] = FlagCandidateRecord(
+        normalized_flag="flag{candidate}",
+        raw_flag="flag{candidate}",
+        source_models={"codex/gpt-5.4"},
+    )
+    deps.challenge_dirs["candidate-chal"] = str(tmp_path)
+    deps.swarms["candidate-chal"] = swarm
+
+    display = await do_submit_flag(deps, "candidate-chal", "flag{candidate}")
+
+    assert display.startswith('CORRECT — "flag{candidate}" accepted.')
+    assert deps.results["candidate-chal"]["status"] == "flag_found"
+    assert swarm.flag_candidates["flag{candidate}"].status == "confirmed"
+    result_payload = json.loads((tmp_path / "solve" / "result.json").read_text(encoding="utf-8"))
+    assert result_payload["flag"] == "flag{candidate}"
+    assert result_payload["flag_candidates"]["flag{candidate}"]["status"] == "confirmed"
+    assert (tmp_path / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{candidate}"
+
+
+@pytest.mark.asyncio
 async def test_auto_spawn_unsolved_includes_local_preloaded_challenges(monkeypatch) -> None:
     deps = CoordinatorDeps(
-        ctfd=_FakeCTFd(
+        ctfd=cast(
+            Any,
+            _FakeCTFd(
             [
                 {"name": "ctfd-visible", "solves": 12},
                 {"name": "another-ctfd", "solves": 2},
             ]
-        ),
+        )),
         cost_tracker=CostTracker(),
         settings=object(),
     )

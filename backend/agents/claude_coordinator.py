@@ -15,6 +15,7 @@ from claude_agent_sdk import (
 )
 
 from backend.agents.coordinator_core import (
+    COORDINATOR_PROMPT,
     do_broadcast,
     do_bump_agent,
     do_check_swarm_status,
@@ -27,6 +28,8 @@ from backend.agents.coordinator_core import (
 )
 from backend.agents.coordinator_loop import build_deps, run_event_loop
 from backend.config import Settings
+from backend.cost_tracker import CostTracker
+from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
 
 logger = logging.getLogger(__name__)
@@ -75,31 +78,6 @@ def _validate_turn_activity(
     if inactive_turns >= 2:
         raise ClaudeCoordinatorInactiveError("Claude coordinator produced no tool actions")
     return inactive_turns
-
-COORDINATOR_PROMPT = """\
-You are a CTF competition coordinator running for the ENTIRE duration of a live competition.
-Your job is to maximize the number of challenges solved.
-
-Strategy:
-- Spawn swarms for unsolved challenges, prioritizing by solve count (easy first)
-- Use read_solver_trace to monitor what each solver is doing and where it's stuck
-- When agents are stuck, read their traces, then craft targeted bumps with specific technical guidance
-- Use broadcast to share cross-solver insights (e.g. flag format discovery, shared vulnerabilities)
-- When you receive `ADVISOR MESSAGE:` or `Artifact path: /challenge/shared-artifacts/...`, treat it as evidence to inspect before deciding what to do.
-- Read `/challenge/shared-artifacts/manifest.md` or the referenced artifact file first, then decide whether to broadcast, bump a specific lane, or ignore it.
-
-CRITICAL RULES:
-- NEVER kill a swarm. Solvers will keep trying indefinitely with different approaches.
-  Even when stuck, they often unstick themselves after several bumps. Your job is to
-  HELP them, not give up on them. The only time a swarm should die is when the flag
-  is confirmed correct.
-- When a solver seems stuck, bump it with very specific technical guidance based on
-  its trace. Tell it exactly what to try next — specific tools, techniques, approaches.
-- Do not rebroadcast advisor or artifact messages blindly. Inspect the evidence first and only broadcast when it is broadly useful across lanes.
-- Cost is not a concern. Keep all swarms running.
-
-You will receive event messages. Respond with tool calls to manage the competition.
-"""
 
 
 def _text(s: str) -> dict:
@@ -173,11 +151,17 @@ async def run_claude_coordinator(
     no_submit: bool = False,
     coordinator_model: str | None = None,
     msg_port: int = 0,
+    *,
+    ctfd: CTFdClient | None = None,
+    cost_tracker: CostTracker | None = None,
+    deps: CoordinatorDeps | None = None,
+    cleanup_runtime_on_exit: bool = True,
 ) -> dict[str, Any]:
     """Run the Claude Agent SDK coordinator with the shared event loop."""
-    ctfd, cost_tracker, deps = build_deps(
-        settings, model_specs, challenges_root, no_submit,
-    )
+    if ctfd is None or cost_tracker is None or deps is None:
+        ctfd, cost_tracker, deps = build_deps(
+            settings, model_specs, challenges_root, no_submit,
+        )
     deps.msg_port = msg_port
 
     tool_call_counter = {"count": 0}
@@ -187,7 +171,7 @@ async def run_claude_coordinator(
         tool_call_counter["count"] += 1
 
     mcp_server = _build_coordinator_mcp(deps, on_tool_call=_record_tool_call)
-    resolved_model = coordinator_model or "claude-opus-4-6"
+    resolved_model = coordinator_model or "claude-opus-4-7"
 
     allowed = {
         "mcp__coordinator__fetch_challenges", "mcp__coordinator__get_solve_status",
@@ -267,4 +251,5 @@ async def run_claude_coordinator(
             cost_tracker,
             turn_fn,
             propagate_fatal=True,
+            cleanup_runtime_on_exit=cleanup_runtime_on_exit,
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import deque
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -13,10 +14,15 @@ from backend.ctfd import CTFdClient
 from backend.sandbox import DockerSandbox
 
 if TYPE_CHECKING:
-    from backend.message_bus import ChallengeMessageBus
+    from backend.message_bus import CandidateRef, ChallengeMessageBus, CoordinatorNoteRef
+    CoordinatorQueueEvent = CandidateRef | CoordinatorNoteRef
+else:
+    CoordinatorQueueEvent = object
 
 # Type for the deduped submit callback: (flag) -> (display, is_confirmed)
 SubmitFn = Callable[[str], Coroutine[Any, Any, tuple[str, bool]]]
+ReportFlagCandidateFn = Callable[[str, str, str, int, str], Coroutine[Any, Any, str]]
+RuntimeStatusGetter = Callable[[], dict[str, object]]
 
 
 @dataclass
@@ -32,8 +38,11 @@ class SolverDeps:
     message_bus: ChallengeMessageBus | None = None
     model_spec: str = ""
     submit_fn: SubmitFn | None = None  # Deduped flag submission via swarm
+    report_flag_candidate_fn: ReportFlagCandidateFn | None = None
     no_submit: bool = False
     notify_coordinator: Callable[[str], Coroutine[Any, Any, None]] | None = None
+    runtime_status_getter: RuntimeStatusGetter | None = None
+    trace_path: str = ""
 
 
 @dataclass
@@ -49,7 +58,7 @@ class CoordinatorDeps:
     msg_port: int = 0  # 0 = auto-pick free port
 
     # Runtime state
-    coordinator_inbox: asyncio.Queue = field(default_factory=asyncio.Queue)
+    coordinator_inbox: asyncio.Queue[CoordinatorQueueEvent] = field(default_factory=asyncio.Queue)
     operator_inbox: asyncio.Queue = field(default_factory=asyncio.Queue)
     swarms: dict[str, Any] = field(default_factory=dict)
     swarm_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
@@ -60,3 +69,4 @@ class CoordinatorDeps:
     pending_swarm_set: set[str] = field(default_factory=set)
     known_challenge_count: int = 0
     known_solved_count: int = 0
+    session_started_at: float = field(default_factory=time.time)

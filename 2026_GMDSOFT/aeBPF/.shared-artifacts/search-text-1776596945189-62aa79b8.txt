@@ -1,0 +1,491 @@
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-3:- file_size: 1040
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-23:COPY configs/linux.config                   /buildroot-2022.11/board/qemu/aarch64-virt/linux.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md:24:COPY ebpf-nonconst-bounds-tracking.patch    /buildroot-2022.11/ebpf-nonconst-bounds-tracking.patc...
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-25:
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-10:- file_size: 1040
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-38:## Routes
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md:39:- /challenge/shared-artifacts/aeBPF/src/buildroot/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-40:- /archive.ubuntu.com/http:
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-2ece0ca605.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-2ece0ca605.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-2ece0ca605.digest.md-17:- file_size: 1040
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-2ece0ca605.digest.md-41:- /challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-2ece0ca605.digest.md:42:- /challenge/shared-artifacts/aeBPF/src/buildroot/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-2ece0ca605.digest.md-43:- /archive.ubuntu.com/http:
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/chal/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-3:- file_size: 868
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-9:
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md:10:ENV user aebpf
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-11:ENV port 31337
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/chal/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-10:- file_size: 868
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-16:
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md:17:ENV user aebpf
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-18:ENV port 31337
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-38:## Routes
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md:39:- /challenge/shared-artifacts/aeBPF/chal/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-40:- /qemu-system-aarch64-7.1.0-r7.apk
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/chal/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-17:- file_size: 868
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-23:
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md:24:ENV user aebpf
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-25:ENV port 31337
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-40:- /challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md:41:- /challenge/shared-artifacts/aeBPF/chal/Dockerfile
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-42:- /qemu-system-aarch64-7.1.0-r7.apk
+--
+/challenge/shared-artifacts/.advisor/Image.gz-9fe662a6b1.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/Image.gz-9fe662a6b1.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/output/Image.gz
+/challenge/shared-artifacts/.advisor/Image.gz-9fe662a6b1.digest.md-3:- file_size: 4848360
+--
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md-3:- file_size: 4848360
+--
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md-2bb0c998a2.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md-2bb0c998a2.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md-2bb0c998a2.digest.md-10:- file_size: 4848360
+--
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md-2bb0c998a2.digest.md-23:## Routes
+/challenge/shared-artifacts/.advisor/Image.gz-f5a199e294.digest.md-2bb0c998a2.digest.md:24:- /challenge/shared-artifacts/aeBPF/chal/deploy/Image.gz
+--
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-3:- file_size: 5988
+--
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-3:- file_size: 2009
+--
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-10:- file_size: 5988
+--
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-49:## Routes
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md:50:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-51:- /bin/bash
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/build.sh
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-3:- file_size: 831
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/build.sh
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-10:- file_size: 831
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md:44:- /challenge/shared-artifacts/aeBPF/src/build.sh
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-45:- /bin/bash
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/build.sh
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md-17:- file_size: 831
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md-43:- /challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md:44:- /challenge/shared-artifacts/aeBPF/src/build.sh
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md-45:- /bin/bash
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-3:- file_size: 608
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-10:- file_size: 608
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-42:## Routes
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md:43:- /challenge/shared-artifacts/aeBPF/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-44:- /bin/bash
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-17:- file_size: 608
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-44:- /challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md:45:- /challenge/shared-artifacts/aeBPF/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-46:- /bin/bash
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-bcb2714847.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-bcb2714847.digest.md:23:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-bcb2714847.digest.md-24:- file_size: 608
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-bcb2714847.digest.md-45:- /challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-bcb2714847.digest.md:46:- /challenge/shared-artifacts/aeBPF/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-79a3337e58.digest.md-bcb2714847.digest.md-47:- /bin/bash
+--
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-3:- file_size: 121842
+--
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-10:- file_size: 121842
+--
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-52:## Routes
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md:53:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-54:- /dev
+--
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-17:- file_size: 121842
+--
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-53:- /challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md:54:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-55:- /dev
+--
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-5b0c378081.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-5b0c378081.digest.md:23:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-5b0c378081.digest.md-24:- file_size: 121842
+--
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-5b0c378081.digest.md-54:- /challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-5b0c378081.digest.md:55:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/buildroot.config-3efa334907.digest.md-6e3f9e03ce.digest.md-e05681ef40.digest.md-5b0c378081.digest.md-56:- /dev
+--
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-3:- file_size: 32424
+--
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-10:- file_size: 32424
+--
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md:44:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-45:- /proc/self/exe
+--
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-17:- file_size: 32424
+--
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-44:- /challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md:45:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-46:- /proc/self/exe
+--
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-aaabadb167.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-aaabadb167.digest.md:23:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-aaabadb167.digest.md-24:- file_size: 32424
+--
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-aaabadb167.digest.md-45:- /challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-aaabadb167.digest.md:46:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/busybox.config-49b58a77f4.digest.md-7c69a108b6.digest.md-f03281f39b.digest.md-aaabadb167.digest.md-47:- /proc/self/exe
+--
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-16:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md:17:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-18:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src...
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-3:- file_size: 2958
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-3:- file_size: 1803
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-10:- file_size: 2958
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-46:## Routes
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md:47:- /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-48:- /gcc.gnu.org/bugzilla/show_bug.cgi
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-3:- file_size: 1976
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-10:- file_size: 1803
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-17:- file_size: 2958
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-48:## Routes
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:49:- /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:50:- /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-51:- /gcc.gnu.org/bugzilla/show_bug.cgi
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-3:- file_size: 2059
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-10:- file_size: 1976
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:16:- artifact: /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-17:- file_size: 1803
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:23:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-24:- file_size: 2958
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-48:## Routes
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:49:- /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:50:- /challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:51:- /challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-52:- /gcc.gnu.org/bugzilla/show_bug.cgi
+--
+/challenge/shared-artifacts/.advisor/find-files-1776580145732-0b31737c.txt-ffaf6a3ddc.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/find-files-1776580145732-0b31737c.txt-ffaf6a3ddc.digest.md:8:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776580145732-0b31737c.txt-ffaf6a3ddc.digest.md-9:/challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776580145732-0b31737c.txt-ffaf6a3ddc.digest.md-49:## Routes
+/challenge/shared-artifacts/.advisor/find-files-1776580145732-0b31737c.txt-ffaf6a3ddc.digest.md:50:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776580145732-0b31737c.txt-ffaf6a3ddc.digest.md-51:- /challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776592696562-1f197bf3.txt-5847199198.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/find-files-1776592696562-1f197bf3.txt-5847199198.digest.md:8:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776592696562-1f197bf3.txt-5847199198.digest.md-9:/challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776592696562-1f197bf3.txt-5847199198.digest.md-38:## Routes
+/challenge/shared-artifacts/.advisor/find-files-1776592696562-1f197bf3.txt-5847199198.digest.md:39:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776592696562-1f197bf3.txt-5847199198.digest.md-40:- /challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md:8:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-9:/challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-48:## Routes
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md:49:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-50:- /challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-1490f4bb3d.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-1490f4bb3d.digest.md:15:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-1490f4bb3d.digest.md-16:/challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-1490f4bb3d.digest.md-33:- /challenge/shared-artifacts/find-files-1776593142014-95fa0412.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-1490f4bb3d.digest.md:34:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593142014-95fa0412.txt-0c733a3e42.digest.md-1490f4bb3d.digest.md-35:- /challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md:8:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-9:/challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-52:## Routes
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md:53:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-54:- /challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md:15:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-16:/challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-38:- /challenge/shared-artifacts/find-files-1776593226747-1f5d91bd.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md:39:- /challenge/shared-artifacts/aeBPF_preview.txt
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-40:- /challenge/shared-artifacts/current_tree.txt
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3:- file_size: 13
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-10:- file_size: 13
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-20:## Signal hits
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md:21:- L2: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-22:- L8: - DH{fake_flag}
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-25:## Routes
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md:26:- /challenge/shared-artifacts/aeBPF/chal/flag
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-17:- file_size: 13
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-27:## Signal hits
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:28:- L2: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-29:- L8: - DH{fake_flag}
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-33:- L2: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:34:- L9: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-35:- L15: - DH{fake_flag}
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-36:- L18: - L1: DH{fake_flag}
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:37:- L21: - L2: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-38:- L22: - L8: - DH{fake_flag}
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-43:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:44:- /challenge/shared-artifacts/aeBPF/chal/flag
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:23:- artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-24:- file_size: 13
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-35:- L9: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:36:- L16: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-37:- L22: - DH{fake_flag}
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-38:- L25: - L1: DH{fake_flag}
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:39:- L28: - L2: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-40:- L29: - L8: - DH{fake_flag}
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-45:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:46:- /challenge/shared-artifacts/aeBPF/chal/flag
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-29:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:30:- artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-31:- file_size: 13
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-36:- L16: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:37:- L23: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-38:- L29: - DH{fake_flag}
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-40:- L35: - L9: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:41:- L36: - L16: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-42:
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-46:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:47:- /challenge/shared-artifacts/aeBPF/chal/flag
+--
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/init
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-3:- file_size: 444
+--
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-3d243a714e.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-3d243a714e.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/init
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-3d243a714e.digest.md-10:- file_size: 444
+--
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-3d243a714e.digest.md-35:## Routes
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-3d243a714e.digest.md:36:- /challenge/shared-artifacts/aeBPF/src/buildroot/init
+/challenge/shared-artifacts/.advisor/init-d90dbe4800.digest.md-3d243a714e.digest.md-37:- /bin/sh
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-3:- file_size: 95850
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-10:- file_size: 95850
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md:44:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-45:- /sbin/modprobe
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-17:- file_size: 95850
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-44:- /challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md:45:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-46:- /sbin/modprobe
+--
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md-3:- file_size: 1002
+--
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md-d9ba6c2108.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md-d9ba6c2108.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md-d9ba6c2108.digest.md-10:- file_size: 1002
+--
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md-d9ba6c2108.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/mdev.conf-e1bc9d3385.digest.md-d9ba6c2108.digest.md:44:- /challenge/shared-artifacts/aeBPF/src/buildroot/mdev.conf
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-3:- file_size: 1800402
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-10:- file_size: 1800402
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-23:## Routes
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md:24:- /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-17:- file_size: 1800402
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-30:## Routes
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:31:- /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-32:
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-39:- /challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:40:- /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-3:- file_size: 1800402
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-10:- file_size: 1800402
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-23:## Routes
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md:24:- /challenge/shared-artifacts/aeBPF/src/output/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-3:- file_size: 344
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-10:- file_size: 344
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-38:## Routes
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md:39:- /challenge/shared-artifacts/aeBPF/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-40:- /bin/sh
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-17:- file_size: 344
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-43:- /challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md:44:- /challenge/shared-artifacts/aeBPF/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-45:- /bin/sh
+--
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-15:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md:16:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-17:     1040  2025-12-23 08:56   src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-22:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md:23:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-24:     1040  2025-12-23 08:56   src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-8ebf3aeecd.digest.md-29:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-8ebf3aeecd.digest.md:30:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-8ebf3aeecd.digest.md-31:     1040  2025-12-23 08:56   src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-15:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md:16:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-17:     1040  2025-12-23 08:56   src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md-22:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md:23:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md-24:     1040  2025-12-23 08:56   src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-12:src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md:13:src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-14:src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-19:src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md:20:src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-21:src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-12:src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md:13:src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-14:src/buildroot/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/ziplist.txt-4c80450512.digest.md-15:      608  2025-12-23 08:56   src/buildroot/build_script.sh
+/challenge/shared-artifacts/.advisor/ziplist.txt-4c80450512.digest.md:16:     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+/challenge/shared-artifacts/.advisor/ziplist.txt-4c80450512.digest.md-17:     1040  2025-12-23 08:56   src/buildroot/Dockerfile

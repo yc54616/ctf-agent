@@ -19,6 +19,10 @@
           <strong id="updatedAt">-</strong>
         </div>
         <div class="metric-pill">
+          <span class="metric-label">Running</span>
+          <strong id="runningFor">-</strong>
+        </div>
+        <div class="metric-pill">
           <span class="metric-label">Sync</span>
           <strong id="syncMode">polling 2s</strong>
         </div>
@@ -101,8 +105,16 @@
             <p id="laneAdvisoryText">-</p>
           </div>
           <div class="note-card">
-            <h3>Shared Finding</h3>
-            <p id="sharedFindingText">-</p>
+            <h3>Shared Findings</h3>
+            <ul class="shared-finding-list" id="sharedFindingList">
+              <li class="empty">No shared findings yet.</li>
+            </ul>
+          </div>
+          <div class="note-card">
+            <h3>Flag Candidates</h3>
+            <ul class="candidate-list" id="flagCandidatesList">
+              <li class="empty">No candidate flags yet.</li>
+            </ul>
           </div>
         </section>
 

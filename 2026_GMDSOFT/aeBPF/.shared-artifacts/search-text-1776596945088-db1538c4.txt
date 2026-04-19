@@ -1,0 +1,275 @@
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-25:# Add files
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-26:COPY --chown=root:$user deploy/Image.gz \
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md:27:  deploy/rootfs.cpio.gz deploy/run.sh flag /home/$user/
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-28:
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-29:# chown & chmod files
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-32:
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-33:## Signal hits
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md:34:- L20: deploy/rootfs.cpio.gz deploy/run.sh flag /home/$user/
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-35:- L26: && chmod 660 flag
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-36:
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-31:
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-32:## Signal hits
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md:33:- L27: deploy/rootfs.cpio.gz deploy/run.sh flag /home/$user/
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md:34:- L34: - L20: deploy/rootfs.cpio.gz deploy/run.sh flag /home/$user/
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-35:- L35: - L26: && chmod 660 flag
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-36:- L37: ## Routes
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-31:
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-32:## Signal hits
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md:33:- L33: - L27: deploy/rootfs.cpio.gz deploy/run.sh flag /home/$user/
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md:34:- L34: - L34: - L20: deploy/rootfs.cpio.gz deploy/run.sh flag /home/$user/
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-35:- L35: - L35: - L26: && chmod 660 flag
+/challenge/shared-artifacts/.advisor/Dockerfile-a141246387.digest.md-4aafc62a69.digest.md-12a9aad852.digest.md-36:- L36: - L37: ## Routes
+--
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-69:- /output/Image.gz
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-70:- /output
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md:71:- /output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-72:- /bin/sh
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-73:- /proc
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-43:- /output/Image.gz
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-44:- /output
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md:45:- /output/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-47:- /output/Image.gz
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-48:- /output
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md:49:- /output/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md-47:- /output/Image.gz
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md-48:- /output
+/challenge/shared-artifacts/.advisor/build.sh-01367debdb.digest.md-74eade6859.digest.md-81b7f64b8f.digest.md:49:- /output/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-20:mkdir /rootfs
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-21:cd /rootfs
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md:22:gunzip -c $BUILDROOT/output/images/rootfs.cpio.gz | cpio -vid
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-23:
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-24:# Copy init script & mdev.conf into rootfs
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-29:echo 'DH{fake_flag}' > flag
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-30:chmod 400 flag
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md:31:find . | cpio -H newc --owner root -o | gzip > /output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-32:
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-33:## Signal hits
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-43:- /init
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-44:- /mdev.conf
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md:45:- /output/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-27:mkdir /rootfs
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-28:cd /rootfs
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md:29:gunzip -c $BUILDROOT/output/images/rootfs.cpio.gz | cpio -vid
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-30:
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-31:# Copy init script & mdev.conf into rootfs
+--
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-48:- /init
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md-49:- /mdev.conf
+/challenge/shared-artifacts/.advisor/build_script.sh-55c9654a64.digest.md-0b1fae5900.digest.md:50:- /output/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-9:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-10:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md:11:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-12:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-13:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/flag
+--
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-16:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-17:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md:18:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-19:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-20:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/flag
+--
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-6cde25056e.digest.md-23:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-6cde25056e.digest.md-24:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-6cde25056e.digest.md:25:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-6cde25056e.digest.md-26:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-52348585b3.digest.md-6cde25056e.digest.md-27:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/flag
+--
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-9:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-10:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md:11:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-12:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-13:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/flag
+--
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-25:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-26:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md:27:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-28:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-29:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/flag
+--
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-16:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-17:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md:18:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-19:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-20:/challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/flag
+--
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-35:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-36:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md:37:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-38:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/distfiles_filelist.txt-e263ada206.digest.md-acafcb5de3.digest.md-39:- /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/chal/flag
+--
+/challenge/shared-artifacts/.advisor/peek-file-1776593908331-34b1b776.txt-4e5fade3ed.digest.md-69:- /output/Image.gz
+/challenge/shared-artifacts/.advisor/peek-file-1776593908331-34b1b776.txt-4e5fade3ed.digest.md-70:- /output
+/challenge/shared-artifacts/.advisor/peek-file-1776593908331-34b1b776.txt-4e5fade3ed.digest.md:71:- /output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/peek-file-1776593908331-34b1b776.txt-4e5fade3ed.digest.md-72:- /bin/sh
+/challenge/shared-artifacts/.advisor/peek-file-1776593908331-34b1b776.txt-4e5fade3ed.digest.md-73:- /proc
+--
+/challenge/shared-artifacts/.advisor/peek-file-1776593913523-970c67e2.txt-db1918b6b6.digest.md-62:- /output/Image.gz
+/challenge/shared-artifacts/.advisor/peek-file-1776593913523-970c67e2.txt-db1918b6b6.digest.md-63:- /output
+/challenge/shared-artifacts/.advisor/peek-file-1776593913523-970c67e2.txt-db1918b6b6.digest.md:64:- /output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/peek-file-1776593913523-970c67e2.txt-db1918b6b6.digest.md-65:- /bin/sh
+/challenge/shared-artifacts/.advisor/peek-file-1776593913523-970c67e2.txt-db1918b6b6.digest.md-66:- /proc
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-3:- file_size: 1800402
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-4:- file_type: binary-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-3:- file_size: 397
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-10:- file_size: 1800402
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-11:- file_type: binary-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-22:
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-23:## Routes
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md:24:- /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-3:- file_size: 686
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-10:- file_size: 397
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-17:- file_size: 1800402
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-18:- file_type: binary-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-29:
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-30:## Routes
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:31:- /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-32:
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-33:## Signal hits
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-37:
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md-38:## Routes
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:39:- /challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-0f3a49eaf6.digest.md-2488f8f12c.digest.md-1c0003d089.digest.md:40:- /challenge/shared-artifacts/aeBPF/chal/deploy/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-3:- file_size: 1800402
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-4:- file_type: binary-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-3:- file_size: 396
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-10:- file_size: 1800402
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-11:- file_type: binary-like
+--
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-22:
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md-23:## Routes
+/challenge/shared-artifacts/.advisor/rootfs.cpio.gz-3a16b0bfaf.digest.md-122cd133ff.digest.md:24:- /challenge/shared-artifacts/aeBPF/src/output/rootfs.cpio.gz
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-11:
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-12:exec timeout -s SIGKILL 300 qemu-system-aarch64 \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md:13:  -initrd ./rootfs.cpio.gz -kernel Image.gz \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-14:  -M virt -cpu max -smp cores=1,threads=1 \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-15:  -append "console=ttyAMA0 root=/dev/ram oops=panic panic=1 panic_on_warn=1 quiet" \
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-22:## Routes
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-23:- /bin/sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md:24:- /rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-25:- /dev/ram
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-26:- /dev/null
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-18:
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-19:exec timeout -s SIGKILL 300 qemu-system-aarch64 \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md:20:  -initrd ./rootfs.cpio.gz -kernel Image.gz \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-21:  -M virt -cpu max -smp cores=1,threads=1 \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-22:  -append "console=ttyAMA0 root=/dev/ram oops=panic panic=1 panic_on_warn=1 quiet" \
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-29:## Routes
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-30:- /bin/sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md:31:- /rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-32:
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-33:## Signal hits
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-39:- /challenge/shared-artifacts/aeBPF/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-40:- /bin/sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md:41:- /rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-42:- /dev/ram
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-43:- /dev/null
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-25:
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-26:exec timeout -s SIGKILL 300 qemu-system-aarch64 \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md:27:  -initrd ./rootfs.cpio.gz -kernel Image.gz \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-28:  -M virt -cpu max -smp cores=1,threads=1 \
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-29:  -append "console=ttyAMA0 root=/dev/ram oops=panic panic=1 panic_on_warn=1 quiet" \
+--
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-44:- /challenge/shared-artifacts/aeBPF/chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-45:- /bin/sh
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md:46:- /rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-47:- /dev/ram
+/challenge/shared-artifacts/.advisor/run.sh-3d855f1b51.digest.md-328490ba88.digest.md-df1c9b90ba.digest.md-48:- /dev/null
+--
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-11:
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-12:exec timeout -s SIGKILL 300 qemu-system-aarch64 \
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md:13:  -initrd ./rootfs.cpio.gz -kernel Image.gz \
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-14:  -M virt -cpu max -smp cores=1,threads=1 \
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-15:  -append "console=ttyAMA0 root=/dev/ram oops=panic panic=1 panic_on_warn=1 quiet" \
+--
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-22:## Routes
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-23:- /bin/sh
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md:24:- /rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-25:- /dev/ram
+/challenge/shared-artifacts/.advisor/runsh.txt-14a3fe272e.digest.md-26:- /dev/null
+--
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-20:src/output/
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-21:src/output/Image.gz
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md:22:src/output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-23:chal/
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-24:chal/deploy/
+--
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-26:chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-27:chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md:28:chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-29:chal/flag
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-30:chal/Dockerfile
+--
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-27:src/output/
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-28:src/output/Image.gz
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md:29:src/output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-30:chal/
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-31:chal/deploy/
+--
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-20:src/output/
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-21:src/output/Image.gz
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md:22:src/output/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-23:chal/
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-24:chal/deploy/
+--
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-26:chal/deploy/Image.gz
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-27:chal/deploy/run.sh
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md:28:chal/deploy/rootfs.cpio.gz
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-29:chal/flag
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-30:chal/Dockerfile

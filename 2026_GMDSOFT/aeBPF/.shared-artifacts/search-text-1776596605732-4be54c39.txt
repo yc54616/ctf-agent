@@ -1,0 +1,106 @@
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-21:COPY configs/buildroot.config               /buildroot-2022.11/.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-22:COPY configs/busybox.config                 /buildroot-2022.11/package/busybox/busybox.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md:23:COPY configs/linux.config                   /buildroot-2022.11/board/qemu/aarch64-virt/linux.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-24:COPY ebpf-nonconst-bounds-tracking.patch    /buildroot-2022.11/ebpf-nonconst-bounds-tracking.patc...
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-25:
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-35:- /buildroot-2022.11/.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-36:- /buildroot-2022.11/package/busybox/busybox.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md:37:- /buildroot-2022.11/board/qemu/aarch64-virt/linux.config
+--
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-28:COPY configs/buildroot.config               /buildroot-2022.11/.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-29:COPY configs/busybox.config                 /buildroot-2022.11/package/busybox/busybox.config
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md:30:COPY configs/linux.config...
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-31:
+/challenge/shared-artifacts/.advisor/Dockerfile-6fe5ca491b.digest.md-9c302aa020.digest.md-32:## Signal hits
+--
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-17:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-18:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/configs/busybox.config
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md:19:distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-20:distfiles/b440ad...
+/challenge/shared-artifacts/.advisor/current_tree.txt-349327f393.digest.md-21:
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md:2:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-3:- file_size: 95850
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-3:- file_size: 2238
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md:9:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-10:- file_size: 95850
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-42:
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md:44:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-45:- /sbin/modprobe
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-3:- file_size: 1340
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-10:- file_size: 2238
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md:16:- artifact: /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-17:- file_size: 95850
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-18:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-42:
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md:44:- /challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md:45:- /challenge/shared-artifacts/aeBPF/src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/linux.config-e1ae385363.digest.md-5344744b3f.digest.md-26612a2419.digest.md-46:- /sbin/modprobe
+--
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-18:     1002  2025-12-23 08:56   src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-19:        0  2025-12-23 08:56   src/buildroot/configs/
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md:20:    95850  2025-12-23 08:56   src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-21:   121842  2025-12-23 08:56   src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-22:    32424  2025-12-23 08:56   src/buildroot/configs/busybox.config
+--
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-25:     1002  2025-12-23 08:56   src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-26:        0  2025-12-23 08:56   src/buildroot/configs/
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md:27:    95850  2025-12-23 08:56   src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-28:   121842  2025-12-23 08:56   src/buildroot/configs/buildroot.c...
+/challenge/shared-artifacts/.advisor/unzip-list.txt-f2b1c0934d.digest.md-290196066b.digest.md-29:
+--
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-18:     1002  2025-12-23 08:56   src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-19:        0  2025-12-23 08:56   src/buildroot/configs/
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md:20:    95850  2025-12-23 08:56   src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-21:   121842  2025-12-23 08:56   src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-22:    32424  2025-12-23 08:56   src/buildroot/configs/busybox.config
+--
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md-25:     1002  2025-12-23 08:56   src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md-26:        0  2025-12-23 08:56   src/buildroot/configs/
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md:27:    95850  2025-12-23 08:56   src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md-28:   121842  2025-12-23 08:56   src/buildroot/configs/buildroot.con...
+/challenge/shared-artifacts/.advisor/zip-list.txt-23d93e17e5.digest.md-84704c1854.digest.md-29:
+--
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-15:src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-16:src/buildroot/configs/
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md:17:src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-18:src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-19:src/buildroot/configs/busybox.config
+--
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-22:src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-23:src/buildroot/configs/
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md:24:src/buildroot/configs/linux.config
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-25:src/buildroot/configs/buildroot.config
+/challenge/shared-artifacts/.advisor/zip_entries.txt-7b52e61aca.digest.md-aab9fff070.digest.md-26:src/buildroot/configs/busybox.config
+--
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-15:src/buildroot/mdev.conf
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md-16:src/buildroot/configs/
+/challenge/shared-artifacts/.advisor/zip_list.txt-817d3f9028.digest.md:17:src/buildroot/configs/linux.config
+... [stopped after 20 matches]

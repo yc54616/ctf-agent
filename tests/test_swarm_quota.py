@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
 from backend.agents.swarm import ChallengeSwarm
+from backend.prompts import ChallengeMeta
 from backend.solver_base import QUOTA_ERROR, SolverResult
 
 
@@ -42,10 +44,10 @@ async def test_quota_error_stops_lane_without_api_fallback(
 ) -> None:
     swarm = ChallengeSwarm(
         challenge_dir=str(tmp_path / "challenge"),
-        meta=SimpleNamespace(name="quota-test"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=object(),  # type: ignore[arg-type]
+        meta=ChallengeMeta(name="quota-test"),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=[],
     )
     solver = _QuotaSolver("codex/gpt-5.3-codex-spark")

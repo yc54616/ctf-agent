@@ -8,6 +8,7 @@ from typing import Protocol
 
 # Status constants
 FLAG_FOUND = "flag_found"
+FLAG_CANDIDATE = "flag_candidate"
 GAVE_UP = "gave_up"
 CANCELLED = "cancelled"
 ERROR = "error"
@@ -15,6 +16,16 @@ QUOTA_ERROR = "quota_error"
 
 # Flag confirmation markers from CTFd
 CORRECT_MARKERS = ("CORRECT", "ALREADY SOLVED")
+READ_ONLY_TOOL_NAMES = frozenset(
+    {
+        "fs_query",
+        "view_image",
+    }
+)
+
+
+def is_read_only_tool(tool_name: str) -> bool:
+    return tool_name in READ_ONLY_TOOL_NAMES
 
 
 def _compact_runtime_text(value: object, limit: int = 160) -> str:
@@ -27,8 +38,15 @@ def _compact_runtime_text(value: object, limit: int = 160) -> str:
 
 def summarize_tool_input(tool_name: str, payload: object) -> str:
     if isinstance(payload, dict):
+        payload_dict = {str(key): value for key, value in payload.items()}
+        if tool_name == "fs_query":
+            action = payload_dict.get("action")
+            path = payload_dict.get("path")
+            if action:
+                target = f"{action} {path}".strip() if path else str(action)
+                return _compact_runtime_text(f"{tool_name} {target}")
         for key in ("command", "path", "filename", "url", "flag", "message", "uuid"):
-            value = payload.get(key)
+            value = payload_dict.get(key)
             if value:
                 if key == "command":
                     return _compact_runtime_text(value)
@@ -45,6 +63,8 @@ def summarize_tool_result(value: object) -> str:
 def lifecycle_for_result(status: str) -> str:
     if status == FLAG_FOUND:
         return "won"
+    if status == FLAG_CANDIDATE:
+        return "finished"
     if status == CANCELLED:
         return "cancelled"
     if status == QUOTA_ERROR:
@@ -67,6 +87,8 @@ class LaneRuntimeStatus:
     last_command: str = ""
     last_completed_at: float | None = None
     last_exit_hint: str = ""
+    read_only_streak: int = 0
+    last_progress_kind: str = "turn_start"
 
     def mark_ready(self) -> None:
         if self.lifecycle == "starting":
@@ -104,6 +126,8 @@ class LaneRuntimeStatus:
             "last_command": self.last_command,
             "last_completed_at": self.last_completed_at,
             "last_exit_hint": self.last_exit_hint,
+            "read_only_streak": self.read_only_streak,
+            "last_progress_kind": self.last_progress_kind,
         }
 
     def _roll_current_to_last(self) -> None:
@@ -125,6 +149,9 @@ class SolverResult:
     step_count: int
     cost_usd: float
     log_path: str
+    candidate_flag: str | None = None
+    candidate_evidence: str = ""
+    candidate_confidence: str = ""
 
 
 class SolverProtocol(Protocol):

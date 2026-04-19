@@ -1,0 +1,298 @@
+/challenge/shared-artifacts/aeBPF_preview.txt-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/aeBPF_preview.txt-132:-			return -EINVAL;
+/challenge/shared-artifacts/aeBPF_preview.txt:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/aeBPF_preview.txt-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/aeBPF_preview.txt-135:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-47:   131:    131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-48:   132:    132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt:49:   133:    133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-50:   134:    134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-51:   135:    135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-79:    79:   46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-80:    80:   47: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt:81:    81:   48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-82:    82:   49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-83:    83:   50: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-19:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-46:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-20:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-47:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt:21:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch:48:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-22:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-49:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-23:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-50:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-3:/challenge/shared-artifacts/aeBPF_preview.txt-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-4:/challenge/shared-artifacts/aeBPF_preview.txt-132:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:5:/challenge/shared-artifacts/aeBPF_preview.txt:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-6:/challenge/shared-artifacts/aeBPF_preview.txt-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-7:/challenge/shared-artifacts/aeBPF_preview.txt-135:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-13:/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-14:/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:15:/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-16:/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-17:/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-23:/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-24:/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:25:/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-26:/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-27:/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-33:/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-34:/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:35:/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-36:/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-37:/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-43:/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-47:   131:    131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-44:/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-48:   132:    132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:45:/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt:49:   133:    133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-46:/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-50:   134:    134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-47:/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-51:   135:    135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-53:/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-54:/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:55:/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-56:/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-57:/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-63:/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-79:    79:   46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-64:/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-80:    80:   47: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:65:/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt:81:    81:   48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-66:/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-82:    82:   49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-67:/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-83:    83:   50: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-73:/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-74:/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:75:/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-76:/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-77:/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-83:/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-84:/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:85:/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-86:/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-87:/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-93:/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-94:/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:95:/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-96:/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-97:/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-103:/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-19:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-46:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-104:/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-20:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-47:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:105:/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt:21:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch:48:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-106:/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-22:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-49:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-107:/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-23:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-50:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-113:/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-138:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-114:/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-139:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:115:/challenge/shared-artifacts/stdout-1776528205520-750179f0.log:140:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-116:/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-141:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-117:/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-142:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-123:/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-141:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-124:/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-142:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:125:/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log:143:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-126:/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-144:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-127:/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-145:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-133:/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-114:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-134:/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-115:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:135:/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log:116:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-136:/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-117:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-137:/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-118:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-143:/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-134:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-144:/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-135:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:145:/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log:136:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-146:/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-137:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-147:/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-138:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-153:/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-134:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-154:/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-135:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:155:/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log:136:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-156:/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-137:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-157:/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-138:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-163:/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-92:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-164:/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-93:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:165:/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log:94:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-166:/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-95:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-167:/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-96:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-173:/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-79:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-174:/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-80:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:175:/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log:81:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-176:/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-82:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-177:/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-83:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-183:/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-148:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-184:/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-149:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:185:/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log:150:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-186:/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-151:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-187:/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-152:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-193:/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-113:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-194:/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-114:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:195:/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log:115:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-196:/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-116:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-197:/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-117:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-203:/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-167:  46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-204:/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-168:  47: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:205:/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log:169:  48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-206:/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-170:  49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-207:/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-171:  50: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-213:/challenge/shared-artifacts/stdout-1776575453249-18513798.log-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-214:/challenge/shared-artifacts/stdout-1776575453249-18513798.log-132:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:215:/challenge/shared-artifacts/stdout-1776575453249-18513798.log:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-216:/challenge/shared-artifacts/stdout-1776575453249-18513798.log-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-217:/challenge/shared-artifacts/stdout-1776575453249-18513798.log-135:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-223:/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-196:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-224:/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-197:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:225:/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log:198:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-226:/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-199:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-227:/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-200:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-233:/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-198:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-234:/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-199:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:235:/challenge/shared-artifacts/stdout-1776576762873-4540c383.log:200:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-236:/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-201:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-237:/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-202:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-243:/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-79:  46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-244:/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-80:  47: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:245:/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log:81:  48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-246:/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-82:  49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-247:/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-83:  50: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-253:/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-110:  46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-254:/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-111:  47: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:255:/challenge/shared-artifacts/stdout-1776578039854-266046b0.log:112:  48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-256:/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-113:  49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-257:/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-114:  50: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-263:/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-131:046: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-264:/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-132:047: -			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:265:/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log:133:048: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-266:/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-134:049: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-267:/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-135:050: +				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-273:/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-112:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-274:/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-113:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:275:/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log:114:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-276:/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-115:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-277:/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-116:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-283:/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-112:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-284:/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-113:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:285:/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log:114:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-286:/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-115:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-287:/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-116:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-293:/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-101:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-294:/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-102:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:295:/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log:103:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-296:/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-104:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-297:/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-105:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-303:/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-304:/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-132:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:305:/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-306:/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-307:/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-135:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-313:/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-314:/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-132:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:315:/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-316:/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-317:/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-135:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-323:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-38:- L15: #     echo "DH{fake_flag}" > buildroot/flag
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-324:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-39:- L16: #     echo "Injected fake flag into Docker build context."
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:325:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log:40:- L36: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-326:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-41:- L37: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-327:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-42:- L42: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-333:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-213:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-334:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-214:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:335:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log:215:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-336:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-216:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-337:/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-217:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-343:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-38:- L15: #     echo "DH{fake_flag}" > buildroot/flag
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-344:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-39:- L16: #     echo "Injected fake flag into Docker build context."
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:345:/challenge/shared-artifacts/stdout-1776592875042-74660449.log:40:- L36: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-346:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-41:- L37: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-347:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-42:- L42: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-353:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-215:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-354:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-216:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:355:/challenge/shared-artifacts/stdout-1776592875042-74660449.log:217:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-356:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-218:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-357:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-219:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-363:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-297:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-364:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-298:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:365:/challenge/shared-artifacts/stdout-1776592875042-74660449.log:299:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-366:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-300:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-367:/challenge/shared-artifacts/stdout-1776592875042-74660449.log-301:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-373:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-35:- he caller\n");
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-374:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-36:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:375:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log:37:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-376:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-38:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-377:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-39:+				verbose_linfo(env, insn_idx, "; ");
+--
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-383:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-112:- L34: - L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt-384:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-113:- L35: - L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776597520977-5184962f.txt:385:/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log:114:- L36: - L48: +		if (env->allow_ptr_leaks) {
+... [stopped after 50 matches]

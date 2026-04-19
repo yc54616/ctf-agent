@@ -14,6 +14,7 @@ from backend.config import Settings
 from backend.cost_tracker import CostTracker
 from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
+from backend.message_bus import CandidateRef, CoordinatorNoteRef
 from backend.models import DEFAULT_MODELS
 from backend.operator_ui import (
     collect_advisory_history,
@@ -30,12 +31,91 @@ logger = logging.getLogger(__name__)
 TurnFn = Callable[[str], Coroutine[Any, Any, None]]
 
 
+def _render_solver_message(event: object) -> str:
+    if isinstance(event, CandidateRef):
+        return event.rendered_text()
+
+    if isinstance(event, CoordinatorNoteRef):
+        return event.rendered_text()
+
+    if isinstance(event, str):
+        if " [Advisor] " in event:
+            return f"ADVISOR MESSAGE: {event}"
+        return f"SOLVER MESSAGE: {event}"
+
+    candidate_event = CandidateRef.from_snapshot(event)
+    if candidate_event is not None:
+        return candidate_event.rendered_text()
+
+    coordinator_note_event = CoordinatorNoteRef.from_snapshot(event)
+    if coordinator_note_event is not None:
+        return coordinator_note_event.rendered_text()
+
+    if not isinstance(event, dict):
+        return f"SOLVER MESSAGE: {event}"
+    payload = {str(key): value for key, value in event.items()}
+
+    kind = str(payload.get("kind") or "solver_message")
+    challenge_name = str(payload.get("challenge_name") or "").strip()
+    source_model = str(payload.get("source_model") or "").strip()
+    prefix = f"[{challenge_name}/{source_model}] " if challenge_name and source_model else ""
+
+    if kind == "candidate_ref":
+        source_models = payload.get("source_models") or []
+        if not isinstance(source_models, list):
+            source_models = []
+        evidence_digest_paths = payload.get("evidence_digest_paths") or {}
+        if not isinstance(evidence_digest_paths, dict):
+            evidence_digest_paths = {}
+        evidence_pointer_paths = payload.get("evidence_pointer_paths") or {}
+        if not isinstance(evidence_pointer_paths, dict):
+            evidence_pointer_paths = {}
+        trace_paths = payload.get("trace_paths") or {}
+        if not isinstance(trace_paths, dict):
+            trace_paths = {}
+        lines = [
+            f"{prefix}FLAG CANDIDATE: {str(payload.get('flag') or '').strip()}",
+            f"Advisor verdict: {str(payload.get('advisor_decision') or 'insufficient')}",
+        ]
+        if source_models:
+            lines.append(f"Source models: {', '.join(str(item) for item in source_models if str(item).strip())}")
+        advisor_note = str(payload.get("advisor_note") or "").strip()
+        if advisor_note:
+            lines.extend(["Advisor note:", advisor_note])
+        summary = str(payload.get("summary") or "").strip()
+        if summary:
+            lines.extend(["Evidence summary:", summary])
+        for digest in evidence_digest_paths.values():
+            digest_text = str(digest).strip()
+            if digest_text:
+                lines.append(f"Evidence digest: {digest_text}")
+        for pointer in evidence_pointer_paths.values():
+            pointer_text = str(pointer).strip()
+            if pointer_text:
+                lines.append(f"Evidence pointer: {pointer_text}")
+        for trace in trace_paths.values():
+            trace_text = str(trace).strip()
+            if trace_text:
+                lines.append(f"Trace: {trace_text}")
+        lines.append("Review this candidate. Submit it only if the evidence is strong; otherwise keep lanes exploring.")
+        return "\n".join(lines)
+
+    if kind == "coordinator_note":
+        lines = [f"ADVISOR MESSAGE: {prefix}{str(payload.get('summary') or '').strip()}".rstrip()]
+        pointer_text = str(payload.get("pointer_path") or "").strip()
+        if pointer_text:
+            lines.append(f"Pointer: {pointer_text}")
+        return "\n".join(line for line in lines if line.strip())
+
+    return f"SOLVER MESSAGE: {prefix}{str(payload.get('summary') or event).strip()}"
+
+
 def _restored_solved_names(deps: CoordinatorDeps) -> set[str]:
     solved: set[str] = set()
     for name, result in deps.results.items():
         if not isinstance(result, dict):
             continue
-        if result.get("status") == "flag_found" or result.get("flag"):
+        if result.get("status") == "flag_found":
             solved.add(name)
     return solved
 
@@ -104,6 +184,24 @@ def build_deps(
     return ctfd, cost_tracker, deps
 
 
+async def cleanup_coordinator_runtime(
+    deps: CoordinatorDeps,
+    ctfd: CTFdClient,
+    cost_tracker: CostTracker,
+) -> None:
+    for swarm in deps.swarms.values():
+        swarm.kill()
+    for task in deps.swarm_tasks.values():
+        task.cancel()
+    if deps.swarm_tasks:
+        await asyncio.gather(*deps.swarm_tasks.values(), return_exceptions=True)
+    cost_tracker.log_summary()
+    try:
+        await ctfd.close()
+    except Exception:
+        pass
+
+
 async def run_event_loop(
     deps: CoordinatorDeps,
     ctfd: CTFdClient,
@@ -111,6 +209,7 @@ async def run_event_loop(
     turn_fn: TurnFn,
     status_interval: int = 60,
     propagate_fatal: bool = False,
+    cleanup_runtime_on_exit: bool = True,
 ) -> dict[str, Any]:
     """Run the shared coordinator event loop.
 
@@ -189,7 +288,12 @@ async def run_event_loop(
                 name for name, task in list(deps.swarm_tasks.items()) if task.done()
             ]
             for name in finished_names:
-                parts.append(f"SOLVER FINISHED: Swarm for '{name}' completed. Check results or retry.")
+                task = deps.swarm_tasks[name]
+                exc = task.exception() if not task.cancelled() else None
+                if exc is not None:
+                    parts.append(f"SOLVER FAILED: Swarm for '{name}' crashed ({type(exc).__name__}: {exc}). Consider retrying.")
+                else:
+                    parts.append(f"SOLVER FINISHED: Swarm for '{name}' completed. Check results or retry.")
 
             if finished_names:
                 from backend.agents.coordinator_core import (
@@ -206,10 +310,7 @@ async def run_event_loop(
             while True:
                 try:
                     solver_msg = deps.coordinator_inbox.get_nowait()
-                    if " [Advisor] " in str(solver_msg):
-                        parts.append(f"ADVISOR MESSAGE: {solver_msg}")
-                    else:
-                        parts.append(f"SOLVER MESSAGE: {solver_msg}")
+                    parts.append(_render_solver_message(solver_msg))
                 except asyncio.QueueEmpty:
                     break
 
@@ -255,17 +356,8 @@ async def run_event_loop(
             msg_server.close()
             await msg_server.wait_closed()
         await poller.stop()
-        for swarm in deps.swarms.values():
-            swarm.kill()
-        for task in deps.swarm_tasks.values():
-            task.cancel()
-        if deps.swarm_tasks:
-            await asyncio.gather(*deps.swarm_tasks.values(), return_exceptions=True)
-        cost_tracker.log_summary()
-        try:
-            await ctfd.close()
-        except Exception:
-            pass
+        if cleanup_runtime_on_exit:
+            await cleanup_coordinator_runtime(deps, ctfd, cost_tracker)
 
     return {
         "results": deps.results,
@@ -351,6 +443,7 @@ def _status_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
     )
     return {
         "models": list(deps.model_specs),
+        "session_started_at": deps.session_started_at,
         "max_concurrent_challenges": deps.max_concurrent_challenges,
         "known_challenge_count": deps.known_challenge_count,
         "known_solved_count": deps.known_solved_count,

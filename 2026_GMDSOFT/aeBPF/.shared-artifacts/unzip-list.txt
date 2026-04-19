@@ -1,0 +1,28 @@
+Archive:  /challenge/distfiles/b440add5-9d3f-46d8-96cf-012b3bb3ef53.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+        0  2025-12-23 08:56   src/
+      831  2025-12-23 08:56   src/build.sh
+        0  2025-12-23 08:56   src/buildroot/
+      444  2025-12-23 08:56   src/buildroot/init
+      608  2025-12-23 08:56   src/buildroot/build_script.sh
+     2958  2025-12-23 08:56   src/buildroot/ebpf-nonconst-bounds-tracking.patch
+     1040  2025-12-23 08:56   src/buildroot/Dockerfile
+     1002  2025-12-23 08:56   src/buildroot/mdev.conf
+        0  2025-12-23 08:56   src/buildroot/configs/
+    95850  2025-12-23 08:56   src/buildroot/configs/linux.config
+   121842  2025-12-23 08:56   src/buildroot/configs/buildroot.config
+    32424  2025-12-23 08:56   src/buildroot/configs/busybox.config
+        0  2025-12-23 08:56   src/output/
+  4848360  2025-12-23 08:56   src/output/Image.gz
+  1800402  2025-12-23 08:56   src/output/rootfs.cpio.gz
+        0  2025-12-23 08:56   chal/
+        0  2025-12-23 08:56   chal/deploy/
+  7639891  2025-12-23 08:56   chal/deploy/qemu-system-aarch64-7.1.0-r7.apk
+  4848360  2025-12-23 08:56   chal/deploy/Image.gz
+      344  2025-12-23 08:56   chal/deploy/run.sh
+  1800402  2025-12-23 08:56   chal/deploy/rootfs.cpio.gz
+       13  2025-12-23 08:56   chal/flag
+      868  2025-12-23 08:56   chal/Dockerfile
+---------                     -------
+ 21195639                     23 files

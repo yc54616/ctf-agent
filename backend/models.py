@@ -20,6 +20,9 @@ DEFAULT_MODELS: list[str] = [
 
 # Context window sizes (tokens)
 CONTEXT_WINDOWS: dict[str, int] = {
+    "us.anthropic.claude-opus-4-7-v1": 1_000_000,
+    "claude-opus-4-7": 1_000_000,
+    "claude-sonnet-4-6": 1_000_000,
     "us.anthropic.claude-opus-4-6-v1": 1_000_000,
     "claude-opus-4-6": 1_000_000,
     "gemini-2.5-flash": 1_000_000,
@@ -38,6 +41,9 @@ CONTEXT_WINDOWS: dict[str, int] = {
 
 # Models that support vision
 VISION_MODELS: set[str] = {
+    "us.anthropic.claude-opus-4-7-v1",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
     "us.anthropic.claude-opus-4-6-v1",
     "claude-opus-4-6",
     "gpt-5.4",

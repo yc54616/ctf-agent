@@ -33,6 +33,17 @@ def _trace_glob(challenge_name: str, model_spec: str) -> str:
     return f"trace-{_sanitize(challenge_name)}-{_sanitize(model_id)}-*.jsonl"
 
 
+def _trace_model_id(trace_path: Path, challenge_name: str) -> str | None:
+    prefix = f"trace-{_sanitize(challenge_name)}-"
+    if not trace_path.name.startswith(prefix):
+        return None
+    tail = trace_path.name[len(prefix):]
+    parts = tail.rsplit("-", 2)
+    if len(parts) != 3:
+        return None
+    return parts[0]
+
+
 def list_challenge_trace_files(
     challenge_name: str,
     *,
@@ -59,7 +70,16 @@ def list_trace_files(
     root = Path(log_dir)
     if not root.exists():
         return []
-    return sorted(root.glob(_trace_glob(challenge_name, model_spec)), key=lambda path: path.name, reverse=True)
+    expected_model_id = _sanitize(model_id_from_spec(model_spec))
+    return sorted(
+        (
+            path
+            for path in list_challenge_trace_files(challenge_name, log_dir=log_dir)
+            if _trace_model_id(path, challenge_name) == expected_model_id
+        ),
+        key=lambda path: path.name,
+        reverse=True,
+    )
 
 
 def read_trace_window(
@@ -83,12 +103,16 @@ def read_trace_window(
         line = raw_line.strip()
         if not line:
             continue
+        event: dict[str, Any]
         try:
-            event = json.loads(line)
+            parsed_event = json.loads(line)
         except json.JSONDecodeError:
             event = {"type": "invalid_json", "raw": line}
-        if not isinstance(event, dict):
-            event = {"type": "invalid_event", "raw": event}
+        else:
+            if isinstance(parsed_event, dict):
+                event = {str(key): value for key, value in parsed_event.items()}
+            else:
+                event = {"type": "invalid_event", "raw": parsed_event}
         event.setdefault("type", "event")
         event["line_no"] = line_no
         events.append(event)
@@ -129,13 +153,10 @@ def collect_advisory_history(
     """Collect recent unique auto lane advisories for a challenge."""
     traces = list_challenge_trace_files(challenge_name, log_dir=log_dir)
     entries: list[dict[str, Any]] = []
-    prefix = f"trace-{_sanitize(challenge_name)}-"
     for trace_path in traces:
-        tail = trace_path.name[len(prefix):]
-        parts = tail.rsplit("-", 2)
-        if len(parts) != 3:
+        model_id = _trace_model_id(trace_path, challenge_name)
+        if not model_id:
             continue
-        model_id = parts[0]
         for raw_line in trace_path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line:

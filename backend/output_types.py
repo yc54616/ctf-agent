@@ -3,7 +3,7 @@
 from pydantic import BaseModel
 
 
-class FlagFound(BaseModel):
+class FlagCandidate(BaseModel):
     flag: str
     method: str  # brief description of how
 
@@ -11,13 +11,13 @@ class FlagFound(BaseModel):
 def solver_output_json_schema() -> dict:
     """JSON schema for solver structured output — shared by Claude SDK and Codex.
 
-    Only flag_found is allowed — solvers must keep working until they find a flag.
-    No gave_up option forces persistent solving behavior.
+    Solvers emit a structured candidate when they believe they have a flag.
+    The swarm verifies candidates asynchronously and keeps the lane exploring.
     """
     return {
         "type": "object",
         "properties": {
-            "type": {"type": "string", "enum": ["flag_found"]},
+            "type": {"type": "string", "enum": ["flag_candidate"]},
             "flag": {"type": "string"},
             "method": {"type": "string"},
         },

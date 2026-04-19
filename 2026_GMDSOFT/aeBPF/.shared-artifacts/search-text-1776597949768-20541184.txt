@@ -1,0 +1,161 @@
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-43:
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-44:## Signal hits
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md:45:- L265: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md:46:- L266: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md:47:- L267: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md:48:- L268: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md:49:- L269: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-50:- L301: ... [stopped after 300 entries]
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-51:
+--
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-27:
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-28:## Signal hits
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md:29:- L45: - L265: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md:30:- L46: - L266: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md:31:- L47: - L267: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md:32:- L48: - L268: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md:33:- L49: - L269: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-34:- L50: - L301: ... [stopped after 300 entries]
+/challenge/shared-artifacts/.advisor/find-files-1776593226747-1f5d91bd.txt-2d5c99233b.digest.md-b5caa0a614.digest.md-35:- L52: ## Routes
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-3:- file_size: 202
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-3:- file_size: 558
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-10:- file_size: 202
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-31:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-32:## Signal hits
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:33:- L2: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-34:- L9: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-35:- L15: - DH{fake_flag}
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-41:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-42:## Routes
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md:43:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-44:- /challenge/shared-artifacts/aeBPF/chal/flag
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-3:- file_size: 1174
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-10:- file_size: 558
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:16:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-17:- file_size: 202
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-18:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-32:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-33:## Signal hits
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:34:- L2: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:35:- L9: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-36:- L16: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-37:- L22: - DH{fake_flag}
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-42:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:44:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md:45:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-46:- /challenge/shared-artifacts/aeBPF/chal/flag
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-3:- file_size: 1414
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-10:- file_size: 1174
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:16:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-17:- file_size: 558
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-18:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-21:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:23:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-24:- file_size: 202
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-25:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-32:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-33:## Signal hits
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:34:- L2: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:35:- L9: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:36:- L16: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-37:- L23: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-38:- L29: - DH{fake_flag}
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:39:- L34: - L2: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:40:- L35: - L9: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-41:- L36: - L16: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-42:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:44:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:45:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md:46:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-47:- /challenge/shared-artifacts/aeBPF/chal/flag
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-1:# Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:2:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-3:- file_size: 1897
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-4:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-7:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-8:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:9:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-10:- file_size: 1414
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-11:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-14:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-15:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:16:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-17:- file_size: 1174
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-18:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-21:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-22:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:23:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-24:- file_size: 558
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-25:- file_type: text-like
+--
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-28:## Head sample
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-29:- # Artifact Digest
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:30:- artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-31:- file_size: 202
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-32:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-33:## Signal hits
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:34:- L2: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:35:- L9: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:36:- L16: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:37:- L23: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-38:- L30: - artifact: /challenge/shared-artifacts/aeBPF/chal/flag
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:39:- L34: - L2: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:40:- L35: - L9: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:41:- L36: - L16: - artifact: /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-42:
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-43:## Routes
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:44:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:45:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:46:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md:47:- /challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md
+/challenge/shared-artifacts/.advisor/flag-98b2fb5b07.digest.md-3fbeaa233f.digest.md-c5cd6ac37a.digest.md-59172a8c46.digest.md-7bfcc95757.digest.md-383ec3c7ad.digest.md-48:- /challenge/shared-artifacts/aeBPF/chal/flag

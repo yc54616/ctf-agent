@@ -35,12 +35,16 @@ body {
 
 body {
   padding: 20px;
+  overflow-x: clip;
 }
 
 .shell {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  width: min(100%, 1800px);
+  margin: 0 auto;
+  min-width: 0;
 }
 
 .topbar,
@@ -61,6 +65,7 @@ body {
   gap: 18px;
   align-items: end;
   padding: 10px 4px;
+  min-width: 0;
 }
 
 .eyebrow {
@@ -100,7 +105,7 @@ h1 {
 }
 
 .metric-pill {
-  min-width: 130px;
+  min-width: 0;
   padding: 12px 16px;
   border-radius: 18px;
   background: rgba(12, 29, 47, 0.75);
@@ -119,13 +124,15 @@ h1 {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  min-width: 0;
 }
 
 .workspace {
   display: grid;
   gap: 16px;
-  grid-template-columns: minmax(220px, 0.75fr) minmax(0, 2.45fr) minmax(280px, 0.92fr);
+  grid-template-columns: minmax(200px, 0.72fr) minmax(0, 2.5fr) minmax(260px, 0.9fr);
   min-height: 72vh;
+  min-width: 0;
 }
 
 .panel {
@@ -146,6 +153,7 @@ h1 {
   gap: 12px;
   align-items: start;
   margin-bottom: 16px;
+  min-width: 0;
 }
 
 .panel-header p,
@@ -157,6 +165,11 @@ h1 {
 #selectedLaneMeta,
 #selectedChallengeMeta {
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.panel-header > * {
+  min-width: 0;
 }
 
 .panel-header.compact {
@@ -167,6 +180,18 @@ h1 {
 .control-panel {
   display: flex;
   flex-direction: column;
+}
+
+.control-panel > .panel-header {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+#selectedLaneMeta {
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .challenge-groups {
@@ -292,12 +317,14 @@ h1 {
   font-size: 13px;
   color: var(--text);
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .lane-focus-subtle {
   font-size: 12px;
   color: var(--muted);
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .lane-focus-advisory {
@@ -322,6 +349,7 @@ h1 {
   gap: 10px;
   flex-wrap: wrap;
   align-items: end;
+  min-width: 0;
 }
 
 .trace-toolbar {
@@ -333,6 +361,7 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .toggle-inline {
@@ -353,12 +382,17 @@ h1 {
   flex: 1 1 220px;
 }
 
+.toolbar .field-inline {
+  flex: 1 1 260px;
+}
+
 select,
 input,
 textarea,
 button {
   font: inherit;
   color: inherit;
+  min-width: 0;
 }
 
 select,
@@ -495,6 +529,84 @@ button:disabled {
 
 .note-card p {
   line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.shared-finding-list,
+.candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shared-finding-list li,
+.candidate-list li {
+  border-top: 1px solid rgba(152, 185, 210, 0.08);
+  padding-top: 10px;
+}
+
+.shared-finding-list li:first-child,
+.candidate-list li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.shared-finding-head {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.shared-finding-summary {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.shared-finding-path {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.candidate-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.candidate-flag {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.candidate-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.candidate-subtle {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .control-panel {
@@ -549,6 +661,7 @@ button:disabled {
   border-bottom: 1px solid rgba(152, 185, 210, 0.08);
   padding-bottom: 8px;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .advisory-history li {
@@ -610,8 +723,19 @@ button:disabled {
   text-align: center;
 }
 
+@media (max-width: 1480px) {
+  .workspace {
+    grid-template-columns: minmax(190px, 0.72fr) minmax(0, 1.95fr) minmax(250px, 0.88fr);
+  }
+}
+
 @media (max-width: 1280px) {
   .workspace {
     grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

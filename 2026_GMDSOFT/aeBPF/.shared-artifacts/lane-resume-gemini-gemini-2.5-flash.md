@@ -20,12 +20,12 @@ Read this summary first, then choose a different approach. Do not repeat the sam
 ## Recent Findings
 - YOLO mode is enabled. All tool calls will be automatically approved.
 YOLO mode is enabled. All tool calls will be automatically approved.
-Error when talking to Gemini API Full report available at: /tmp/gemini-client-error-Turn.run-sendMessageStream-2026-04-18T14-37-58-579Z.json TerminalQuotaError: You have exhausted your capacity on this model. Your quota will reset after 21h12m40s.
+Error when talking to Gemini API Full report available at: /tmp/gemini-client-error-Turn.run-sendMessageStream-2026-04-19T09-52-51-496Z.json TerminalQuotaError: You have exhausted your capacity on this model. Your quota will reset after 1h57m47s.
     at classifyGoogleError (file:///home/yc54616/.nvm/versions/node/v23.5.0/lib/node_modules/@google/gemini-cli/bundle/chunk-IWSCP2GY.js:274494:18)
     at retryWithBackoff (file:///home/yc54616/.nvm/versions/node/v23.5.0/lib/node_modules/@google/gemini-cli/bundle/chunk-IWSCP2GY.js:275105:31)
     at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
     at async GeminiChat.makeApiCallAndProcessStream (file:///home/yc54616/.nvm/versions/node/v23.5.0/lib/node_modules/@google/gemini-cli/bundle/chunk-IWSCP2GY.js:310999:28)
-    at async GeminiChat.streamWithRetries (file:///home/yc54616/.
+    at async GeminiChat.streamWithRetries (file:///home/yc54616/.n
 
 ## Shared Artifacts Root
 /home/yc54616/workspace/ctf-agent/2026_GMDSOFT/aeBPF/.shared-artifacts

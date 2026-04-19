@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import tarfile
+import zipfile
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from backend.agents.swarm import ChallengeSwarm
+from backend.cost_tracker import CostTracker
+from backend.prompts import ChallengeMeta
 from backend.sandbox import (
     SHARED_ARTIFACTS_CONTAINER_ROOT,
     ExecResult,
@@ -12,15 +18,52 @@ from backend.sandbox import (
     FileReadResult,
     _OutputSpooler,
 )
-from backend.tools.core import do_bash, do_read_file, do_view_image
+from backend.tools.core import (
+    do_bash,
+    do_find_files,
+    do_inspect_path,
+    do_list_archive,
+    do_peek_file,
+    do_search_text,
+    do_view_image,
+    do_web_fetch,
+)
 
 
 class _FakeBashSandbox:
-    def __init__(self, result: ExecResult) -> None:
+    def __init__(self, result: ExecResult, tmp_path: Path | None = None) -> None:
         self.result = result
+        self.tmp_path = tmp_path
+        self.saved: list[FilePointer] = []
 
     async def exec(self, command: str, timeout_s: int = 60) -> ExecResult:
         return self.result
+
+    async def save_shared_artifact(self, prefix: str, content: str | bytes, suffix: str = ".log") -> FilePointer:
+        if self.tmp_path is None:
+            raise RuntimeError("tmp_path not configured")
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        host_path = self.tmp_path / f"{prefix}{suffix}"
+        host_path.write_bytes(data)
+        pointer = FilePointer(
+            container_path=f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{host_path.name}",
+            host_path=str(host_path),
+            size_bytes=len(data),
+        )
+        self.saved.append(pointer)
+        return pointer
+
+    def allocate_shared_artifact(self, prefix: str, suffix: str = ".log") -> FilePointer:
+        if self.tmp_path is None:
+            raise RuntimeError("tmp_path not configured")
+        host_path = self.tmp_path / f"{prefix}{suffix}"
+        pointer = FilePointer(
+            container_path=f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{host_path.name}",
+            host_path=str(host_path),
+            size_bytes=0,
+        )
+        self.saved.append(pointer)
+        return pointer
 
 
 class _FakeReadSandbox:
@@ -29,6 +72,75 @@ class _FakeReadSandbox:
 
     async def read_file(self, path: str, *, inline_limit_bytes: int | None = None) -> FileReadResult:
         return self.result
+
+
+class _FakeSequentialSandbox(_FakeBashSandbox):
+    def __init__(self, results: list[ExecResult], tmp_path: Path | None = None) -> None:
+        super().__init__(results[0] if results else ExecResult(exit_code=0, stdout="", stderr=""), tmp_path=tmp_path)
+        self.results = list(results)
+        self.commands: list[str] = []
+
+    async def exec(self, command: str, timeout_s: int = 60) -> ExecResult:
+        self.commands.append(command)
+        if not self.results:
+            raise AssertionError("No more fake exec results configured")
+        return self.results.pop(0)
+
+
+class _LocalExecSandbox(_FakeBashSandbox):
+    def __init__(self, tmp_path: Path) -> None:
+        super().__init__(ExecResult(exit_code=0, stdout="", stderr=""), tmp_path=tmp_path)
+
+    async def exec(self, command: str, timeout_s: int = 60) -> ExecResult:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            executable="/bin/bash",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        except TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise
+        return ExecResult(
+            exit_code=proc.returncode or 0,
+            stdout=stdout.decode("utf-8", errors="replace"),
+            stderr=stderr.decode("utf-8", errors="replace"),
+        )
+
+
+class _FakeStreamResponse:
+    def __init__(self, chunks: list[bytes], status_code: int = 200, reason_phrase: str = "OK", encoding: str = "utf-8") -> None:
+        self._chunks = chunks
+        self.status_code = status_code
+        self.reason_phrase = reason_phrase
+        self.encoding = encoding
+
+    async def __aenter__(self) -> _FakeStreamResponse:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def aiter_bytes(self):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeHttpClient:
+    def __init__(self, response: _FakeStreamResponse) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> _FakeHttpClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def stream(self, method: str, url: str, content=None, headers=None) -> _FakeStreamResponse:
+        return self._response
 
 
 def test_output_spooler_spills_to_file(tmp_path: Path) -> None:
@@ -82,45 +194,266 @@ async def test_do_bash_returns_preview_and_saved_path_for_spilled_output() -> No
 
 
 @pytest.mark.asyncio
-async def test_do_read_file_returns_pointer_for_large_text() -> None:
-    sandbox = _FakeReadSandbox(
-        FileReadResult(
-            path="/challenge/distfiles/huge.txt",
-            data=b"header\nvalue=1\n",
-            size_bytes=900_000,
-            pointer=FilePointer(
-                container_path="/challenge/distfiles/huge.txt",
-                size_bytes=900_000,
-            ),
-        )
+async def test_do_bash_materializes_medium_output_even_without_sandbox_pointer(tmp_path: Path) -> None:
+    sandbox = _FakeBashSandbox(
+        ExecResult(
+            exit_code=0,
+            stdout=("line\n" * 200).strip(),
+            stderr="",
+        ),
+        tmp_path=tmp_path,
     )
 
-    out = await do_read_file(sandbox, "/challenge/distfiles/huge.txt")
+    out = await do_bash(sandbox, "cat lots.txt")
 
-    assert "Large text file kept at /challenge/distfiles/huge.txt" in out
-    assert "[text preview]" in out
-    assert "rg -n 'pattern'" in out
+    assert "[stdout preview]" in out
+    assert "[stdout saved] /challenge/shared-artifacts/stdout.log" in out
+    assert "sed -n '1,120p' /challenge/shared-artifacts/stdout.log" in out
+    assert sandbox.saved
+    assert Path(sandbox.saved[0].host_path or "").read_text(encoding="utf-8").startswith("line\nline\n")
 
 
 @pytest.mark.asyncio
-async def test_do_read_file_returns_binary_pointer_hint_for_large_binary() -> None:
-    sandbox = _FakeReadSandbox(
-        FileReadResult(
-            path="/challenge/distfiles/dump.bin",
-            data=b"\x00\x01\x02ABC\x00",
-            size_bytes=4_000_000,
-            pointer=FilePointer(
-                container_path="/challenge/distfiles/dump.bin",
-                size_bytes=4_000_000,
-            ),
+async def test_do_web_fetch_materializes_medium_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = _FakeBashSandbox(
+        ExecResult(exit_code=0, stdout="", stderr=""),
+        tmp_path=tmp_path,
+    )
+    body = ("<html>\n" + ("A" * 2000) + "\n") * 3
+    response = _FakeStreamResponse([body.encode("utf-8")])
+
+    monkeypatch.setattr("backend.tools.core.httpx.AsyncClient", lambda **kwargs: _FakeHttpClient(response))
+
+    out = await do_web_fetch("https://example.test", sandbox=sandbox)
+
+    assert "HTTP 200 OK" in out
+    assert "[body preview]" in out
+    assert "[body saved] /challenge/shared-artifacts/web-fetch.http" in out
+    assert "rg -n 'pattern' /challenge/shared-artifacts/web-fetch.http" in out
+    assert sandbox.saved
+    assert Path(sandbox.saved[-1].host_path or "").read_text(encoding="utf-8").startswith("<html>\nAAAA")
+
+
+@pytest.mark.asyncio
+async def test_do_web_fetch_preserves_large_single_chunk_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = _FakeBashSandbox(
+        ExecResult(exit_code=0, stdout="", stderr=""),
+        tmp_path=tmp_path,
+    )
+    body = b"A" * 10_000
+    response = _FakeStreamResponse([body])
+
+    monkeypatch.setattr("backend.tools.core.httpx.AsyncClient", lambda **kwargs: _FakeHttpClient(response))
+
+    out = await do_web_fetch("https://example.test", sandbox=sandbox)
+
+    assert "[body saved] /challenge/shared-artifacts/web-fetch.http" in out
+    saved = sandbox.saved[-1]
+    assert saved.size_bytes == len(body)
+    assert Path(saved.host_path or "").read_bytes() == body
+
+
+@pytest.mark.asyncio
+async def test_do_web_fetch_rejects_local_file_urls() -> None:
+    out = await do_web_fetch("file:///challenge/distfiles/flag.txt")
+
+    assert "web_fetch only supports http:// or https:// URLs" in out
+    assert "fs_query" in out
+    assert "`peek`" in out
+    assert "`inspect`" in out
+    assert "`find`" in out
+
+
+@pytest.mark.asyncio
+async def test_do_web_fetch_rejects_local_container_paths() -> None:
+    out = await do_web_fetch("/challenge/distfiles/flag.txt")
+
+    assert "web_fetch only supports http:// or https:// URLs" in out
+    assert "fs_query" in out
+    assert "`peek`" in out
+    assert "`inspect`" in out
+    assert "`find`" in out
+
+
+@pytest.mark.asyncio
+async def test_do_find_files_stops_at_limit_without_full_listing(tmp_path: Path) -> None:
+    root = tmp_path / "distfiles"
+    root.mkdir()
+    for idx in range(12):
+        (root / f"file-{idx:03d}.txt").write_text("x", encoding="utf-8")
+
+    sandbox = _LocalExecSandbox(tmp_path)
+    out = await do_find_files(sandbox, str(root), maxdepth=3, kind="files", limit=5)
+
+    assert str(root / "file-000.txt") in out
+    assert str(root / "file-004.txt") in out
+    assert str(root / "file-005.txt") not in out
+    assert "... [stopped after 5 entries]" in out
+    assert "[saved]" not in out
+
+
+@pytest.mark.asyncio
+async def test_do_peek_file_text_uses_numbered_preview() -> None:
+    sandbox = _FakeBashSandbox(
+        ExecResult(
+            exit_code=0,
+            stdout="     5: alpha\n     6: beta\n",
+            stderr="",
         )
     )
 
-    out = await do_read_file(sandbox, "/challenge/distfiles/dump.bin")
+    out = await do_peek_file(sandbox, "/challenge/distfiles/readme.txt", mode="text", start_line=5, line_count=2)
 
-    assert "Large binary file at /challenge/distfiles/dump.bin" in out
-    assert "xxd /challenge/distfiles/dump.bin | head -40" in out
-    assert "binwalk /challenge/distfiles/dump.bin" in out
+    assert "5: alpha" in out
+    assert "6: beta" in out
+
+
+@pytest.mark.asyncio
+async def test_do_peek_file_hex_renders_offsets() -> None:
+    sandbox = _FakeBashSandbox(
+        ExecResult(
+            exit_code=0,
+            stdout="00000010: 41 42 43 44                                      ABCD\n",
+            stderr="",
+        )
+    )
+
+    out = await do_peek_file(sandbox, "/challenge/distfiles/blob.bin", mode="hex", byte_offset=16, byte_count=4)
+
+    assert "00000010:" in out
+    assert "41 42 43 44" in out
+
+
+@pytest.mark.asyncio
+async def test_do_search_text_stops_at_limit_without_scanning_full_results(tmp_path: Path) -> None:
+    root = tmp_path / "distfiles"
+    root.mkdir()
+    for idx in range(12):
+        (root / f"config-{idx:03d}.txt").write_text(
+            f"before\nCONFIG_BPF=y {idx}\nafter\n",
+            encoding="utf-8",
+        )
+
+    sandbox = _LocalExecSandbox(tmp_path)
+    out = await do_search_text(sandbox, str(root), "CONFIG_BPF", limit=5)
+
+    assert "config-000.txt:2:CONFIG_BPF=y 0" in out
+    assert "config-004.txt:2:CONFIG_BPF=y 4" in out
+    assert "config-005.txt:2:CONFIG_BPF=y 5" not in out
+    assert "... [stopped after 5 matches]" in out
+    assert "[saved]" not in out
+
+
+@pytest.mark.asyncio
+async def test_do_search_text_preserves_overlapping_matches_with_context(tmp_path: Path) -> None:
+    root = tmp_path / "distfiles"
+    root.mkdir()
+    target = root / "config.txt"
+    target.write_text(
+        "\n".join(
+            [
+                "before-1",
+                "CONFIG_BPF first",
+                "bridge",
+                "CONFIG_BPF second",
+                "after-1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    sandbox = _LocalExecSandbox(tmp_path)
+    out = await do_search_text(sandbox, str(root), "CONFIG_BPF", context_lines=1, limit=5)
+
+    assert f"{target}:2:CONFIG_BPF first" in out
+    assert f"{target}:4:CONFIG_BPF second" in out
+    assert f"{target}-3:bridge" in out
+    assert out.count("--") == 0
+
+
+@pytest.mark.asyncio
+async def test_do_search_text_handles_utf16_text_files(tmp_path: Path) -> None:
+    root = tmp_path / "distfiles"
+    root.mkdir()
+    target = root / "unicode.txt"
+    target.write_text("before\nCONFIG_BPF=y\nafter\n", encoding="utf-16")
+
+    sandbox = _LocalExecSandbox(tmp_path)
+    out = await do_search_text(sandbox, str(root), "CONFIG_BPF", limit=5)
+
+    assert f"{target}:2:CONFIG_BPF=y" in out
+
+
+@pytest.mark.asyncio
+async def test_do_inspect_path_includes_metadata_and_preview() -> None:
+    sandbox = _FakeSequentialSandbox(
+        [
+            ExecResult(
+                exit_code=0,
+                stdout='{"path": "/challenge/distfiles/run.sh", "kind": "file", "mode": "0o755", "size": 42, "executable": true, "symlink_target": null, "binary": false, "sha256": "abc123"}',
+                stderr="",
+            ),
+            ExecResult(
+                exit_code=0,
+                stdout="     1: #!/bin/sh\n     2: echo hi\n",
+                stderr="",
+            ),
+        ]
+    )
+
+    out = await do_inspect_path(sandbox, "/challenge/distfiles/run.sh")
+
+    assert "path: /challenge/distfiles/run.sh" in out
+    assert "kind: file" in out
+    assert "mode: 0o755" in out
+    assert "sha256: abc123" in out
+    assert "echo hi" in out
+
+
+@pytest.mark.asyncio
+async def test_do_list_archive_stops_at_limit_without_full_member_dump(tmp_path: Path) -> None:
+    archive_root = tmp_path / "src"
+    archive_root.mkdir()
+    for idx in range(12):
+        (archive_root / f"file-{idx:03d}.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    archive_path = tmp_path / "src.tar"
+    with tarfile.open(archive_path, "w") as tf:
+        for child in sorted(archive_root.iterdir()):
+            tf.add(child, arcname=f"src/{child.name}")
+
+    sandbox = _LocalExecSandbox(tmp_path)
+    out = await do_list_archive(sandbox, str(archive_path), limit=5)
+
+    assert "src/file-000.c" in out
+    assert "src/file-004.c" in out
+    assert "src/file-005.c" not in out
+    assert "... [stopped after 5 entries]" in out
+    assert "[saved]" not in out
+
+
+@pytest.mark.asyncio
+async def test_do_list_archive_skips_large_zip_member_enumeration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    archive_root = tmp_path / "src"
+    archive_root.mkdir()
+    for idx in range(3):
+        (archive_root / f"file-{idx:03d}.txt").write_text("payload\n", encoding="utf-8")
+    archive_path = tmp_path / "src.zip"
+    with zipfile.ZipFile(archive_path, "w") as zf:
+        for child in sorted(archive_root.iterdir()):
+            zf.write(child, arcname=f"src/{child.name}")
+
+    monkeypatch.setattr("backend.tools.core.LIST_ARCHIVE_MAX_ZIP_BYTES", 1)
+
+    sandbox = _LocalExecSandbox(tmp_path)
+    out = await do_list_archive(sandbox, str(archive_path), limit=5)
+
+    assert f"{archive_path}\t(zip archive," in out
+    assert (
+        "sampled first" in out
+        or "src/file-000.txt" in out
+        or "skipped member enumeration for large zip" in out
+    )
 
 
 @pytest.mark.asyncio
@@ -145,10 +478,10 @@ def test_shared_artifact_summary_is_written_to_challenge_store(tmp_path: Path) -
 
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
-        meta=object(),  # type: ignore[arg-type]
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=object(),  # type: ignore[arg-type]
+        meta=ChallengeMeta(name="artifact-test"),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
         model_specs=[],
     )
 
@@ -158,7 +491,7 @@ def test_shared_artifact_summary_is_written_to_challenge_store(tmp_path: Path) -
         threshold=500,
     )
 
-    assert "[artifact]" in summary
+    assert "Pointer:" in summary
     assert SHARED_ARTIFACTS_CONTAINER_ROOT in summary
     shared_dir = challenge_dir / ".shared-artifacts"
     written = list(shared_dir.iterdir())

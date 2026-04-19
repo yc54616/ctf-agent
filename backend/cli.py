@@ -16,12 +16,41 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
+from backend.agents.codex_coordinator import run_codex_coordinator
+from backend.agents.coordinator_loop import build_deps, cleanup_coordinator_runtime
 from backend.auth import AuthValidationError, validate_required_auth
 from backend.config import Settings
 from backend.models import DEFAULT_MODELS, provider_from_spec
 
 console = Console()
 ADVISOR_LABEL_RE = re.compile(r"^\[(?:claude\s+)?advisor\]\s*", re.IGNORECASE)
+
+
+def _object_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
+def _agent_dict(value: object) -> dict[str, dict[str, object]]:
+    agents: dict[str, dict[str, object]] = {}
+    for key, item in _object_dict(value).items():
+        if isinstance(item, dict):
+            agents[key] = {str(inner_key): inner_value for inner_key, inner_value in item.items()}
+    return agents
+
+
+def _int_from_object(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
 
 
 def _setup_logging(verbose: bool = False) -> None:
@@ -76,8 +105,50 @@ def _agent_advisor_note(agent: dict[str, object], *, limit: int = 100) -> str:
     return _format_advisor_note(agent.get("advisor_note") or "", limit=limit) or "-"
 
 
+def _shared_finding_entries(swarm: dict[str, object]) -> list[tuple[str, dict[str, object]]]:
+    entries: list[tuple[str, dict[str, object]]] = []
+    raw_shared_findings = _object_dict(swarm.get("shared_findings", {}))
+    for model_spec in sorted(raw_shared_findings):
+        payload = _object_dict(raw_shared_findings[model_spec])
+        if payload:
+            entries.append((model_spec, payload))
+    if entries:
+        return entries
+
+    legacy = _clean_status_text(swarm.get("shared_finding") or "", limit=160)
+    if not legacy:
+        return []
+    return [("-", {"summary": legacy})]
+
+
+def _render_shared_finding_payload(
+    payload: dict[str, object],
+    *,
+    limit: int = 100,
+    include_paths: bool = False,
+) -> str:
+    summary = _clean_status_text(payload.get("summary") or payload.get("content") or "", limit=limit)
+    if not summary:
+        summary = "-"
+
+    extras: list[str] = []
+    digest_path = _clean_status_text(payload.get("digest_path") or "", limit=120)
+    pointer_path = _clean_status_text(payload.get("pointer_path") or "", limit=120)
+    if digest_path:
+        extras.append(f"digest {digest_path}")
+    if include_paths and pointer_path:
+        extras.append(f"ptr {pointer_path}")
+    if not extras:
+        return summary
+    return f"{summary} | {' | '.join(extras)}"
+
+
 def _swarm_shared_finding(swarm: dict[str, object], *, limit: int = 100) -> str:
-    return _clean_status_text(swarm.get("shared_finding") or "", limit=limit) or "-"
+    entries = _shared_finding_entries(swarm)
+    if not entries:
+        return "-"
+    _, payload = entries[0]
+    return _render_shared_finding_payload(payload, limit=limit) or "-"
 
 
 def _short_model_name(spec: str) -> str:
@@ -179,8 +250,7 @@ def _summarize_swarm_agents(agents: dict[str, dict[str, object]]) -> dict[str, i
 def _swarm_step_count(agents: dict[str, dict[str, object]]) -> int:
     total = 0
     for agent in agents.values():
-        if isinstance(agent, dict):
-            total += int(agent.get("step_count", 0) or 0)
+        total += _int_from_object(agent.get("step_count", 0))
     return total
 
 
@@ -208,10 +278,8 @@ def _render_swarm_section(
     lines.append("  Challenge             Steps  Busy  Idle  Won  Quota  Error  Cancel  Winner")
     lines.append("  -------------------- -----  ----- ----- ---- ------ ------ ------- ------------")
     for challenge in sorted(swarms):
-        swarm = swarms[challenge]
-        agents = swarm.get("agents", {})
-        if not isinstance(agents, dict):
-            agents = {}
+        swarm = _object_dict(swarms[challenge])
+        agents = _agent_dict(swarm.get("agents", {}))
         counts = _summarize_swarm_agents(agents)
         step_count = _swarm_step_count(agents)
         winner = _clean_status_text(swarm.get("winner") or "-", limit=12) or "-"
@@ -229,7 +297,6 @@ def _render_swarm_section(
         )
         specs = _problem_specs(agents, verbose=verbose)
         if specs:
-            lines.append("    Lane          State        Detail")
             lines.append("    Lane                              Step  State        Detail")
             lines.append("    --------------------------------  ----  -----------  -----------------------------------------------")
             for spec in specs:
@@ -288,12 +355,10 @@ def _render_status_lines(
     )
 
     advisor_rows: list[tuple[str, str, str]] = []
-    for swarms in (data.get("active_swarms", {}), data.get("finished_swarms", {})):
+    for swarms in (_object_dict(data.get("active_swarms", {})), _object_dict(data.get("finished_swarms", {}))):
         for challenge in sorted(swarms):
-            swarm = swarms[challenge]
-            agents = swarm.get("agents", {})
-            if not isinstance(agents, dict):
-                continue
+            swarm = _object_dict(swarms[challenge])
+            agents = _agent_dict(swarm.get("agents", {}))
             for spec in sorted(agents):
                 note = _agent_advisor_note(agents[spec], limit=80)
                 if note != "-" and (challenge, spec, note) not in advisor_rows:
@@ -308,29 +373,31 @@ def _render_status_lines(
     else:
         lines.append("  (none yet)            -                                 -")
 
-    finding_rows: list[tuple[str, str]] = []
-    for swarms in (data.get("active_swarms", {}), data.get("finished_swarms", {})):
+    finding_rows: list[tuple[str, str, str]] = []
+    for swarms in (_object_dict(data.get("active_swarms", {})), _object_dict(data.get("finished_swarms", {}))):
         for challenge in sorted(swarms):
-            swarm = swarms[challenge]
-            finding = _swarm_shared_finding(swarm, limit=90)
-            if finding != "-" and (challenge, finding) not in finding_rows:
-                finding_rows.append((challenge, finding))
+            swarm = _object_dict(swarms[challenge])
+            for spec, payload in _shared_finding_entries(swarm):
+                finding = _render_shared_finding_payload(payload, limit=90, include_paths=verbose)
+                row = (challenge, spec, finding)
+                if finding != "-" and row not in finding_rows:
+                    finding_rows.append(row)
     lines.append("")
     lines.append("[bold]Latest Shared Finding[/bold]")
-    lines.append("  Challenge             Finding")
-    lines.append("  --------------------  ----------------------------------------")
+    lines.append("  Challenge             Lane                              Finding")
+    lines.append("  --------------------  --------------------------------  ----------------------------------------")
     if finding_rows:
-        for challenge, finding in finding_rows:
-            lines.append(f"  {challenge:<20}  {finding}")
+        for challenge, spec, finding in finding_rows:
+            lines.append(f"  {challenge:<20}  {spec:<32}  {finding}")
     else:
-        lines.append("  (none yet)            -")
+        lines.append("  (none yet)            -                                 -")
 
     signal_rows: list[tuple[str, dict[str, object]]] = []
-    for swarms in (data.get("active_swarms", {}), data.get("finished_swarms", {})):
+    for swarms in (_object_dict(data.get("active_swarms", {})), _object_dict(data.get("finished_swarms", {}))):
         for challenge in sorted(swarms):
-            swarm = swarms[challenge]
-            signals = swarm.get("signals")
-            if isinstance(signals, dict):
+            swarm = _object_dict(swarms[challenge])
+            signals = _object_dict(swarm.get("signals", {}))
+            if signals:
                 signal_rows.append((challenge, signals))
     lines.append("")
     lines.append("[bold]Signals[/bold]")
@@ -341,12 +408,12 @@ def _render_status_lines(
             lines.append(
                 "  "
                 f"{challenge:<20}  "
-                f"{int(signals.get('total_posts', 0)):>5}  "
-                f"{int(signals.get('total_checks', 0)):>5}  "
-                f"{int(signals.get('total_delivered', 0)):>9}  "
-                f"{int(signals.get('coordinator_messages', 0)):>8}  "
-                f"{int(signals.get('advisor_lane_hints', signals.get('advisor_finding_posts', 0))):>7}  "
-                f"{int(signals.get('advisor_coordinator_appends', 0)):>6}"
+                f"{_int_from_object(signals.get('total_posts', 0)):>5}  "
+                f"{_int_from_object(signals.get('total_checks', 0)):>5}  "
+                f"{_int_from_object(signals.get('total_delivered', 0)):>9}  "
+                f"{_int_from_object(signals.get('coordinator_messages', 0)):>8}  "
+                f"{_int_from_object(signals.get('advisor_lane_hints', signals.get('advisor_finding_posts', 0))):>7}  "
+                f"{_int_from_object(signals.get('advisor_coordinator_appends', 0)):>6}"
             )
     else:
         lines.append("  (none yet)                0      0          0         0        0       0")
@@ -382,10 +449,8 @@ def _build_summary_table(title: str, swarms: dict[str, object]) -> Table | None:
     table.add_column("Winner", overflow="fold")
 
     for challenge in sorted(swarms):
-        swarm = swarms[challenge]
-        agents = swarm.get("agents", {})
-        if not isinstance(agents, dict):
-            agents = {}
+        swarm = _object_dict(swarms[challenge])
+        agents = _agent_dict(swarm.get("agents", {}))
         counts = _summarize_swarm_agents(agents)
         step_count = _swarm_step_count(agents)
         winner = _clean_status_text(swarm.get("winner") or "-", limit=32) or "-"
@@ -406,9 +471,9 @@ def _build_summary_table(title: str, swarms: dict[str, object]) -> Table | None:
 def _build_lane_table(title: str, swarms: dict[str, object], *, verbose: bool) -> Table | None:
     rows: list[tuple[str, str, str, str, str]] = []
     for challenge in sorted(swarms):
-        swarm = swarms[challenge]
-        agents = swarm.get("agents", {})
-        if not isinstance(agents, dict):
+        swarm = _object_dict(swarms[challenge])
+        agents = _agent_dict(swarm.get("agents", {}))
+        if not agents:
             continue
         for spec in _problem_specs(agents, verbose=verbose):
             agent = agents[spec]
@@ -447,9 +512,9 @@ def _build_compact_lane_renderables(
 
     renderables: list[object] = [f"[bold]{title}[/bold]"]
     for challenge in sorted(swarms):
-        swarm = swarms[challenge]
-        agents = swarm.get("agents", {})
-        if not isinstance(agents, dict):
+        swarm = _object_dict(swarms[challenge])
+        agents = _agent_dict(swarm.get("agents", {}))
+        if not agents:
             continue
         specs = _problem_specs(agents, verbose=verbose)
         if not specs:
@@ -480,7 +545,7 @@ def _build_compact_lane_renderables(
 def _build_flags_table(results: dict[str, object]) -> Table | None:
     rows: list[tuple[str, str]] = []
     for challenge in sorted(results):
-        result = results[challenge]
+        result = _object_dict(results[challenge])
         flag = _clean_status_text(result.get("flag") or "", limit=80)
         if flag:
             rows.append((challenge, flag))
@@ -500,9 +565,9 @@ def _build_latest_advisory_table(active: dict[str, object], finished: dict[str, 
     rows: list[tuple[str, str, str]] = []
     for swarms in (active, finished):
         for challenge in sorted(swarms):
-            swarm = swarms[challenge]
-            agents = swarm.get("agents", {})
-            if not isinstance(agents, dict):
+            swarm = _object_dict(swarms[challenge])
+            agents = _agent_dict(swarm.get("agents", {}))
+            if not agents:
                 continue
             for spec in sorted(agents):
                 note = _agent_advisor_note(agents[spec], limit=100)
@@ -522,23 +587,21 @@ def _build_latest_advisory_table(active: dict[str, object], finished: dict[str, 
 
 
 def _build_latest_shared_finding_table(active: dict[str, object], finished: dict[str, object]) -> Table | None:
-    rows: list[tuple[str, str]] = []
-    seen: set[str] = set()
+    rows: list[tuple[str, str, str]] = []
     for swarms in (active, finished):
         for challenge in sorted(swarms):
-            if challenge in seen:
-                continue
-            swarm = swarms[challenge]
-            finding = _swarm_shared_finding(swarm, limit=100)
-            if finding != "-":
-                rows.append((challenge, finding))
-                seen.add(challenge)
+            swarm = _object_dict(swarms[challenge])
+            for spec, payload in _shared_finding_entries(swarm):
+                finding = _render_shared_finding_payload(payload, limit=100, include_paths=True)
+                if finding != "-":
+                    rows.append((challenge, spec, finding))
 
     table = Table(title="Latest Shared Finding", box=box.ASCII2, expand=True)
     table.add_column("Challenge", no_wrap=True)
+    table.add_column("Lane", no_wrap=True)
     table.add_column("Finding", overflow="fold")
     if not rows:
-        table.add_row("(none yet)", "-")
+        table.add_row("(none yet)", "-", "-")
     else:
         for row in rows:
             table.add_row(*row)
@@ -549,10 +612,10 @@ def _build_signals_table(active: dict[str, object], finished: dict[str, object])
     rows: list[tuple[str, dict[str, object]]] = []
     for swarms in (active, finished):
         for challenge in sorted(swarms):
-            swarm = swarms[challenge]
+            swarm = _object_dict(swarms[challenge])
             signals = swarm.get("signals")
             if isinstance(signals, dict):
-                rows.append((challenge, signals))
+                rows.append((challenge, _object_dict(signals)))
 
     table = Table(title="Signals", box=box.ASCII2, expand=True)
     table.add_column("Challenge", no_wrap=True)
@@ -568,12 +631,12 @@ def _build_signals_table(active: dict[str, object], finished: dict[str, object])
         for challenge, signals in rows:
             table.add_row(
                 challenge,
-                str(int(signals.get("total_posts", 0))),
-                str(int(signals.get("total_checks", 0))),
-                str(int(signals.get("total_delivered", 0))),
-                str(int(signals.get("coordinator_messages", 0))),
-                str(int(signals.get("advisor_lane_hints", signals.get("advisor_finding_posts", 0)))),
-                str(int(signals.get("advisor_coordinator_appends", 0))),
+                str(_int_from_object(signals.get("total_posts", 0))),
+                str(_int_from_object(signals.get("total_checks", 0))),
+                str(_int_from_object(signals.get("total_delivered", 0))),
+                str(_int_from_object(signals.get("coordinator_messages", 0))),
+                str(_int_from_object(signals.get("advisor_lane_hints", signals.get("advisor_finding_posts", 0)))),
+                str(_int_from_object(signals.get("advisor_coordinator_appends", 0))),
             )
     return table
 
@@ -866,29 +929,39 @@ async def _run_coordinator(
     msg_port: int = 0,
 ) -> None:
     """Run the full coordinator (continuous until Ctrl+C)."""
-    from backend.agents.codex_coordinator import run_codex_coordinator
     from backend.sandbox import cleanup_orphan_containers, configure_semaphore
 
     max_containers = max_challenges * len(model_specs)
     configure_semaphore(max_containers)
     await cleanup_orphan_containers()
     console.print(f"[bold]Starting coordinator ({coordinator_backend}, Ctrl+C to stop)...[/bold]\n")
+    ctfd, cost_tracker, deps = build_deps(
+        settings,
+        model_specs,
+        challenges_dir,
+        no_submit,
+    )
+    results: dict[str, object]
 
-    if coordinator_backend == "codex":
-        results = await run_codex_coordinator(
-            settings=settings,
-            model_specs=model_specs,
-            challenges_root=challenges_dir,
-            no_submit=no_submit,
-            coordinator_model=coordinator_model,
-            msg_port=msg_port,
-        )
-    else:
-        from backend.agents.claude_coordinator import (
-            ClaudeCoordinatorInactiveError,
-            run_claude_coordinator,
-        )
-        try:
+    try:
+        if coordinator_backend == "codex":
+            results = await run_codex_coordinator(
+                settings=settings,
+                model_specs=model_specs,
+                challenges_root=challenges_dir,
+                no_submit=no_submit,
+                coordinator_model=coordinator_model,
+                msg_port=msg_port,
+                ctfd=ctfd,
+                cost_tracker=cost_tracker,
+                deps=deps,
+                cleanup_runtime_on_exit=False,
+            )
+        else:
+            from backend.agents.claude_coordinator import (
+                ClaudeCoordinatorInactiveError,
+                run_claude_coordinator,
+            )
             results = await run_claude_coordinator(
                 settings=settings,
                 model_specs=model_specs,
@@ -896,24 +969,35 @@ async def _run_coordinator(
                 no_submit=no_submit,
                 coordinator_model=coordinator_model,
                 msg_port=msg_port,
+                ctfd=ctfd,
+                cost_tracker=cost_tracker,
+                deps=deps,
+                cleanup_runtime_on_exit=False,
             )
-        except Exception as exc:
-            if isinstance(exc, ClaudeCoordinatorInactiveError):
-                reason = "inactive"
-            else:
-                reason = "unavailable"
-            console.print(
-                f"[yellow]Claude coordinator {reason} ({exc}). "
-                "Falling back to Codex coordinator.[/yellow]"
-            )
-            results = await run_codex_coordinator(
-                settings=settings,
-                model_specs=model_specs,
-                challenges_root=challenges_dir,
-                no_submit=no_submit,
-                coordinator_model=None,
-                msg_port=msg_port,
-            )
+    except Exception as exc:
+        if coordinator_backend != "claude":
+            raise
+        from backend.agents.claude_coordinator import ClaudeCoordinatorInactiveError
+
+        reason = "inactive" if isinstance(exc, ClaudeCoordinatorInactiveError) else "unavailable"
+        console.print(
+            f"[yellow]Claude coordinator {reason} ({exc}). "
+            "Falling back to Codex coordinator without resetting active swarms.[/yellow]"
+        )
+        results = await run_codex_coordinator(
+            settings=settings,
+            model_specs=model_specs,
+            challenges_root=challenges_dir,
+            no_submit=no_submit,
+            coordinator_model=None,
+            msg_port=msg_port,
+            ctfd=ctfd,
+            cost_tracker=cost_tracker,
+            deps=deps,
+            cleanup_runtime_on_exit=False,
+        )
+    finally:
+        await cleanup_coordinator_runtime(deps, ctfd, cost_tracker)
 
     console.print("\n[bold]Final Results:[/bold]")
     for challenge, data in results.get("results", {}).items():

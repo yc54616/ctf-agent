@@ -1,0 +1,260 @@
+1: #
+     2: # Automatically generated file; DO NOT EDIT.
+     3: # Buildroot 2022.11-612-g1381a4d288 Configuration
+     4: #
+     5: BR2_HAVE_DOT_CONFIG=y
+     6: BR2_HOST_GCC_AT_LEAST_4_9=y
+     7: BR2_HOST_GCC_AT_LEAST_5=y
+     8: BR2_HOST_GCC_AT_LEAST_6=y
+     9: BR2_HOST_GCC_AT_LEAST_7=y
+    10: BR2_HOST_GCC_AT_LEAST_8=y
+    11: BR2_HOST_GCC_AT_LEAST_9=y
+    12: 
+    13: #
+    14: # Target options
+    15: #
+    16: BR2_ARCH_IS_64=y
+    17: BR2_USE_MMU=y
+    18: # BR2_arcle is not set
+    19: # BR2_arceb is not set
+    20: # BR2_arm is not set
+    21: # BR2_armeb is not set
+    22: BR2_aarch64=y
+    23: # BR2_aarch64_be is not set
+    24: # BR2_i386 is not set
+    25: # BR2_m68k is not set
+    26: # BR2_microblazeel is not set
+    27: # BR2_microblazebe is not set
+    28: # BR2_mips is not set
+    29: # BR2_mipsel is not set
+    30: # BR2_mips64 is not set
+    31: # BR2_mips64el is not set
+    32: # BR2_nios2 is not set
+    33: # BR2_or1k is not set
+    34: # BR2_powerpc is not set
+    35: # BR2_powerpc64 is not set
+    36: # BR2_powerpc64le is not set
+    37: # BR2_riscv is not set
+    38: # BR2_s390x is not set
+    39: # BR2_sh is not set
+    40: # BR2_sparc is not set
+    41: # BR2_sparc64 is not set
+    42: # BR2_x86_64 is not set
+    43: # BR2_xtensa is not set
+    44: BR2_ARCH_HAS_TOOLCHAIN_BUILDROOT=y
+    45: BR2_ARCH="aarch64"
+    46: BR2_NORMALIZED_ARCH="arm64"
+    47: BR2_ENDIAN="LITTLE"
+    48: BR2_GCC_TARGET_ABI="lp64"
+    49: BR2_GCC_TARGET_CPU="cortex-a53"
+    50: BR2_BINFMT_SUPPORTS_SHARED=y
+    51: BR2_READELF_ARCH_NAME="AArch64"
+    52: BR2_ARM_CPU_HAS_FPU=y
+    53: BR2_ARM_CPU_HAS_VFPV2=y
+    54: BR2_ARM_CPU_HAS_VFPV3=y
+    55: BR2_ARM_CPU_HAS_VFPV4=y
+    56: BR2_ARM_CPU_HAS_FP_ARMV8=y
+    57: BR2_ARM_CPU_ARMV8A=y
+    58: 
+    59: #
+    60: # armv8 cores
+    61: #
+    62: # BR2_cortex_a35 is not set
+    63: BR2_cortex_a53=y
+    64: # BR2_cortex_a57 is not set
+    65: # BR2_cortex_a57_a53 is not set
+    66: # BR2_cortex_a72 is not set
+    67: # BR2_cortex_a72_a53 is not set
+    68: # BR2_cortex_a73 is not set
+    69: # BR2_cortex_a73_a35 is not set
+    70: # BR2_cortex_a73_a53 is not set
+    71: # BR2_emag is not set
+    72: # BR2_exynos_m1 is not set
+    73: # BR2_falkor is not set
+    74: # BR2_phecda is not set
+    75: # BR2_qdf24xx is not set
+    76: # BR2_thunderx is not set
+    77: # BR2_thunderxt81 is not set
+    78: # BR2_thunderxt83 is not set
+    79: # BR2_thunderxt88 is not set
+    80: # BR2_thunderxt88p1 is not set
+    81: # BR2_xgene1 is not set
+    82: 
+    83: #
+    84: # armv8.1a cores
+    85: #
+    86: # BR2_thunderx2t99 is not set
+    87: # BR2_thunderx2t99p1 is not set
+    88: # BR2_vulcan is not set
+    89: 
+    90: #
+    91: # armv8.2a cores
+    92: #
+    93: # BR2_cortex_a55 is not set
+    94: # BR2_cortex_a75 is not set
+    95: # BR2_cortex_a75_a55 is not set
+    96: # BR2_cortex_a76 is not set
+    97: # BR2_cortex_a76_a55 is not set
+    98: # BR2_neoverse_n1 is not set
+    99: # BR2_tsv110 is not set
+   100: 
+   101: #
+   102: # armv8.4a cores
+   103: #
+   104: # BR2_saphira is not set
+   105: # BR2_ARM_FPU_VFPV2 is not set
+   106: # BR2_ARM_FPU_VFPV3 is not set
+   107: # BR2_ARM_FPU_VFPV3D16 is not set
+   108: # BR2_ARM_FPU_VFPV4 is not set
+   109: # BR2_ARM_FPU_VFPV4D16 is not set
+   110: BR2_ARM_FPU_FP_ARMV8=y
+   111: BR2_ARM64_PAGE_SIZE_4K=y
+   112: # BR2_ARM64_PAGE_SIZE_64K is not set
+   113: BR2_ARM64_PAGE_SIZE="4K"
+   114: BR2_BINFMT_ELF=y
+   115: 
+   116: #
+   117: # Toolchain
+   118: #
+   119: BR2_TOOLCHAIN=y
+   120: BR2_TOOLCHAIN_USES_GLIBC=y
+   121: BR2_TOOLCHAIN_BUILDROOT=y
+   122: # BR2_TOOLCHAIN_EXTERNAL is not set
+   123: 
+   124: #
+   125: # Toolchain Buildroot Options
+   126: #
+   127: BR2_TOOLCHAIN_BUILDROOT_VENDOR="buildroot"
+   128: # BR2_TOOLCHAIN_BUILDROOT_UCLIBC is not set
+   129: BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+   130: # BR2_TOOLCHAIN_BUILDROOT_MUSL is not set
+   131: BR2_TOOLCHAIN_BUILDROOT_LIBC="glibc"
+   132: 
+   133: #
+   134: # Kernel Header Options
+   135: #
+   136: BR2_KERNEL_HEADERS_AS_KERNEL=y
+   137: # BR2_KERNEL_HEADERS_4_9 is not set
+   138: # BR2_KERNEL_HEADERS_4_14 is not set
+   139: # BR2_KERNEL_HEADERS_4_19 is not set
+   140: # BR2_KERNEL_HEADERS_5_4 is not set
+   141: # BR2_KERNEL_HEADERS_5_10 is not set
+   142: # BR2_KERNEL_HEADERS_5_15 is not set
+   143: # BR2_KERNEL_HEADERS_6_0 is not set
+   144: # BR2_KERNEL_HEADERS_6_1 is not set
+   145: # BR2_KERNEL_HEADERS_VERSION is not set
+   146: # BR2_KERNEL_HEADERS_CUSTOM_TARBALL is not set
+   147: # BR2_KERNEL_HEADERS_CUSTOM_GIT is not set
+   148: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_1 is not set
+   149: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_0 is not set
+   150: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_19 is not set
+   151: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_18 is not set
+   152: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_17 is not set
+   153: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_16 is not set
+   154: BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_15=y
+   155: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_14 is not set
+   156: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_13 is not set
+   157: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_12 is not set
+   158: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_11 is not set
+   159: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_10 is not set
+   160: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_9 is not set
+   161: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_8 is not set
+   162: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_7 is not set
+   163: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_6 is not set
+   164: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_5 is not set
+   165: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_4 is not set
+   166: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_3 is not set
+   167: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_2 is not set
+   168: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_1 is not set
+   169: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_0 is not set
+   170: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_20 is not set
+   171: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_19 is not set
+   172: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_18 is not set
+   173: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_17 is not set
+   174: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_16 is not set
+   175: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_15 is not set
+   176: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_14 is not set
+   177: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_13 is not set
+   178: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_12 is not set
+   179: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_11 is not set
+   180: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_10 is not set
+   181: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_9 is not set
+   182: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_8 is not set
+   183: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_7 is not set
+   184: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_6 is not set
+   185: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_5 is not set
+   186: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_4 is not set
+   187: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_3 is not set
+   188: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_2 is not set
+   189: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_1 is not set
+   190: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_0 is not set
+   191: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_19 is not set
+   192: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_18 is not set
+   193: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_17 is not set
+   194: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_16 is not set
+   195: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_15 is not set
+   196: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_14 is not set
+   197: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_13 is not set
+   198: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_12 is not set
+   199: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_11 is not set
+   200: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_10 is not set
+   201: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_9 is not set
+   202: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_8 is not set
+   203: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_7 is not set
+   204: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_6 is not set
+   205: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_5 is not set
+   206: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_4 is not set
+   207: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_3 is not set
+   208: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_2 is not set
+   209: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_1 is not set
+   210: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_3_0 is not set
+   211: # BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_REALLY_OLD is not set
+   212: BR2_PACKAGE_LINUX_HEADERS=y
+   213: BR2_PACKAGE_MUSL_ARCH_SUPPORTS=y
+   214: BR2_PACKAGE_MUSL_SUPPORTS=y
+   215: BR2_PACKAGE_UCLIBC_ARCH_SUPPORTS=y
+   216: BR2_PACKAGE_UCLIBC_SUPPORTS=y
+   217: BR2_PACKAGE_GLIBC_ARCH_SUPPORTS=y
+   218: BR2_PACKAGE_GLIBC_SUPPORTS=y
+   219: 
+   220: #
+   221: # Glibc Options
+   222: #
+   223: BR2_PACKAGE_GLIBC=y
+   224: # BR2_PACKAGE_GLIBC_KERNEL_COMPAT is not set
+   225: # BR2_PACKAGE_GLIBC_UTILS is not set
+   226: 
+   227: #
+   228: # Binutils Options
+   229: #
+   230: BR2_PACKAGE_HOST_BINUTILS_SUPPORTS_CFI=y
+   231: # BR2_BINUTILS_VERSION_2_37_X is not set
+   232: BR2_BINUTILS_VERSION_2_38_X=y
+   233: # BR2_BINUTILS_VERSION_2_39_X is not set
+   234: BR2_BINUTILS_VERSION="2.38"
+   235: BR2_BINUTILS_EXTRA_CONFIG_OPTIONS=""
+   236: 
+   237: #
+   238: # GCC Options
+   239: #
+   240: # BR2_GCC_VERSION_10_X is not set
+   241: BR2_GCC_VERSION_11_X=y
+   242: # BR2_GCC_VERSION_12_X is not set
+   243: BR2_GCC_SUPPORTS_DLANG=y
+   244: BR2_GCC_VERSION="11.3.0"
+   245: BR2_EXTRA_GCC_CONFIG_OPTIONS=""
+   246: # BR2_TOOLCHAIN_BUILDROOT_CXX is not set
+   247: # BR2_TOOLCHAIN_BUILDROOT_FORTRAN is not set
+   248: # BR2_TOOLCHAIN_BUILDROOT_DLANG is not set
+   249: # BR2_GCC_ENABLE_OPENMP is not set
+   250: # BR2_GCC_ENABLE_GRAPHITE is not set
+   251: BR2_PACKAGE_HOST_GDB_ARCH_SUPPORTS=y
+   252: 
+   253: #
+   254: # Host GDB Options
+   255: #
+   256: # BR2_PACKAGE_HOST_GDB is not set
+   257: 
+   258: #
+   259: # Toolchain Generic Options
+   260: #

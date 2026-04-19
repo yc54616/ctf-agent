@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any, cast
 
 from backend.agents.coordinator_loop import _start_msg_server
 from backend.cost_tracker import CostTracker
@@ -29,7 +30,7 @@ class _LegacyFakeSolver:
 
 
 class _FakeSwarm:
-    def __init__(self, model_spec: str, solver: _FakeSolver) -> None:
+    def __init__(self, model_spec: str, solver: object) -> None:
         self.solvers = {model_spec: solver}
 
 
@@ -115,7 +116,7 @@ async def _post_json(port: int, path: str, payload: dict[str, object]) -> tuple[
 
 def test_bump_endpoint_targets_requested_lane() -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -150,7 +151,7 @@ def test_bump_endpoint_targets_requested_lane() -> None:
 
 def test_bump_endpoint_falls_back_to_legacy_bump() -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -184,7 +185,7 @@ def test_bump_endpoint_falls_back_to_legacy_bump() -> None:
 
 def test_bump_endpoint_rejects_missing_fields() -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -207,7 +208,7 @@ def test_bump_endpoint_rejects_missing_fields() -> None:
 
 def test_ui_endpoint_serves_browser_console() -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -230,7 +231,7 @@ def test_ui_endpoint_serves_browser_console() -> None:
 
 def test_status_stream_endpoint_emits_sse_payload() -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -254,7 +255,7 @@ def test_status_stream_endpoint_emits_sse_payload() -> None:
 
 def test_trace_endpoints_list_and_read_matching_lane_files(tmp_path, monkeypatch) -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
     )
@@ -337,9 +338,93 @@ def test_trace_endpoints_list_and_read_matching_lane_files(tmp_path, monkeypatch
     assert [event["type"] for event in older_payload["events"]] == ["tool_call", "model_response"]
 
 
+def test_trace_files_do_not_mix_codex_and_codex_spark(tmp_path, monkeypatch) -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    codex_trace = logs_dir / "trace-aeBPF-gpt-5.3-codex-20260419-003545.jsonl"
+    spark_trace = logs_dir / "trace-aeBPF-gpt-5.3-codex-spark-20260419-003545.jsonl"
+    codex_trace.write_text(json.dumps({"ts": 1.0, "type": "start"}), encoding="utf-8")
+    spark_trace.write_text(json.dumps({"ts": 2.0, "type": "start"}), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    async def _exercise() -> tuple[tuple[str, dict], tuple[str, dict]]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            codex_files = await _get_json(
+                port,
+                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.3-codex",
+            )
+            spark_files = await _get_json(
+                port,
+                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.3-codex-spark",
+            )
+            return codex_files, spark_files
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    codex_resp, spark_resp = asyncio.run(_exercise())
+    codex_status, codex_payload = codex_resp
+    spark_status, spark_payload = spark_resp
+
+    assert codex_status.startswith("HTTP/1.1 200")
+    assert spark_status.startswith("HTTP/1.1 200")
+    assert codex_payload["trace_files"] == [codex_trace.name]
+    assert spark_payload["trace_files"] == [spark_trace.name]
+
+
+def test_trace_files_do_not_mix_codex_and_codex_mini(tmp_path, monkeypatch) -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    regular_trace = logs_dir / "trace-aeBPF-gpt-5.4-20260419-003545.jsonl"
+    mini_trace = logs_dir / "trace-aeBPF-gpt-5.4-mini-20260419-003545.jsonl"
+    regular_trace.write_text(json.dumps({"ts": 1.0, "type": "start"}), encoding="utf-8")
+    mini_trace.write_text(json.dumps({"ts": 2.0, "type": "start"}), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    async def _exercise() -> tuple[tuple[str, dict], tuple[str, dict]]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            regular_files = await _get_json(
+                port,
+                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.4",
+            )
+            mini_files = await _get_json(
+                port,
+                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.4-mini",
+            )
+            return regular_files, mini_files
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    regular_resp, mini_resp = asyncio.run(_exercise())
+    regular_status, regular_payload = regular_resp
+    mini_status, mini_payload = mini_resp
+
+    assert regular_status.startswith("HTTP/1.1 200")
+    assert mini_status.startswith("HTTP/1.1 200")
+    assert regular_payload["trace_files"] == [regular_trace.name]
+    assert mini_payload["trace_files"] == [mini_trace.name]
+
+
 def test_advisories_endpoint_returns_recent_unique_lane_notes(tmp_path, monkeypatch) -> None:
     deps = CoordinatorDeps(
-        ctfd=object(),  # type: ignore[arg-type]
+        ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
         settings=object(),
     )

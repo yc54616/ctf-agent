@@ -247,6 +247,23 @@ class DockerSandbox:
             suffix,
         )
 
+    def allocate_shared_artifact(self, prefix: str, suffix: str = ".log") -> FilePointer:
+        """Reserve a shared-artifact path for streaming writes from higher-level tools."""
+        return self._make_pointer(prefix, suffix)
+
+    async def save_shared_artifact(self, prefix: str, content: str | bytes, suffix: str = ".log") -> FilePointer:
+        """Persist generated text/blob output under the shared-artifacts mount."""
+        data = content.encode("utf-8") if isinstance(content, str) else content
+
+        pointer = self.allocate_shared_artifact(prefix, suffix)
+        if not pointer.host_path:
+            raise RuntimeError("Artifact pointer missing host path")
+        host_path = Path(pointer.host_path)
+        host_path.parent.mkdir(parents=True, exist_ok=True)
+        host_path.write_bytes(data)
+        pointer.size_bytes = len(data)
+        return pointer
+
     async def start(self) -> None:
         if self._container is not None:
             return

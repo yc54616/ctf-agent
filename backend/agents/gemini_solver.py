@@ -11,34 +11,54 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from backend.auth import refresh_gemini_oauth, resolve_home_auth_paths
+from backend.config import Settings
 from backend.cost_tracker import CostTracker
 from backend.ctfd import CTFdClient
 from backend.models import model_id_from_spec
-from backend.prompts import ChallengeMeta, build_prompt, list_distfiles
+from backend.prompts import (
+    ChallengeMeta,
+    build_lane_bump_prompt,
+    build_prompt,
+    build_shell_solver_preamble,
+    list_distfiles,
+)
 from backend.sandbox import DockerSandbox
 from backend.solver_base import (
     CANCELLED,
     ERROR,
+    FLAG_CANDIDATE,
     FLAG_FOUND,
     GAVE_UP,
     QUOTA_ERROR,
     LaneRuntimeStatus,
     SolverResult,
+    is_read_only_tool,
     lifecycle_for_result,
     summarize_tool_input,
     summarize_tool_result,
 )
+from backend.tools.core import do_fs_query
 from backend.tracing import SolverTracer
 
 logger = logging.getLogger(__name__)
 
 FLAG_LINE_RE = re.compile(r"FLAG:\s*(\S+)")
-WATCHDOG_SAMPLE_SECONDS = 15
-WATCHDOG_STALL_SAMPLES = 3
-WATCHDOG_IDLE_GRACE_SECONDS = 90
+WATCHDOG_SAMPLE_SECONDS = 5
+WATCHDOG_TURN_START_SECONDS = 120.0
+WATCHDOG_SHORT_TOOL_SECONDS = 60.0
+WATCHDOG_DEFAULT_TOOL_SECONDS = 120.0
+WATCHDOG_POST_TOOL_SECONDS = 30.0
+WATCHDOG_TOOL_TIMEOUT_PADDING_SECONDS = 30.0
+WATCHDOG_MAX_BASH_TOOL_SECONDS = 600.0
+
+WATCHDOG_SHORT_TOOLS = {
+    "fs_query",
+    "report_flag_candidate",
+    "notify_coordinator",
+}
 
 
 class GeminiSolver:
@@ -54,7 +74,7 @@ class GeminiSolver:
         settings: object,
         cancel_event: asyncio.Event | None = None,
         no_submit: bool = False,
-        submit_fn=None,
+        report_flag_candidate_fn=None,
         message_bus=None,
         notify_coordinator=None,
         sandbox: DockerSandbox | None = None,
@@ -69,7 +89,7 @@ class GeminiSolver:
         self.settings = settings
         self.cancel_event = cancel_event or asyncio.Event()
         self.no_submit = no_submit
-        self.submit_fn = submit_fn
+        self.report_flag_candidate_fn = report_flag_candidate_fn
         self.message_bus = message_bus
         self.notify_coordinator = notify_coordinator
 
@@ -89,6 +109,9 @@ class GeminiSolver:
         self._step_count = initial_step_count
         self._findings_poll_count = 0
         self._flag: str | None = None
+        self._candidate_flag: str | None = None
+        self._candidate_evidence: str = ""
+        self._candidate_confidence: str = ""
         self._confirmed = False
         self._findings = ""
         self._cost_usd = 0.0
@@ -103,8 +126,15 @@ class GeminiSolver:
         self._ipc_stop = asyncio.Event()
         self._ipc_task: asyncio.Task | None = None
         self._tool_names: dict[str, str] = {}
-        self._progress_seq = 0
-        self._last_progress_at = time.monotonic()
+        self._tool_args: dict[str, dict[str, Any]] = {}
+        self._watchdog_phase = ""
+        self._watchdog_step = 0
+        self._watchdog_tool = ""
+        self._watchdog_started_monotonic = 0.0
+        self._watchdog_started_at: float | None = None
+        self._watchdog_deadline_seconds = 0.0
+        self._read_only_streak = 0
+        self._last_progress_kind = "turn_start"
 
     async def start(self) -> None:
         await self.sandbox.start()
@@ -112,15 +142,7 @@ class GeminiSolver:
         arch_result = await self.sandbox.exec("uname -m", timeout_s=10)
         container_arch = arch_result.stdout.strip() or "unknown"
         distfile_names = list_distfiles(self.challenge_dir)
-        sandbox_preamble = (
-            "IMPORTANT: You are running inside a Docker sandbox. "
-            "All files are under /challenge/ — distfiles at /challenge/distfiles/, "
-            "workspace at /challenge/workspace/. Do NOT use any paths outside /challenge/. "
-            "All shell commands are transparently redirected into the container. "
-            "Use shell commands for everything: cat/head to read, tee/cat>file to write, "
-            "find/grep to search. submit_flag 'FLAG' submits a candidate. "
-            "notify_coordinator 'MSG' sends a message to the coordinator.\n\n"
-        )
+        sandbox_preamble = build_shell_solver_preamble()
         self._system_prompt = sandbox_preamble + build_prompt(
             self.meta,
             distfile_names,
@@ -136,6 +158,7 @@ class GeminiSolver:
     def _prepare_gemini_dirs(self) -> None:
         if self._gemini_home_dir:
             return
+        settings = cast(Settings, self.settings)
 
         self._project_dir = self.sandbox.workspace_dir
         self._ipc_dir = str(Path(self._project_dir) / ".gemini-ipc")
@@ -148,9 +171,9 @@ class GeminiSolver:
         gemini_home = Path(self._gemini_home_dir) / ".gemini"
         gemini_home.mkdir(parents=True, exist_ok=True)
 
-        auth_path = resolve_home_auth_paths(self.settings).gemini
+        auth_path = resolve_home_auth_paths(settings).gemini
         raw_auth = json.loads(auth_path.read_text(encoding="utf-8"))
-        oauth = refresh_gemini_oauth(self.settings)
+        oauth = refresh_gemini_oauth(settings)
         raw_auth["access_token"] = oauth.access_token
         raw_auth["token_type"] = oauth.token_type
         raw_auth["refresh_token"] = oauth.refresh_token
@@ -251,7 +274,10 @@ class GeminiSolver:
         )
 
         try:
-            self._mark_progress()
+            self._clear_watchdog()
+            self._reset_turn_progress_tracking()
+            self._tool_names.clear()
+            self._tool_args.clear()
             self._proc = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=self._project_dir,
@@ -263,6 +289,11 @@ class GeminiSolver:
             assert self._proc.stdout is not None
             assert self._proc.stderr is not None
 
+            self._arm_watchdog(
+                phase="turn_start",
+                step=self._step_count,
+                deadline_seconds=WATCHDOG_TURN_START_SECONDS,
+            )
             stdout_task = asyncio.create_task(
                 self._consume_stdout(self._proc.stdout, stdout_state)
             )
@@ -305,9 +336,17 @@ class GeminiSolver:
                 self._findings = response_text[:2000]
                 flag_match = FLAG_LINE_RE.search(response_text)
                 if flag_match:
-                    self._flag = self._flag or flag_match.group(1).strip()
-                    if self.no_submit:
-                        self._confirmed = True
+                    self._candidate_flag = flag_match.group(1).strip()
+                    self._candidate_evidence = "Gemini terminal response"
+                    self._candidate_confidence = "medium"
+                    ack = await self._report_flag_candidate(
+                        self._candidate_flag,
+                        evidence=self._candidate_evidence,
+                        confidence=self._candidate_confidence,
+                    )
+                    self._findings = (
+                        f"Flag candidate via {self._candidate_evidence}: {self._candidate_flag}\n{ack}"
+                    )[:2000]
 
             self._record_usage(stdout_state.get("result_stats"), time.monotonic() - t0)
             self.tracer.event(
@@ -315,6 +354,8 @@ class GeminiSolver:
                 duration=round(time.monotonic() - t0, 1),
                 steps=self._step_count,
             )
+            if not str(stdout_state.get("stalled_reason") or "").startswith("stalled:"):
+                self._clear_watchdog()
 
             stderr_text = "".join(stdout_state["stderr_chunks"])
             if self._is_quota_error(stderr_text) or stdout_state["quota_error"]:
@@ -335,6 +376,12 @@ class GeminiSolver:
             if self._confirmed and self._flag:
                 return self._result(
                     FLAG_FOUND,
+                    run_steps=self._step_count - steps_before,
+                    run_cost=self._cost_usd - cost_before,
+                )
+            if self._candidate_flag:
+                return self._result(
+                    FLAG_CANDIDATE,
                     run_steps=self._step_count - steps_before,
                     run_cost=self._cost_usd - cost_before,
                 )
@@ -372,7 +419,6 @@ class GeminiSolver:
             line = await stream.readline()
             if not line:
                 break
-            self._mark_progress()
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
@@ -385,28 +431,47 @@ class GeminiSolver:
             elif event_type == "message" and event.get("role") == "assistant":
                 content = event.get("content")
                 if isinstance(content, str):
+                    self._touch_watchdog()
+                    self._set_progress_kind("assistant_message")
                     state["response_chunks"].append(content)
             elif event_type == "tool_use":
                 tool_name = str(event.get("tool_name", "tool"))
                 tool_id = str(event.get("tool_id", ""))
                 self._tool_names[tool_id] = tool_name
+                raw_args = event.get("parameters", {})
+                args = raw_args if isinstance(raw_args, dict) else {}
+                self._tool_args[tool_id] = args
                 self._step_count += 1
                 self._runtime.mark_busy(
                     tool_name,
-                    summarize_tool_input(tool_name, event.get("parameters", {})),
+                    summarize_tool_input(tool_name, args),
                     step_count=self._step_count,
                 )
-                self.tracer.tool_call(tool_name, event.get("parameters", {}), self._step_count)
+                self._arm_watchdog(
+                    phase="tool_call",
+                    step=self._step_count,
+                    deadline_seconds=self._tool_call_watchdog_seconds(tool_name, args),
+                    tool=tool_name,
+                )
+                self.tracer.tool_call(tool_name, args, self._step_count)
             elif event_type == "tool_result":
                 tool_id = str(event.get("tool_id", ""))
                 tool_name = self._tool_names.get(tool_id, tool_id or "tool")
+                tool_args = self._tool_args.pop(tool_id, {})
                 output = event.get("output")
                 error = event.get("error")
                 text = str(output) if output is not None else ""
                 if error:
                     text = f"{text}\n{error}".strip()
+                self._record_tool_progress(tool_name)
                 self._runtime.mark_idle(summarize_tool_result(text))
                 self.tracer.tool_result(tool_name, text[:500], self._step_count)
+                self._arm_watchdog(
+                    phase="post_tool",
+                    step=self._step_count,
+                    deadline_seconds=self._post_tool_watchdog_seconds(tool_name, tool_args),
+                    tool=tool_name,
+                )
                 if error and self._is_quota_error(str(error)):
                     state["quota_error"] = True
             elif event_type == "error":
@@ -427,60 +492,120 @@ class GeminiSolver:
             chunk = await stream.readline()
             if not chunk:
                 break
-            self._mark_progress()
             text = chunk.decode("utf-8", errors="replace")
             state["stderr_chunks"].append(text)
             if self._is_quota_error(text):
                 state["quota_error"] = True
 
-    def _mark_progress(self) -> None:
-        self._progress_seq += 1
-        self._last_progress_at = time.monotonic()
+    def _clear_watchdog(self) -> None:
+        self._watchdog_phase = ""
+        self._watchdog_step = 0
+        self._watchdog_tool = ""
+        self._watchdog_started_monotonic = 0.0
+        self._watchdog_started_at = None
+        self._watchdog_deadline_seconds = 0.0
 
-    def _watchdog_fingerprint(self) -> tuple[object, ...]:
-        runtime = self._runtime.snapshot()
-        return (
-            self._progress_seq,
-            self._step_count,
-            runtime.get("current_tool", ""),
-            runtime.get("current_command", ""),
-            runtime.get("last_tool", ""),
-            runtime.get("last_command", ""),
-            runtime.get("last_exit_hint", ""),
-            self._findings[:200],
-        )
+    def _arm_watchdog(
+        self,
+        *,
+        phase: str,
+        step: int,
+        deadline_seconds: float,
+        tool: str = "",
+    ) -> None:
+        self._watchdog_phase = phase
+        self._watchdog_step = step
+        self._watchdog_tool = tool
+        self._watchdog_started_monotonic = time.monotonic()
+        self._watchdog_started_at = time.time()
+        self._watchdog_deadline_seconds = float(deadline_seconds)
 
-    def _watchdog_is_within_idle_grace(self) -> bool:
-        return (time.monotonic() - self._last_progress_at) < WATCHDOG_IDLE_GRACE_SECONDS
+    def _touch_watchdog(self) -> None:
+        if self._watchdog_phase in {"turn_start", "post_tool"}:
+            self._watchdog_started_monotonic = time.monotonic()
+            self._watchdog_started_at = time.time()
+
+    def _reset_turn_progress_tracking(self) -> None:
+        self._read_only_streak = 0
+        self._set_progress_kind("turn_start")
+
+    def _set_progress_kind(self, kind: str) -> None:
+        self._last_progress_kind = kind
+        self._runtime.last_progress_kind = kind
+        self._runtime.read_only_streak = self._read_only_streak
+
+    def _record_tool_progress(self, tool_name: str) -> None:
+        if is_read_only_tool(tool_name):
+            self._read_only_streak += 1
+            self._set_progress_kind("read_only_tool")
+            return
+        self._read_only_streak = 0
+        self._set_progress_kind("exec_tool")
+
+    @staticmethod
+    def _tool_call_watchdog_seconds(tool_name: str, args: dict[str, Any]) -> float:
+        if tool_name == "bash":
+            try:
+                timeout_seconds = int(args.get("timeout_seconds", 60) or 60)
+            except Exception:
+                timeout_seconds = 60
+            return float(
+                max(
+                    WATCHDOG_DEFAULT_TOOL_SECONDS,
+                    min(
+                        timeout_seconds + int(WATCHDOG_TOOL_TIMEOUT_PADDING_SECONDS),
+                        int(WATCHDOG_MAX_BASH_TOOL_SECONDS),
+                    ),
+                )
+            )
+        if tool_name in WATCHDOG_SHORT_TOOLS:
+            return WATCHDOG_SHORT_TOOL_SECONDS
+        return WATCHDOG_DEFAULT_TOOL_SECONDS
+
+    @staticmethod
+    def _post_tool_watchdog_seconds(tool_name: str, args: dict[str, Any]) -> float:
+        return WATCHDOG_POST_TOOL_SECONDS
+
+    def _watchdog_expired(self) -> bool:
+        if not self._watchdog_phase:
+            return False
+        return (time.monotonic() - self._watchdog_started_monotonic) > self._watchdog_deadline_seconds
+
+    def _watchdog_error(self) -> tuple[str, str]:
+        deadline = int(self._watchdog_deadline_seconds)
+        if self._watchdog_phase == "turn_start":
+            return f"stalled: turn_start_inactivity after {deadline}s", "turn_start_inactivity"
+        if self._watchdog_phase == "tool_call":
+            tool_suffix = f" ({self._watchdog_tool})" if self._watchdog_tool else ""
+            return f"stalled: tool_call_timeout after {deadline}s{tool_suffix}", "tool_call_timeout"
+        tool_suffix = f" ({self._watchdog_tool})" if self._watchdog_tool else ""
+        if self._watchdog_tool and is_read_only_tool(self._watchdog_tool):
+            tool_suffix = f" ({self._watchdog_tool}, read_only_streak={self._read_only_streak})"
+        return f"stalled: post_tool_inactivity after {deadline}s{tool_suffix}", "post_tool_inactivity"
 
     async def _watch_turn_progress(self, state: dict[str, Any]) -> None:
-        stable_samples = 0
-        previous_fingerprint: tuple[object, ...] | None = None
-
         while self._proc and self._proc.returncode is None:
             await asyncio.sleep(WATCHDOG_SAMPLE_SECONDS)
             if not self._proc or self._proc.returncode is not None:
                 return
-            if self._runtime.current_tool or self._watchdog_is_within_idle_grace():
-                stable_samples = 0
-                previous_fingerprint = None
+            if not self._watchdog_expired():
                 continue
 
-            fingerprint = self._watchdog_fingerprint()
-            if fingerprint == previous_fingerprint:
-                stable_samples += 1
-            else:
-                previous_fingerprint = fingerprint
-                stable_samples = 1
-
-            if stable_samples < WATCHDOG_STALL_SAMPLES:
-                continue
-
-            reason = f"stalled: no progress across {WATCHDOG_STALL_SAMPLES} samples"
+            reason, kind = self._watchdog_error()
             state["stalled_reason"] = reason
             self._findings = reason
             self._runtime.mark_terminal("error", reason)
-            self.tracer.event("turn_stalled", reason=reason, step=self._step_count)
+            self.tracer.event(
+                "turn_stalled",
+                reason=reason,
+                step=self._step_count,
+                watchdog_phase=self._watchdog_phase,
+                watchdog_kind=kind,
+                deadline_seconds=int(self._watchdog_deadline_seconds),
+                tool=self._watchdog_tool or None,
+                read_only_streak=self._read_only_streak,
+                last_progress_kind=self._last_progress_kind,
+            )
             await self._terminate_proc()
             return
 
@@ -540,21 +665,13 @@ class GeminiSolver:
 
     async def _handle_ipc_request(self, request: dict[str, Any]) -> dict[str, Any]:
         action = request.get("action")
-        if action == "submit_flag":
-            flag = str(request.get("flag", "")).strip()
-            if self.no_submit:
-                display, confirmed = f'DRY RUN — would submit "{flag}"', True
-            elif self.submit_fn:
-                display, confirmed = await self.submit_fn(flag)
-            else:
-                from backend.tools.core import do_submit_flag
-                display, confirmed = await do_submit_flag(self.ctfd, self.meta.name, flag)
-
-            if confirmed:
-                self._confirmed = True
-                self._flag = flag
-                self.tracer.event("flag_confirmed", flag=flag, step=self._step_count)
-            return {"message": display, "confirmed": confirmed}
+        if action == "report_flag_candidate":
+            message = await self._report_flag_candidate(
+                str(request.get("flag", "")),
+                evidence=str(request.get("evidence", "")),
+                confidence=str(request.get("confidence", "medium")),
+            )
+            return {"message": message}
 
         if action == "notify_coordinator":
             message = str(request.get("message", "")).strip()
@@ -563,28 +680,51 @@ class GeminiSolver:
                 return {"message": "Message sent to coordinator."}
             return {"message": "No coordinator connected."}
 
-        if action == "check_findings":
-            self._findings_poll_count += 1
-            if not self.message_bus or self._findings_poll_count % 5 != 0:
-                return {"findings": ""}
-            from backend.tools.core import do_check_findings
-
-            findings = await do_check_findings(self.message_bus, self.model_spec)
-            if findings and "No new findings" not in findings:
-                return {"findings": findings}
-            return {"findings": ""}
+        if action == "fs_query":
+            output = await do_fs_query(
+                self.sandbox,
+                action=str(request.get("query_action", "")),
+                path=str(request.get("path", "")),
+                maxdepth=int(request.get("maxdepth", 3)),
+                kind=str(request.get("kind", "files")),
+                pattern=str(request.get("pattern", "")),
+                limit=int(request.get("limit", 200)),
+                mode=str(request.get("mode", "text")),
+                start_line=int(request.get("start_line", 1)),
+                line_count=int(request.get("line_count", 120)),
+                byte_offset=int(request.get("byte_offset", 0)),
+                byte_count=int(request.get("byte_count", 256)),
+                query=str(request.get("query", "")),
+                glob=str(request.get("glob", "")),
+                ignore_case=bool(request.get("ignore_case", True)),
+                context_lines=int(request.get("context_lines", 2)),
+            )
+            return {"output": output}
 
         return {"message": f"Unsupported Gemini IPC action: {action}"}
 
-    async def _pull_shared_findings_for_prompt(self) -> str:
-        if not self.message_bus:
-            return ""
-        from backend.tools.core import do_check_findings
-
-        findings = await do_check_findings(self.message_bus, self.model_spec)
-        if findings and "No new findings" not in findings:
-            return findings
-        return ""
+    async def _report_flag_candidate(
+        self,
+        flag: str,
+        *,
+        evidence: str = "",
+        confidence: str = "medium",
+    ) -> str:
+        cleaned_flag = flag.strip()
+        if not cleaned_flag:
+            return "Flag candidate rejected: empty flag."
+        self._candidate_flag = cleaned_flag
+        self._candidate_evidence = evidence.strip()
+        self._candidate_confidence = confidence.strip() or "medium"
+        if not self.report_flag_candidate_fn:
+            return f"Flag candidate noted locally: {cleaned_flag}"
+        return await self.report_flag_candidate_fn(
+            cleaned_flag,
+            self._candidate_evidence,
+            self._candidate_confidence,
+            self._step_count,
+            self.tracer.path,
+        )
 
     async def _terminate_proc(self) -> None:
         if not self._proc:
@@ -638,32 +778,19 @@ class GeminiSolver:
 
     def _consume_turn_prompt(self) -> str:
         if self._operator_bump_insights:
-            prompt = (
-                "Stop your previous line of attack. "
-                "Highest priority guidance from the operator:\n\n"
-                f"{self._operator_bump_insights}\n\n"
-                "Do this first. Verify or refute it before returning to earlier exploration."
-            )
+            prompt = build_lane_bump_prompt(self._operator_bump_insights, operator=True)
             self._operator_bump_insights = None
             self._advisory_bump_insights = None
             self._bump_insights = None
             return prompt
 
         if self._advisory_bump_insights:
-            prompt = (
-                "Prioritize this lane advisory for your next 1-2 actions:\n\n"
-                f"{self._advisory_bump_insights}\n\n"
-                "Validate or falsify it before returning to broader search."
-            )
+            prompt = build_lane_bump_prompt(self._advisory_bump_insights, advisory=True)
             self._advisory_bump_insights = None
             return prompt
 
         if self._bump_insights:
-            prompt = (
-                "Your previous attempt did not find the flag. "
-                f"Additional guidance:\n\n{self._bump_insights}\n\n"
-                "Try a different approach. Do NOT repeat what was tried."
-            )
+            prompt = build_lane_bump_prompt(self._bump_insights)
             self._bump_insights = None
             return prompt
 
@@ -673,7 +800,13 @@ class GeminiSolver:
         return "Solve this CTF challenge."
 
     def get_runtime_status(self) -> dict[str, object]:
-        return self._runtime.snapshot()
+        snapshot = self._runtime.snapshot()
+        snapshot["watchdog_phase"] = self._watchdog_phase
+        snapshot["watchdog_tool"] = self._watchdog_tool
+        snapshot["watchdog_started_at"] = self._watchdog_started_at
+        snapshot["read_only_streak"] = self._read_only_streak
+        snapshot["last_progress_kind"] = self._last_progress_kind
+        return snapshot
 
     def mark_terminal_status(self, status: str) -> None:
         self._runtime.mark_terminal(lifecycle_for_result(status), status)
@@ -698,6 +831,9 @@ class GeminiSolver:
             step_count=run_steps if run_steps is not None else self._step_count,
             cost_usd=run_cost if run_cost is not None else self._cost_usd,
             log_path=self.tracer.path,
+            candidate_flag=self._candidate_flag,
+            candidate_evidence=self._candidate_evidence,
+            candidate_confidence=self._candidate_confidence,
         )
 
     async def stop(self) -> None:

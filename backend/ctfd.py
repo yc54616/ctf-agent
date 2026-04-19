@@ -212,8 +212,9 @@ class CTFdClient:
                 for s in solves.get("data", [])
                 if s.get("challenge", {}).get("name")
             }
-        except Exception:
-            logger.warning("Could not fetch solved challenges", exc_info=True)
+        except Exception as exc:
+            logger.warning("Could not fetch solved challenges: %s", exc)
+            logger.debug("Could not fetch solved challenges", exc_info=True)
             return set()
 
     async def pull_challenge(self, challenge: dict[str, Any], output_dir: str) -> str:

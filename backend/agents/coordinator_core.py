@@ -14,9 +14,44 @@ from backend.solver_base import FLAG_FOUND
 
 logger = logging.getLogger(__name__)
 
+COORDINATOR_PROMPT = """\
+You are a CTF competition coordinator running for the entire live event.
+Your job is to maximize solved challenges while keeping productive swarms moving.
+
+Priorities:
+- Spawn swarms for unsolved challenges, prioritizing by solve count (easy first).
+- Use read_solver_trace before bumping a stuck lane.
+- Use broadcast only for genuinely shared insights across lanes.
+- When you receive `FLAG CANDIDATE:` messages, review the evidence and advisor verdict before deciding whether to use `submit_flag`.
+- When you receive `ADVISOR MESSAGE:` or `Artifact path: /challenge/shared-artifacts/...`, treat it as evidence to inspect before deciding what to do.
+- Read `/challenge/shared-artifacts/manifest.md` or the referenced digest/artifact first, then decide whether to broadcast, bump a specific lane, or ignore it.
+
+Critical rules:
+- NEVER kill a swarm unless the flag is confirmed correct.
+- Solvers never submit flags directly. Only you may call `submit_flag`.
+- Do not rebroadcast advisor or artifact messages blindly. Inspect the evidence first and only rebroadcast what is broadly useful.
+- When a solver seems stuck, send a specific next-step bump: exact files, routes, tools, checks, or validation criteria.
+- Cost is not the bottleneck. Keep swarms running.
+
+You will receive event messages. Respond with tool calls to manage the competition.
+"""
+
+
+def _int_from_object(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
 
 def _challenge_sort_key(challenge: dict[str, object]) -> tuple[int, str]:
-    solves = int(challenge.get("solves", 0) or 0)
+    solves = _int_from_object(challenge.get("solves", 0))
     name = str(challenge.get("name", ""))
     return (-solves, name)
 
@@ -26,7 +61,7 @@ def _restored_solved_names(deps: CoordinatorDeps) -> set[str]:
     for name, result in deps.results.items():
         if not isinstance(result, dict):
             continue
-        if result.get("status") == FLAG_FOUND or result.get("flag"):
+        if result.get("status") == FLAG_FOUND:
             solved.add(name)
     return solved
 
@@ -79,7 +114,7 @@ def _enqueue_swarm(deps: CoordinatorDeps, challenge_name: str) -> bool:
     if challenge_name in deps.swarms or challenge_name in deps.pending_swarm_set:
         return False
     result = deps.results.get(challenge_name, {})
-    if result.get("status") == FLAG_FOUND or result.get("flag"):
+    if result.get("status") == FLAG_FOUND:
         return False
     deps.pending_swarm_queue.append(challenge_name)
     deps.pending_swarm_set.add(challenge_name)
@@ -154,6 +189,7 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
         ctfd=deps.ctfd,
         cost_tracker=deps.cost_tracker,
         settings=deps.settings,
+        result_store=deps.results,
         model_specs=deps.model_specs,
         no_submit=deps.no_submit,
         coordinator_inbox=deps.coordinator_inbox,
@@ -163,15 +199,30 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
     async def _run_and_cleanup() -> None:
         result = await swarm.run()
         if result:
-            record = {
-                "status": result.status,
-                "flag": result.flag,
-                "findings_summary": result.findings_summary,
-                "step_count": result.step_count,
-                "cost_usd": result.cost_usd,
-                "log_path": result.log_path,
-                "winner_model": swarm.winner_model_spec,
-            }
+            existing = deps.results.get(challenge_name, {})
+            record = dict(existing) if isinstance(existing, dict) else {}
+            record.update(
+                {
+                    "status": result.status,
+                    "flag": result.flag,
+                    "findings_summary": result.findings_summary,
+                    "step_count": result.step_count,
+                    "cost_usd": result.cost_usd,
+                    "log_path": result.log_path,
+                    "winner_model": swarm.winner_model_spec,
+                    "advisor_note": swarm.last_advisor_note,
+                    "coordinator_advisor_note": swarm.last_coordinator_advisor_note,
+                    "shared_finding": swarm.last_shared_finding,
+                    "shared_findings": {
+                        model_spec: finding.snapshot()
+                        for model_spec, finding in sorted(swarm.shared_finding_events.items())
+                    },
+                    "flag_candidates": {
+                        flag: candidate.snapshot()
+                        for flag, candidate in sorted(swarm.flag_candidates.items())
+                    },
+                }
+            )
             if result.status == FLAG_FOUND:
                 record["submit"] = "DRY RUN" if deps.no_submit else "confirmed by solver"
             if swarm.saved_solve_artifacts:
@@ -191,7 +242,7 @@ async def _fill_swarm_capacity(deps: CoordinatorDeps) -> list[str]:
         if challenge_name in deps.swarms:
             continue
         result = deps.results.get(challenge_name, {})
-        if result.get("status") == FLAG_FOUND or result.get("flag"):
+        if result.get("status") == FLAG_FOUND:
             continue
         await _spawn_swarm_now(deps, challenge_name)
         spawned.append(challenge_name)
@@ -201,7 +252,7 @@ async def _fill_swarm_capacity(deps: CoordinatorDeps) -> list[str]:
 async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
     _retire_finished_swarms(deps)
     result = deps.results.get(challenge_name, {})
-    if result.get("status") == FLAG_FOUND or result.get("flag"):
+    if result.get("status") == FLAG_FOUND:
         return f"Challenge {challenge_name} is already solved"
 
     if challenge_name in deps.swarms:
@@ -235,6 +286,29 @@ async def do_submit_flag(deps: CoordinatorDeps, challenge_name: str, flag: str) 
         return f'DRY RUN — would submit "{flag.strip()}" for {challenge_name}'
     try:
         result = await deps.ctfd.submit_flag(challenge_name, flag)
+        swarm = deps.swarms.get(challenge_name)
+        if swarm:
+            await swarm.note_coordinator_submission(flag, result.display, result.status)
+        if result.status in {"correct", "already_solved"}:
+            existing = deps.results.get(challenge_name, {})
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            merged.update(
+                {
+                    "status": FLAG_FOUND,
+                    "flag": flag.strip(),
+                    "submit": "confirmed by coordinator",
+                }
+            )
+            deps.results[challenge_name] = merged
+            challenge_dir = deps.challenge_dirs.get(challenge_name)
+            if challenge_dir:
+                solve_dir = Path(challenge_dir) / "solve"
+                solve_dir.mkdir(parents=True, exist_ok=True)
+                (solve_dir / "flag.txt").write_text(flag.strip() + "\n", encoding="utf-8")
+                (solve_dir / "result.json").write_text(
+                    json.dumps(merged, indent=2),
+                    encoding="utf-8",
+                )
         return result.display
     except Exception as e:
         return f"submit_flag error: {e}"

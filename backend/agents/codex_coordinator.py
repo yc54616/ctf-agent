@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from backend.agents.coordinator_core import (
+    COORDINATOR_PROMPT,
     do_broadcast,
     do_bump_agent,
     do_check_swarm_status,
@@ -21,36 +22,13 @@ from backend.agents.coordinator_core import (
 )
 from backend.agents.coordinator_loop import build_deps, run_event_loop
 from backend.config import Settings
+from backend.cost_tracker import CostTracker
+from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
 
 logger = logging.getLogger(__name__)
 
 _rpc_counter = itertools.count(1)
-
-COORDINATOR_PROMPT = """\
-You are a CTF competition coordinator running for the ENTIRE duration of a live competition.
-Your job is to maximize the number of challenges solved while minimizing cost.
-
-Strategy:
-- Spawn swarms for unsolved challenges, prioritizing by solve count (easy first)
-- Use read_solver_trace to monitor what each solver is doing and where it's stuck
-- When agents are stuck, read their traces, then craft targeted bumps with specific technical guidance
-- Use broadcast to share cross-solver insights (e.g. flag format discovery, shared vulnerabilities)
-- When you receive `ADVISOR MESSAGE:` or `Artifact path: /challenge/shared-artifacts/...`, treat it as evidence to inspect before deciding what to do.
-- Read `/challenge/shared-artifacts/manifest.md` or the referenced artifact file first, then decide whether to broadcast, bump a specific lane, or ignore it.
-
-CRITICAL RULES:
-- NEVER kill a swarm. Solvers will keep trying indefinitely with different approaches.
-  Even when stuck, they often unstick themselves after several bumps. Your job is to
-  HELP them, not give up on them. The only time a swarm should die is when the flag
-  is confirmed correct.
-- When a solver seems stuck, bump it with very specific technical guidance based on
-  its trace. Tell it exactly what to try next — specific tools, techniques, approaches.
-- Do not rebroadcast advisor or artifact messages blindly. Inspect the evidence first and only broadcast when it is broadly useful across lanes.
-- Cost is not a concern. Keep all swarms running.
-
-You will receive event messages. Respond with tool calls to manage the competition.
-"""
 
 COORDINATOR_TOOLS = [
     {
@@ -140,7 +118,7 @@ COORDINATOR_TOOLS = [
 class CodexCoordinator:
     """Coordinator using Codex App Server JSON-RPC."""
 
-    def __init__(self, deps: CoordinatorDeps, model: str = "gpt-5.4-mini") -> None:
+    def __init__(self, deps: CoordinatorDeps, model: str = "gpt-5.4") -> None:
         self.deps = deps
         self.model = model
         self._proc: asyncio.subprocess.Process | None = None
@@ -332,14 +310,20 @@ async def run_codex_coordinator(
     no_submit: bool = False,
     coordinator_model: str | None = None,
     msg_port: int = 0,
+    *,
+    ctfd: CTFdClient | None = None,
+    cost_tracker: CostTracker | None = None,
+    deps: CoordinatorDeps | None = None,
+    cleanup_runtime_on_exit: bool = True,
 ) -> dict[str, Any]:
     """Run the Codex coordinator with the shared event loop."""
-    ctfd, cost_tracker, deps = build_deps(
-        settings, model_specs, challenges_root, no_submit,
-    )
+    if ctfd is None or cost_tracker is None or deps is None:
+        ctfd, cost_tracker, deps = build_deps(
+            settings, model_specs, challenges_root, no_submit,
+        )
     deps.msg_port = msg_port
 
-    resolved_model = coordinator_model or "gpt-5.4-mini"
+    resolved_model = coordinator_model or "gpt-5.4"
     coordinator = CodexCoordinator(deps, model=resolved_model)
     await coordinator.start()
 
@@ -349,6 +333,12 @@ async def run_codex_coordinator(
         logger.info("Codex coordinator turn done")
 
     try:
-        return await run_event_loop(deps, ctfd, cost_tracker, turn_fn)
+        return await run_event_loop(
+            deps,
+            ctfd,
+            cost_tracker,
+            turn_fn,
+            cleanup_runtime_on_exit=cleanup_runtime_on_exit,
+        )
     finally:
         await coordinator.stop()

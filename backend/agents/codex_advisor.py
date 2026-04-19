@@ -6,34 +6,24 @@ import asyncio
 import itertools
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
+from backend.agents.advisor_base import (
+    ADVISOR_MAX_RESPONSE_CHARS,
+    ADVISOR_SYSTEM_PROMPT,
+    CandidateReview,
+    build_coordinator_annotation_prompt,
+    build_finding_annotation_prompt,
+    build_flag_candidate_review_prompt,
+    build_lane_hint_prompt,
+)
 from backend.auth import AuthValidationError, validate_codex_auth
+from backend.config import Settings
 
 logger = logging.getLogger(__name__)
 
 ADVISOR_MODEL = "gpt-5.4-mini"
 ADVISOR_TIMEOUT_SECONDS = 45.0
-ADVISOR_SYSTEM_PROMPT = """\
-You are a strategic CTF advisory sidecar.
-
-You do not solve the challenge directly. You only add high-signal directional
-comments about the material you are shown.
-
-Rules:
-- Return plain text only.
-- Prefer one compact paragraph or up to 6 concise sentences.
-- If the material is not worth commenting on, return exactly: NO_ADVICE
-- Focus on the best next direction, validation, contradiction, risk, or the
-  single most useful next check.
-- When advice is warranted, say what to try next, why it matters now, and what
-  result would confirm or falsify the idea.
-- Point to exact routes, files, artifacts, or commands when possible.
-- Do not restate the whole finding/message.
-- Do not call tools.
-"""
-
-ADVISOR_MAX_RESPONSE_CHARS = 1200
 
 _rpc_counter = itertools.count(1)
 
@@ -204,7 +194,7 @@ class CodexAdvisor:
     @classmethod
     def maybe_create(cls, settings: object, challenge_name: str) -> CodexAdvisor | None:
         try:
-            validate_codex_auth(settings)  # type: ignore[arg-type]
+            validate_codex_auth(cast(Settings, settings))
         except AuthValidationError as exc:
             logger.debug("Codex advisor disabled for %s: %s", challenge_name, exc)
             return None
@@ -221,23 +211,12 @@ class CodexAdvisor:
         finding: str,
         sibling_insights: str,
     ) -> str:
-        prompt = "\n".join(
-            [
-                f"Challenge: {self.challenge_name}",
-                f"Source model: {source_model}",
-                "",
-                "Challenge brief:",
-                challenge_brief.strip() or "No challenge brief available.",
-                "",
-                "Finding:",
-                finding.strip() or "(empty)",
-                "",
-                "Sibling insights:",
-                sibling_insights.strip() or "No sibling insights available yet.",
-                "",
-                "Add an advisory comment only if it materially improves next action quality.",
-                "Prefer a concrete next move, why it matters, and what output would validate it.",
-            ]
+        prompt = build_finding_annotation_prompt(
+            challenge_name=self.challenge_name,
+            source_model=source_model,
+            challenge_brief=challenge_brief,
+            finding=finding,
+            sibling_insights=sibling_insights,
         )
         return await self._query(prompt)
 
@@ -249,23 +228,12 @@ class CodexAdvisor:
         message: str,
         sibling_insights: str,
     ) -> str:
-        prompt = "\n".join(
-            [
-                f"Challenge: {self.challenge_name}",
-                f"Source model: {source_model}",
-                "",
-                "Challenge brief:",
-                challenge_brief.strip() or "No challenge brief available.",
-                "",
-                "Coordinator message draft:",
-                message.strip() or "(empty)",
-                "",
-                "Sibling insights:",
-                sibling_insights.strip() or "No sibling insights available yet.",
-                "",
-                "Add an advisory comment only if it changes what the coordinator should think or do.",
-                "Prefer prioritization, a concrete handoff direction, or the next check the coordinator should push.",
-            ]
+        prompt = build_coordinator_annotation_prompt(
+            challenge_name=self.challenge_name,
+            source_model=source_model,
+            challenge_brief=challenge_brief,
+            message=message,
+            sibling_insights=sibling_insights,
         )
         return await self._query(prompt)
 
@@ -279,33 +247,51 @@ class CodexAdvisor:
         manifest_excerpt: str,
         artifact_previews: str,
     ) -> str:
-        prompt = "\n".join(
-            [
-                f"Challenge: {self.challenge_name}",
-                f"Target lane: {target_model}",
-                "",
-                "Challenge brief:",
-                challenge_brief.strip() or "No challenge brief available.",
-                "",
-                "Current lane state:",
-                lane_state.strip() or "(empty)",
-                "",
-                "Findings from other lanes:",
-                sibling_findings.strip() or "No sibling findings available yet.",
-                "",
-                "Shared artifact manifest excerpt:",
-                manifest_excerpt.strip() or "No manifest excerpt available.",
-                "",
-                "Artifact digests and previews:",
-                artifact_previews.strip() or "No artifact digests or previews available.",
-                "",
-                "Add a private directional note for this lane only if it materially improves this lane's next move.",
-                "Prefer a concrete next-step plan over a summary.",
-                "Name exact routes, files, artifacts, or commands when possible, and say what result would confirm or refute the hypothesis.",
-                "Prefer a different angle from already-covered evidence, not a team-wide summary.",
-            ]
+        prompt = build_lane_hint_prompt(
+            challenge_name=self.challenge_name,
+            target_model=target_model,
+            challenge_brief=challenge_brief,
+            lane_state=lane_state,
+            sibling_findings=sibling_findings,
+            manifest_excerpt=manifest_excerpt,
+            artifact_previews=artifact_previews,
         )
         return await self._query(prompt)
+
+    async def review_flag_candidate(
+        self,
+        *,
+        source_model: str,
+        challenge_brief: str,
+        flag: str,
+        evidence: str,
+        sibling_insights: str,
+    ) -> CandidateReview:
+        prompt = build_flag_candidate_review_prompt(
+            challenge_name=self.challenge_name,
+            source_model=source_model,
+            challenge_brief=challenge_brief,
+            flag=flag,
+            evidence=evidence,
+            sibling_insights=sibling_insights,
+        )
+        raw = await self._query(prompt)
+        if not raw:
+            return CandidateReview()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            lowered = raw.lower()
+            if "unlikely" in lowered or "incorrect" in lowered:
+                return CandidateReview("unlikely", raw[:ADVISOR_MAX_RESPONSE_CHARS])
+            if "likely" in lowered or "plausible" in lowered:
+                return CandidateReview("likely", raw[:ADVISOR_MAX_RESPONSE_CHARS])
+            return CandidateReview("insufficient", raw[:ADVISOR_MAX_RESPONSE_CHARS])
+        decision = str(payload.get("decision", "insufficient")).strip().lower()
+        if decision not in {"likely", "unlikely", "insufficient"}:
+            decision = "insufficient"
+        note = str(payload.get("note", "")).strip()[:ADVISOR_MAX_RESPONSE_CHARS]
+        return CandidateReview(decision, note)
 
     async def _query(self, prompt: str) -> str:
         session = _CodexAdvisorySession(self.model)

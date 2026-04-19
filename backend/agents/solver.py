@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelRequest, UserPromptPart
@@ -14,6 +14,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
+from backend.config import Settings
 from backend.cost_tracker import CostTracker
 from backend.ctfd import CTFdClient
 from backend.deps import SolverDeps
@@ -25,21 +26,26 @@ from backend.models import (
     resolve_model_settings,
     supports_vision,
 )
-from backend.output_types import FlagFound
-from backend.prompts import ChallengeMeta, build_prompt, list_distfiles
+from backend.output_types import FlagCandidate
+from backend.prompts import ChallengeMeta, build_lane_bump_prompt, build_prompt, list_distfiles
 from backend.sandbox import DockerSandbox
-from backend.solver_base import CANCELLED, CORRECT_MARKERS, ERROR, FLAG_FOUND, GAVE_UP, SolverResult
-from backend.tools.flag import submit_flag
+from backend.solver_base import (
+    CANCELLED,
+    ERROR,
+    FLAG_CANDIDATE,
+    FLAG_FOUND,
+    GAVE_UP,
+    LaneRuntimeStatus,
+    SolverResult,
+    is_read_only_tool,
+    lifecycle_for_result,
+    summarize_tool_input,
+)
 from backend.tools.sandbox import (
     bash,
-    check_findings,
-    list_files,
+    fs_query,
     notify_coordinator,
-    read_file,
-    web_fetch,
-    webhook_create,
-    webhook_get_requests,
-    write_file,
+    report_flag_candidate,
 )
 from backend.tools.vision import view_image
 from backend.tracing import SolverTracer
@@ -54,12 +60,14 @@ class TracingToolset(WrapperToolset[SolverDeps]):
     tracer: SolverTracer = field(repr=False)
     loop_detector: LoopDetector = field(repr=False)
     step_counter: list[int] = field(repr=False)
+    runtime: LaneRuntimeStatus = field(repr=False)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[SolverDeps], tool: ToolsetTool[SolverDeps]
     ) -> Any:
         self.step_counter[0] += 1
         step = self.step_counter[0]
+        self.runtime.mark_busy(name, summarize_tool_input(name, tool_args), step)
 
         self.tracer.tool_call(name, tool_args, step)
 
@@ -68,6 +76,9 @@ class TracingToolset(WrapperToolset[SolverDeps]):
         if loop_status == "break":
             logger.warning(f"Loop break on {name} at step {step}")
             self.tracer.event("loop_break", tool=name, step=step)
+            self.runtime.last_progress_kind = "exec_tool"
+            self.runtime.read_only_streak = 0
+            self.runtime.mark_idle(LOOP_WARNING_MESSAGE)
             # Inject loop warning by returning it as the tool result
             return LOOP_WARNING_MESSAGE
 
@@ -75,22 +86,30 @@ class TracingToolset(WrapperToolset[SolverDeps]):
 
         result_str = str(result) if result is not None else ""
         self.tracer.tool_result(name, result_str, step)
+        if is_read_only_tool(name):
+            self.runtime.read_only_streak += 1
+            self.runtime.last_progress_kind = "read_only_tool"
+        else:
+            self.runtime.read_only_streak = 0
+            self.runtime.last_progress_kind = "exec_tool"
+        self.runtime.mark_idle(result_str)
 
         # Inject loop warning alongside result on "warn" level
         if loop_status == "warn":
             result = f"{result}\n\n{LOOP_WARNING_MESSAGE}" if isinstance(result, str) else result
 
         # Check for confirmed flag
-        if name == "submit_flag" and any(m in result_str for m in CORRECT_MARKERS):
-            self.tracer.event("flag_confirmed", tool=name, step=step)
-
         return result
 
 
 def _build_toolset(deps: SolverDeps) -> FunctionToolset[SolverDeps]:
     """Build the raw toolset for a solver agent."""
-    tools = [bash, read_file, write_file, list_files, submit_flag, web_fetch,
-             webhook_create, webhook_get_requests, check_findings, notify_coordinator]
+    tools: list[Any] = [
+        bash,
+        fs_query,
+        report_flag_candidate,
+        notify_coordinator,
+    ]
     if deps.use_vision:
         tools.append(view_image)
     return FunctionToolset(tools=tools, max_retries=4)
@@ -142,19 +161,26 @@ class Solver:
         self.loop_detector = LoopDetector()
         self.tracer = SolverTracer(meta.name, self.model_id)
         self.agent_name = f"{meta.name}/{self.model_id}"
-        self._agent: Agent[SolverDeps, FlagFound] | None = None
+        self._runtime = LaneRuntimeStatus()
+        self._agent: Agent[SolverDeps, FlagCandidate] | None = None
         self._messages: list = []
         self._step_count = [0]  # mutable ref shared with TracingToolset
         self._flag: str | None = None
+        self._candidate_flag: str | None = None
+        self._candidate_evidence: str = ""
+        self._candidate_confidence: str = ""
         self._confirmed: bool = False
         self._findings: str = ""
         self._advisory_bump_insights: str | None = None
+        self._run_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """Start the sandbox and build the agent."""
         if not self.sandbox._container:
             await self.sandbox.start()
         self.deps.workspace_dir = self.sandbox.workspace_dir
+        self.deps.runtime_status_getter = self.get_runtime_status
+        self.deps.trace_path = self.tracer.path
 
         arch_result = await self.sandbox.exec("uname -m", timeout_s=10)
         container_arch = arch_result.stdout.strip() or "unknown"
@@ -166,7 +192,7 @@ class Solver:
             container_arch=container_arch,
         )
 
-        model = resolve_model(self.model_spec, self.settings)
+        model = resolve_model(self.model_spec, cast(Settings, self.settings))
         model_settings = resolve_model_settings(self.model_spec)
         raw_toolset = _build_toolset(self.deps)
         toolset = TracingToolset(
@@ -174,18 +200,23 @@ class Solver:
             tracer=self.tracer,
             loop_detector=self.loop_detector,
             step_counter=self._step_count,
+            runtime=self._runtime,
         )
 
-        self._agent = Agent(
-            model,
-            deps_type=SolverDeps,
-            system_prompt=system_prompt,
-            model_settings=model_settings,
-            toolsets=[toolset],
-            output_type=FlagFound,
+        self._agent = cast(
+            Agent[SolverDeps, FlagCandidate],
+            Agent(
+                model,
+                deps_type=SolverDeps,
+                system_prompt=system_prompt,
+                model_settings=model_settings,
+                toolsets=[toolset],
+                output_type=FlagCandidate,
+            ),
         )
 
         self.tracer.event("start", challenge=self.meta.name, model=self.model_id)
+        self._runtime.mark_ready()
         logger.info(f"[{self.agent_name}] Solver started")
 
     async def run_until_done_or_gave_up(self) -> SolverResult:
@@ -197,12 +228,31 @@ class Solver:
         t0 = time.monotonic()
         try:
             from pydantic_ai.usage import UsageLimits
-            result = await self._agent.run(
-                "Solve this CTF challenge." if not self._messages else "Continue solving.",
-                deps=self.deps,
-                message_history=self._messages if self._messages else None,
-                usage_limits=UsageLimits(request_limit=None),
+            self._run_task = asyncio.create_task(
+                self._agent.run(
+                    "Solve this CTF challenge." if not self._messages else "Continue solving.",
+                    deps=self.deps,
+                    message_history=self._messages if self._messages else None,
+                    usage_limits=UsageLimits(request_limit=None),
+                )
             )
+            cancel_wait = asyncio.create_task(self.cancel_event.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {self._run_task, cancel_wait},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_wait in done and self.cancel_event.is_set():
+                    if self._run_task and not self._run_task.done():
+                        self._run_task.cancel()
+                        await asyncio.gather(self._run_task, return_exceptions=True)
+                    self._runtime.mark_terminal(lifecycle_for_result(CANCELLED), "cancelled")
+                    return self._result(CANCELLED)
+                result = await self._run_task
+            finally:
+                cancel_wait.cancel()
+                await asyncio.gather(cancel_wait, return_exceptions=True)
+                self._run_task = None
 
             duration = time.monotonic() - t0
             usage = result.usage()
@@ -236,27 +286,42 @@ class Solver:
                     )
 
             output = result.output
-            if isinstance(output, FlagFound):
-                self._flag = output.flag
-                self._findings = f"Flag found via {output.method}: {output.flag}"
-                # In dry-run mode, structured output is sufficient (can't verify via CTFd)
-                if self.deps.no_submit:
-                    self._confirmed = True
+            if isinstance(output, FlagCandidate):
+                self._candidate_flag = output.flag
+                self._candidate_evidence = output.method
+                self._candidate_confidence = "medium"
+                self._findings = f"Flag candidate via {output.method}: {output.flag}"
+                if self.deps.report_flag_candidate_fn:
+                    ack = await self.deps.report_flag_candidate_fn(
+                        output.flag,
+                        output.method,
+                        self._candidate_confidence,
+                        self._step_count[0],
+                        self.tracer.path,
+                    )
+                    if ack:
+                        self._findings = f"{self._findings}\n{ack}"[:2000]
+                self._runtime.mark_terminal(lifecycle_for_result(FLAG_CANDIDATE), self._findings)
+                return self._result(FLAG_CANDIDATE)
             # CTFd confirmation always counts (the primary path when not in dry-run)
             if self.deps.confirmed_flag:
                 self._confirmed = True
                 self._flag = self._flag or self.deps.confirmed_flag
 
             if self._confirmed and self._flag:
+                self._runtime.mark_terminal(lifecycle_for_result(FLAG_FOUND), self._findings)
                 return self._result(FLAG_FOUND)
+            self._runtime.mark_terminal(lifecycle_for_result(GAVE_UP), self._findings)
             return self._result(GAVE_UP)
 
         except asyncio.CancelledError:
+            self._runtime.mark_terminal(lifecycle_for_result(CANCELLED), "cancelled")
             return self._result(CANCELLED)
         except Exception as e:
             logger.error(f"[{self.agent_name}] Error: {e}", exc_info=True)
             self._findings = f"Error: {e}"
             self.tracer.event("error", error=str(e))
+            self._runtime.mark_terminal(lifecycle_for_result(ERROR), self._findings)
             return self._result(ERROR)
 
     def bump(self, insights: str) -> None:
@@ -287,27 +352,11 @@ class Solver:
     def _build_bump_message(
         insights: str, *, operator: bool = False, advisory: bool = False
     ) -> ModelRequest:
-        if operator:
-            content = (
-                "Stop your previous line of attack. "
-                "Highest priority guidance from the operator:\n\n"
-                f"{insights}\n\n"
-                "Do this first. Verify or refute it before returning to earlier exploration."
-            )
-        elif advisory:
-            content = (
-                "Prioritize this lane advisory for your next 1-2 actions:\n\n"
-                f"{insights}\n\n"
-                "Validate or falsify it before returning to broader search."
-            )
-        else:
-            content = (
-                "Your previous attempt did not find the flag. Here are insights "
-                "from other agents working on the same challenge:\n\n"
-                f"{insights}\n\n"
-                "Use these insights to try a different approach. "
-                "Do NOT repeat what has already been tried."
-            )
+        content = build_lane_bump_prompt(
+            insights,
+            operator=operator,
+            advisory=advisory,
+        )
         return ModelRequest(parts=[UserPromptPart(content=content)])
 
     def _result(self, status: str, run_steps: int | None = None, run_cost: float | None = None) -> SolverResult:
@@ -321,6 +370,9 @@ class Solver:
             step_count=run_steps if run_steps is not None else self._step_count[0],
             cost_usd=run_cost if run_cost is not None else cost,
             log_path=self.tracer.path,
+            candidate_flag=self._candidate_flag,
+            candidate_evidence=self._candidate_evidence,
+            candidate_confidence=self._candidate_confidence,
         )
 
     async def stop(self) -> None:
@@ -328,3 +380,16 @@ class Solver:
         self.tracer.close()
         if self._owns_sandbox and self.sandbox:
             await self.sandbox.stop()
+
+    def get_runtime_status(self) -> dict[str, object]:
+        snapshot = self._runtime.snapshot()
+        snapshot["step_count"] = self._step_count[0]
+        return snapshot
+
+    def mark_terminal_status(self, status: str) -> None:
+        self._runtime.mark_terminal(lifecycle_for_result(status), self._findings)
+
+    async def stop_process(self) -> None:
+        self.cancel_event.set()
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()

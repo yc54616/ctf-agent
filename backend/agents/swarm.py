@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING
 from backend.agents.advisor_base import AdvisorProtocol, NoopAdvisor
 from backend.cost_tracker import CostTracker
 from backend.ctfd import CTFdClient
-from backend.message_bus import ChallengeMessageBus
+from backend.message_bus import (
+    CandidateRef,
+    ChallengeMessageBus,
+    CoordinatorNoteRef,
+    SharedFindingRef,
+)
 from backend.models import DEFAULT_MODELS, provider_from_spec
 from backend.prompts import ChallengeMeta, list_distfiles
 from backend.sandbox import (
@@ -28,6 +33,7 @@ from backend.sandbox import (
 from backend.solver_base import (
     CANCELLED,
     ERROR,
+    FLAG_CANDIDATE,
     FLAG_FOUND,
     GAVE_UP,
     QUOTA_ERROR,
@@ -131,6 +137,40 @@ IGNORED_ARTIFACT_BASENAMES = ("manifest.md",)
 IGNORED_ARTIFACT_PREFIXES = ("stdout-", "stderr-", "lane-resume-")
 
 
+def _int_from_object(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _float_from_object(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _trace_tail_lines(value: object, *, limit: int = 8) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(line) for line in value[:limit]]
+
+
 @dataclass
 class LaneRestartState:
     last_total_steps: int = -1
@@ -142,6 +182,139 @@ class LaneRestartState:
 
 
 @dataclass
+class FlagCandidateRecord:
+    normalized_flag: str
+    raw_flag: str
+    first_seen_at: float = field(default_factory=time.time)
+    last_seen_at: float = field(default_factory=time.time)
+    status: str = "pending"
+    advisor_decision: str = "insufficient"
+    advisor_note: str = ""
+    submit_display: str = ""
+    coordinator_notified_at: float | None = None
+    source_models: set[str] = field(default_factory=set)
+    evidence_snippets: list[str] = field(default_factory=list)
+    evidence_digest_paths: dict[str, str] = field(default_factory=dict)
+    evidence_pointer_paths: dict[str, str] = field(default_factory=dict)
+    confidences: dict[str, str] = field(default_factory=dict)
+    step_counts: dict[str, int] = field(default_factory=dict)
+    trace_paths: dict[str, str] = field(default_factory=dict)
+    _review_started: bool = False
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "flag": self.raw_flag,
+            "status": self.status,
+            "advisor_decision": self.advisor_decision,
+            "advisor_note": self.advisor_note,
+            "submit_display": self.submit_display,
+            "source_models": sorted(self.source_models),
+            "evidence_snippets": list(self.evidence_snippets),
+            "evidence_digest_paths": dict(self.evidence_digest_paths),
+            "evidence_pointer_paths": dict(self.evidence_pointer_paths),
+            "confidences": dict(self.confidences),
+            "step_counts": dict(self.step_counts),
+            "trace_paths": dict(self.trace_paths),
+            "first_seen_at": self.first_seen_at,
+            "last_seen_at": self.last_seen_at,
+            "coordinator_notified_at": self.coordinator_notified_at,
+        }
+
+    @classmethod
+    def from_snapshot(
+        cls,
+        normalized_flag: str,
+        payload: object,
+    ) -> FlagCandidateRecord | None:
+        if not isinstance(payload, dict):
+            return None
+        raw_payload = {str(key): value for key, value in payload.items()}
+        raw_source_models = raw_payload.get("source_models", [])
+        source_model_items = raw_source_models if isinstance(raw_source_models, list) else []
+        raw_flag = str(raw_payload.get("flag") or normalized_flag).strip() or normalized_flag
+        source_models = {
+            str(model).strip()
+            for model in source_model_items
+            if str(model).strip()
+        }
+        raw_evidence_snippets = raw_payload.get("evidence_snippets", [])
+        evidence_items = raw_evidence_snippets if isinstance(raw_evidence_snippets, list) else []
+        evidence_snippets = [
+            str(snippet)[:500]
+            for snippet in evidence_items
+            if str(snippet).strip()
+        ]
+        raw_evidence_digests = raw_payload.get("evidence_digest_paths", {})
+        evidence_digest_paths = (
+            {
+                str(model): str(digest_path)
+                for model, digest_path in raw_evidence_digests.items()
+                if str(model).strip() and str(digest_path).strip()
+            }
+            if isinstance(raw_evidence_digests, dict)
+            else {}
+        )
+        raw_evidence_pointers = raw_payload.get("evidence_pointer_paths", {})
+        evidence_pointer_paths = (
+            {
+                str(model): str(pointer_path)
+                for model, pointer_path in raw_evidence_pointers.items()
+                if str(model).strip() and str(pointer_path).strip()
+            }
+            if isinstance(raw_evidence_pointers, dict)
+            else {}
+        )
+        raw_confidences = raw_payload.get("confidences", {})
+        confidences = (
+            {
+                str(model): str(confidence)
+                for model, confidence in raw_confidences.items()
+                if str(model).strip()
+            }
+            if isinstance(raw_confidences, dict)
+            else {}
+        )
+        raw_step_counts = raw_payload.get("step_counts", {})
+        step_counts = (
+            {
+                str(model): _int_from_object(step_count)
+                for model, step_count in raw_step_counts.items()
+                if str(model).strip()
+            }
+            if isinstance(raw_step_counts, dict)
+            else {}
+        )
+        raw_trace_paths = raw_payload.get("trace_paths", {})
+        trace_paths = (
+            {
+                str(model): str(trace_path)
+                for model, trace_path in raw_trace_paths.items()
+                if str(model).strip() and str(trace_path).strip()
+            }
+            if isinstance(raw_trace_paths, dict)
+            else {}
+        )
+        return cls(
+            normalized_flag=normalized_flag,
+            raw_flag=raw_flag,
+            first_seen_at=_float_from_object(raw_payload.get("first_seen_at")) or time.time(),
+            last_seen_at=_float_from_object(raw_payload.get("last_seen_at")) or time.time(),
+            status=str(raw_payload.get("status") or "pending"),
+            advisor_decision=str(raw_payload.get("advisor_decision") or "insufficient"),
+            advisor_note=str(raw_payload.get("advisor_note") or "")[:500],
+            submit_display=str(raw_payload.get("submit_display") or "")[:500],
+            coordinator_notified_at=_float_from_object(raw_payload.get("coordinator_notified_at")),
+            source_models=source_models,
+            evidence_snippets=evidence_snippets,
+            evidence_digest_paths=evidence_digest_paths,
+            evidence_pointer_paths=evidence_pointer_paths,
+            confidences=confidences,
+            step_counts=step_counts,
+            trace_paths=trace_paths,
+        )
+
+
+@dataclass
 class ChallengeSwarm:
     """Parallel solvers racing on one challenge."""
 
@@ -150,6 +323,7 @@ class ChallengeSwarm:
     ctfd: CTFdClient
     cost_tracker: CostTracker
     settings: Settings
+    result_store: dict[str, dict[str, object]] | None = None
     model_specs: list[str] = field(default_factory=lambda: list(DEFAULT_MODELS))
     no_submit: bool = False
     coordinator_inbox: asyncio.Queue | None = None
@@ -158,9 +332,11 @@ class ChallengeSwarm:
     solvers: dict[str, SolverProtocol] = field(default_factory=dict)
     agent_results: dict[str, SolverResult] = field(default_factory=dict)
     findings: dict[str, str] = field(default_factory=dict)
+    shared_finding_events: dict[str, SharedFindingRef] = field(default_factory=dict, init=False, repr=False)
     winner: SolverResult | None = None
     confirmed_flag: str | None = None
     _flag_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    flag_candidates: dict[str, FlagCandidateRecord] = field(default_factory=dict)
     _submit_count: dict[str, int] = field(default_factory=dict)  # per-model wrong submission count
     _submitted_flags: set[str] = field(default_factory=set)  # dedup exact flags
     _last_submit_time: dict[str, float] = field(default_factory=dict)  # per-model last submit timestamp
@@ -188,8 +364,104 @@ class ChallengeSwarm:
 
     def __post_init__(self) -> None:
         self.shared_artifacts_dir = resolve_shared_artifacts_dir(self.challenge_dir)
+        self._restore_runtime_state()
 
-    def _persist_shared_text(self, prefix: str, content: str, suffix: str = ".txt") -> str:
+    def _restore_runtime_state(self) -> None:
+        if not self.result_store:
+            return
+        persisted = self.result_store.get(self.meta.name)
+        if not isinstance(persisted, dict):
+            return
+        if persisted.get("status") == FLAG_FOUND and persisted.get("flag"):
+            self.confirmed_flag = str(persisted.get("flag") or "").strip() or None
+            self.winner_model_spec = str(persisted.get("winner_model") or "").strip() or None
+        self.last_advisor_note = str(persisted.get("advisor_note") or "")
+        self.last_coordinator_advisor_note = str(persisted.get("coordinator_advisor_note") or "")
+        self.last_shared_finding = str(persisted.get("shared_finding") or "")
+        raw_shared_findings = persisted.get("shared_findings", {})
+        if isinstance(raw_shared_findings, dict):
+            for model_spec, payload in raw_shared_findings.items():
+                finding = SharedFindingRef.from_snapshot(payload)
+                if finding is None:
+                    continue
+                self.shared_finding_events[str(model_spec)] = finding
+                self.findings[str(model_spec)] = finding.rendered_text()
+        flag_candidates = persisted.get("flag_candidates", {})
+        if isinstance(flag_candidates, dict):
+            for normalized_flag, payload in flag_candidates.items():
+                restored = FlagCandidateRecord.from_snapshot(str(normalized_flag), payload)
+                if restored is not None:
+                    self.flag_candidates[restored.normalized_flag] = restored
+
+    def _runtime_step_count(self) -> int:
+        total = 0
+        for result in self.agent_results.values():
+            total = max(total, result.step_count)
+        for candidate in self.flag_candidates.values():
+            total = max(total, max(candidate.step_counts.values(), default=0))
+        return total
+
+    def _runtime_result_payload(self) -> dict[str, object]:
+        status = FLAG_FOUND if self.confirmed_flag else (
+            "candidate_pending" if self.flag_candidates else "pending"
+        )
+        payload: dict[str, object] = {
+            "challenge_name": self.meta.name,
+            "status": status,
+            "step_count": self._runtime_step_count(),
+            "advisor_note": self.last_advisor_note,
+            "coordinator_advisor_note": self.last_coordinator_advisor_note,
+            "shared_finding": self.last_shared_finding,
+            "shared_findings": {
+                model_spec: finding.snapshot()
+                for model_spec, finding in sorted(self.shared_finding_events.items())
+            },
+            "shared_artifacts_path": str(self.shared_artifacts_dir.resolve()),
+            "flag_candidates": {
+                flag: record.snapshot()
+                for flag, record in sorted(self.flag_candidates.items())
+            },
+            "saved_at": datetime.now(UTC).isoformat(),
+        }
+        if self.confirmed_flag:
+            payload["flag"] = self.confirmed_flag
+            payload["winner_model"] = self.winner_model_spec or ""
+            payload["findings_summary"] = (
+                self.winner.findings_summary if self.winner else "confirmed by coordinator"
+            )
+        return payload
+
+    async def _persist_runtime_state(self) -> None:
+        if self.result_store is None:
+            return
+
+        async with self._save_lock:
+            payload = self._runtime_result_payload()
+            self.result_store[self.meta.name] = payload
+
+            challenge_root = Path(self.challenge_dir).resolve()
+            if not challenge_root.exists():
+                return
+
+            solve_dir = challenge_root / "solve"
+            solve_dir.mkdir(parents=True, exist_ok=True)
+
+            if payload.get("status") == FLAG_FOUND and not self.saved_solve_artifacts:
+                flag_path = solve_dir / "flag.txt"
+                flag_path.write_text(str(payload.get("flag") or "") + "\n", encoding="utf-8")
+
+            if payload.get("status") == FLAG_FOUND and self.saved_solve_artifacts:
+                return
+
+            result_path = solve_dir / "result.json"
+            result_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _persist_shared_text_pointer(
+        self,
+        prefix: str,
+        content: str,
+        suffix: str = ".txt",
+    ) -> tuple[str, int]:
         pointer = allocate_artifact_pointer(
             self.shared_artifacts_dir,
             SHARED_ARTIFACTS_CONTAINER_ROOT,
@@ -199,12 +471,19 @@ class ChallengeSwarm:
         assert pointer.host_path is not None
         Path(pointer.host_path).write_text(content, encoding="utf-8")
         pointer.size_bytes = len(content.encode("utf-8"))
-        preview = content[:ARTIFACT_PREVIEW_CHARS].strip()
-        preview_block = preview or "(empty preview)"
-        return (
-            f"[artifact] {pointer.container_path} ({pointer.size_bytes} bytes)\n"
-            f"[preview]\n{preview_block}"
-        )
+        return pointer.container_path or "", pointer.size_bytes
+
+    def _compact_summary(self, content: str, *, limit: int = 160) -> str:
+        text = self._normalize_text_line(content)
+        if not text:
+            return ""
+        return text[: limit - 1] + "..." if len(text) > limit else text
+
+    def _record_shared_finding(self, model_spec: str, finding: SharedFindingRef) -> None:
+        rendered = finding.rendered_text()
+        self.shared_finding_events[model_spec] = finding
+        self.findings[model_spec] = rendered
+        self.last_shared_finding = rendered
 
     def _manifest_file_path(self) -> Path:
         return self.shared_artifacts_dir / "manifest.md"
@@ -214,13 +493,188 @@ class ChallengeSwarm:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _generic_finding_digest_name(self, pointer_path: str) -> str:
+        base = Path(pointer_path).name or "finding"
+        safe_base = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in base)
+        suffix = hashlib.sha1(pointer_path.encode("utf-8", errors="replace")).hexdigest()[:10]
+        return f"{safe_base}-{suffix}.digest.md"
+
+    def _generic_finding_digest_paths(self, pointer_path: str) -> tuple[Path, str]:
+        name = self._generic_finding_digest_name(pointer_path)
+        host_path = self._advisor_digest_dir() / name
+        container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{ADVISOR_DIGEST_DIRNAME}/{name}"
+        return host_path, container_path
+
+    def _build_generic_finding_digest(
+        self,
+        *,
+        model_spec: str,
+        pointer_path: str,
+        text: str,
+    ) -> str:
+        normalized_lines: list[str] = []
+        for raw_line in text.splitlines():
+            cleaned = self._normalize_text_line(raw_line)
+            if not cleaned or cleaned in normalized_lines:
+                continue
+            normalized_lines.append(self._truncate_text(cleaned, 180))
+            if len(normalized_lines) >= ADVISOR_DIGEST_MAX_ITEMS:
+                break
+        summary = self._compact_summary(text)
+        lines = [
+            "# Finding Digest",
+            f"- source_model: {model_spec}",
+            f"- pointer: {pointer_path}",
+            f"- summary: {summary or '(empty)'}",
+            "",
+        ]
+        if normalized_lines:
+            lines.append("## Key Lines")
+            lines.extend(f"- {line}" for line in normalized_lines)
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
+
+    def _persist_generic_finding_digest(
+        self,
+        *,
+        model_spec: str,
+        pointer_path: str,
+        text: str,
+    ) -> tuple[str, str, str]:
+        digest_host_path, digest_container_path = self._generic_finding_digest_paths(pointer_path)
+        digest_text = self._build_generic_finding_digest(
+            model_spec=model_spec,
+            pointer_path=pointer_path,
+            text=text,
+        )
+        revision = hashlib.sha256(digest_text.encode("utf-8", errors="replace")).hexdigest()
+        digest_host_path.write_text(digest_text, encoding="utf-8")
+        return digest_container_path, revision, digest_text
+
+    def _shared_artifact_host_path(self, container_path: str) -> Path | None:
+        prefix = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/"
+        if not container_path.startswith(prefix):
+            return None
+        relative_path = container_path.removeprefix(prefix)
+        if not relative_path.strip():
+            return None
+        return self.shared_artifacts_dir / relative_path
+
+    def _read_shared_pointer_text(self, pointer_path: str) -> str:
+        host_path = self._shared_artifact_host_path(pointer_path)
+        if host_path is None or not host_path.exists():
+            return ""
+        try:
+            return host_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
+    def _candidate_evidence_digest_name(self, pointer_path: str) -> str:
+        base = Path(pointer_path).name or "candidate"
+        safe_base = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in base)
+        suffix = hashlib.sha1(f"candidate\0{pointer_path}".encode("utf-8", errors="replace")).hexdigest()[:10]
+        return f"{safe_base}-{suffix}.candidate.digest.md"
+
+    def _candidate_evidence_digest_paths(self, pointer_path: str) -> tuple[Path, str]:
+        name = self._candidate_evidence_digest_name(pointer_path)
+        host_path = self._advisor_digest_dir() / name
+        container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{ADVISOR_DIGEST_DIRNAME}/{name}"
+        return host_path, container_path
+
+    def _build_candidate_evidence_digest(
+        self,
+        *,
+        model_spec: str,
+        flag: str,
+        pointer_path: str,
+        text: str,
+        advisor_decision: str = "",
+        advisor_note: str = "",
+    ) -> str:
+        normalized_lines: list[str] = []
+        for raw_line in text.splitlines():
+            cleaned = self._normalize_text_line(raw_line)
+            if not cleaned or cleaned in normalized_lines:
+                continue
+            normalized_lines.append(self._truncate_text(cleaned, 180))
+            if len(normalized_lines) >= ADVISOR_DIGEST_MAX_ITEMS:
+                break
+        summary = self._compact_summary(text)
+        lines = [
+            "# Candidate Evidence Digest",
+            f"- source_model: {model_spec}",
+            f"- flag: {flag.strip() or '(empty)'}",
+            f"- pointer: {pointer_path}",
+            f"- advisor_decision: {advisor_decision or 'insufficient'}",
+            f"- summary: {summary or '(empty)'}",
+        ]
+        note = self._normalize_text_line(advisor_note)
+        if note:
+            lines.append(f"- advisor_note: {self._truncate_text(note, 180)}")
+        lines.append("")
+        if normalized_lines:
+            lines.append("## Key Lines")
+            lines.extend(f"- {line}" for line in normalized_lines)
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
+
+    def _persist_candidate_evidence_digest(
+        self,
+        *,
+        model_spec: str,
+        flag: str,
+        pointer_path: str,
+        text: str,
+        advisor_decision: str = "",
+        advisor_note: str = "",
+    ) -> tuple[str, str, str]:
+        digest_host_path, digest_container_path = self._candidate_evidence_digest_paths(pointer_path)
+        digest_text = self._build_candidate_evidence_digest(
+            model_spec=model_spec,
+            flag=flag,
+            pointer_path=pointer_path,
+            text=text,
+            advisor_decision=advisor_decision,
+            advisor_note=advisor_note,
+        )
+        revision = hashlib.sha256(digest_text.encode("utf-8", errors="replace")).hexdigest()
+        digest_host_path.write_text(digest_text, encoding="utf-8")
+        return digest_container_path, revision, digest_text
+
     def _shareable_text(self, prefix: str, content: str, *, threshold: int) -> str:
         text = content.strip()
         if not text:
             return text
+        summary = self._compact_summary(text)
         if len(text) <= threshold:
-            return text
-        return self._persist_shared_text(prefix, text)
+            return summary or text
+        pointer_path, size_bytes = self._persist_shared_text_pointer(prefix, text)
+        size_suffix = f" ({size_bytes} bytes)" if size_bytes else ""
+        return f"{summary}\nPointer: {pointer_path}{size_suffix}".strip()
+
+    def _make_finding_event(
+        self,
+        *,
+        model_spec: str,
+        prefix: str,
+        content: str,
+    ) -> SharedFindingRef:
+        text = content.strip()
+        pointer_path, _size_bytes = self._persist_shared_text_pointer(prefix, text)
+        digest_path, revision, _digest_text = self._persist_generic_finding_digest(
+            model_spec=model_spec,
+            pointer_path=pointer_path,
+            text=text,
+        )
+        return SharedFindingRef(
+            model=model_spec,
+            kind="finding_ref",
+            content="",
+            summary=self._compact_summary(text),
+            pointer_path=pointer_path,
+            digest_path=digest_path,
+            revision=revision,
+        )
 
     @staticmethod
     def _normalize_text_line(value: str) -> str:
@@ -533,17 +987,23 @@ class ChallengeSwarm:
             return False
 
         self._shared_artifact_fingerprints.add(fingerprint)
-        shared_finding = f"Artifact path: {artifact_path}"
-        self.findings[model_spec] = shared_finding
-        self.last_shared_finding = shared_finding
         digest_path, _revision, _digest_text = self._ensure_artifact_digest(artifact_path)
+        finding = SharedFindingRef(
+            model=model_spec,
+            kind="artifact_ref",
+            content=f"Artifact path: {artifact_path}",
+            summary=fact_summary,
+            pointer_path=artifact_path,
+            digest_path=digest_path,
+        )
+        self._record_shared_finding(model_spec, finding)
         self._record_artifact_manifest_entry(
             model_spec=model_spec,
             fact_summary=fact_summary,
             artifact_path=artifact_path,
             digest_path=digest_path,
         )
-        await self.message_bus.post(model_spec, shared_finding)
+        await self.message_bus.post(model_spec, finding)
         return True
 
     async def _maybe_share_artifact_finding(
@@ -712,7 +1172,7 @@ class ChallengeSwarm:
             flag_path.write_text((result.flag or "") + "\n", encoding="utf-8")
 
             saved_at = datetime.now(UTC).isoformat()
-            result_payload = {
+            result_payload: dict[str, object] = {
                 "challenge_name": self.meta.name,
                 "status": result.status,
                 "flag": result.flag,
@@ -720,14 +1180,26 @@ class ChallengeSwarm:
                 "winner_model": model_spec,
                 "findings_summary": result.findings_summary,
                 "advisor_note": self.last_advisor_note,
+                "coordinator_advisor_note": self.last_coordinator_advisor_note,
+                "shared_finding": self.last_shared_finding,
+                "shared_findings": {
+                    model_spec: finding.snapshot()
+                    for model_spec, finding in sorted(self.shared_finding_events.items())
+                },
                 "trace_path": trace_path,
                 "workspace_path": workspace_path,
                 "shared_artifacts_path": str(self.shared_artifacts_dir.resolve()),
+                "flag_candidates": {
+                    flag: record.snapshot()
+                    for flag, record in sorted(self.flag_candidates.items())
+                },
                 "saved_at": saved_at,
             }
 
             result_path = solve_dir / "result.json"
             result_path.write_text(json.dumps(result_payload, indent=2), encoding="utf-8")
+            if self.result_store is not None:
+                self.result_store[self.meta.name] = result_payload
 
             writeup_path = solve_dir / "writeup.md"
             writeup_path.write_text(
@@ -765,7 +1237,15 @@ class ChallengeSwarm:
         """
         provider = provider_from_spec(model_spec)
 
-        def _submit_fn(flag): return self.try_submit_flag(flag, model_spec)
+        def _report_flag_candidate(flag, evidence="", confidence="medium", step_count=0, trace_path=""):
+            return self.report_flag_candidate(
+                flag,
+                model_spec,
+                evidence=evidence,
+                confidence=confidence,
+                step_count=step_count,
+                trace_path=trace_path,
+            )
         _notify = self._make_notify_fn(model_spec)
 
         if provider == "claude-sdk":
@@ -785,7 +1265,7 @@ class ChallengeSwarm:
                 settings=self.settings,
                 cancel_event=self.cancel_event,
                 no_submit=self.no_submit,
-                submit_fn=_submit_fn,
+                report_flag_candidate_fn=_report_flag_candidate,
                 message_bus=self.message_bus,
                 notify_coordinator=_notify,
                 sandbox=sandbox,
@@ -803,7 +1283,7 @@ class ChallengeSwarm:
                 settings=self.settings,
                 cancel_event=self.cancel_event,
                 no_submit=self.no_submit,
-                submit_fn=_submit_fn,
+                report_flag_candidate_fn=_report_flag_candidate,
                 message_bus=self.message_bus,
                 notify_coordinator=_notify,
                 sandbox=sandbox,
@@ -817,16 +1297,215 @@ class ChallengeSwarm:
         async def _notify(message: str) -> None:
             if self.coordinator_inbox:
                 advised_message = await self._build_advised_coordinator_message(model_spec, message)
-                shared_message = self._shareable_text(
+                pointer_path, _size_bytes = self._persist_shared_text_pointer(
                     f"coordinator-{self.meta.name}-{model_spec}",
                     advised_message,
-                    threshold=COORDINATOR_ARTIFACT_THRESHOLD_CHARS,
                 )
                 self.coordinator_inbox.put_nowait(
-                    f"[{self.meta.name}/{model_spec}] {shared_message}"
+                    CoordinatorNoteRef(
+                        challenge_name=self.meta.name,
+                        source_model=model_spec,
+                        summary=self._compact_summary(advised_message),
+                        pointer_path=pointer_path,
+                    )
                 )
                 self.coordinator_message_count += 1
         return _notify
+
+    @staticmethod
+    def _normalize_candidate_flag(flag: str) -> str:
+        return flag.strip()
+
+    async def report_flag_candidate(
+        self,
+        flag: str,
+        model_spec: str,
+        *,
+        evidence: str = "",
+        confidence: str = "medium",
+        step_count: int = 0,
+        trace_path: str = "",
+    ) -> str:
+        normalized = self._normalize_candidate_flag(flag)
+        if not normalized:
+            return "Flag candidate rejected: empty flag."
+
+        async with self._flag_lock:
+            if self.confirmed_flag:
+                return f"ALREADY SOLVED — flag already confirmed: {self.confirmed_flag}"
+
+            candidate = self.flag_candidates.get(normalized)
+            is_new = candidate is None
+            if candidate is None:
+                candidate = FlagCandidateRecord(
+                    normalized_flag=normalized,
+                    raw_flag=flag.strip() or normalized,
+                )
+                self.flag_candidates[normalized] = candidate
+
+            candidate.last_seen_at = time.time()
+            candidate.source_models.add(model_spec)
+            candidate.confidences[model_spec] = confidence.strip() or "medium"
+            candidate.step_counts[model_spec] = step_count
+            if trace_path:
+                candidate.trace_paths[model_spec] = trace_path
+            cleaned_evidence = evidence.strip()
+            if cleaned_evidence and cleaned_evidence not in candidate.evidence_snippets:
+                candidate.evidence_snippets.append(cleaned_evidence[:500])
+            if cleaned_evidence:
+                pointer_path, _size_bytes = self._persist_shared_text_pointer(
+                    f"candidate-{self.meta.name}-{model_spec}",
+                    cleaned_evidence,
+                )
+                if pointer_path:
+                    candidate.evidence_pointer_paths[model_spec] = pointer_path
+                    digest_path, _revision, _digest_text = self._persist_candidate_evidence_digest(
+                        model_spec=model_spec,
+                        flag=candidate.raw_flag,
+                        pointer_path=pointer_path,
+                        text=cleaned_evidence,
+                        advisor_decision=candidate.advisor_decision,
+                        advisor_note=candidate.advisor_note,
+                    )
+                    if digest_path:
+                        candidate.evidence_digest_paths[model_spec] = digest_path
+
+            should_review = (
+                candidate.status not in {"confirmed", "rejected"}
+                and not candidate._review_started
+            )
+            if should_review:
+                candidate._review_started = True
+                self._schedule_background(self._review_flag_candidate(normalized, model_spec))
+
+        await self._persist_runtime_state()
+
+        if is_new:
+            return (
+                f'Queued flag candidate "{normalized}" for advisor/coordinator review. '
+                "Keep exploring and do not submit it yourself."
+            )
+        return (
+            f'Flag candidate "{normalized}" is already queued. '
+            "Keep exploring and do not re-submit the same candidate."
+        )
+
+    async def _review_flag_candidate(self, normalized_flag: str, source_model: str) -> None:
+        candidate = self.flag_candidates.get(normalized_flag)
+        if candidate is None:
+            return
+
+        evidence = "\n".join(candidate.evidence_snippets[-3:])
+        advisor = self._get_advisor(source_model)
+        try:
+            review = await asyncio.wait_for(
+                advisor.review_flag_candidate(
+                    source_model=source_model,
+                    challenge_brief=self._advisor_challenge_brief(),
+                    flag=candidate.raw_flag,
+                    evidence=evidence,
+                    sibling_insights=self._gather_sibling_insights(source_model),
+                ),
+                timeout=ADVISOR_COORDINATOR_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            logger.debug(
+                "[%s/%s] advisor candidate review skipped: %s",
+                self.meta.name,
+                source_model,
+                exc,
+            )
+            review = None
+
+        candidate = self.flag_candidates.get(normalized_flag)
+        if candidate is None:
+            return
+
+        candidate.advisor_decision = (
+            review.decision if review and review.decision in {"likely", "unlikely", "insufficient"} else "insufficient"
+        )
+        candidate.advisor_note = (review.note if review else "").strip()[:500]
+        candidate.status = "pending_coordinator"
+
+        for model_spec, pointer_path in list(candidate.evidence_pointer_paths.items()):
+            evidence_text = self._read_shared_pointer_text(pointer_path)
+            if not evidence_text.strip():
+                evidence_text = "\n".join(candidate.evidence_snippets[-3:]).strip()
+            if not evidence_text:
+                continue
+            digest_path, _revision, _digest_text = self._persist_candidate_evidence_digest(
+                model_spec=model_spec,
+                flag=candidate.raw_flag,
+                pointer_path=pointer_path,
+                text=evidence_text,
+                advisor_decision=candidate.advisor_decision,
+                advisor_note=candidate.advisor_note,
+            )
+            if digest_path:
+                candidate.evidence_digest_paths[model_spec] = digest_path
+
+        if not self.coordinator_inbox:
+            await self._persist_runtime_state()
+            return
+
+        self.coordinator_inbox.put_nowait(
+            CandidateRef(
+                challenge_name=self.meta.name,
+                flag=candidate.raw_flag,
+                source_models=sorted(candidate.source_models) or [source_model],
+                advisor_decision=candidate.advisor_decision,
+                advisor_note=candidate.advisor_note,
+                summary=self._compact_summary(evidence or candidate.raw_flag),
+                evidence_digest_paths=dict(candidate.evidence_digest_paths),
+                evidence_pointer_paths=dict(candidate.evidence_pointer_paths),
+                trace_paths=dict(candidate.trace_paths),
+            )
+        )
+        candidate.coordinator_notified_at = time.time()
+        self.coordinator_message_count += 1
+        await self._persist_runtime_state()
+
+    async def note_coordinator_submission(self, flag: str, display: str, status: str) -> None:
+        normalized = self._normalize_candidate_flag(flag)
+        candidate = self.flag_candidates.get(normalized)
+        now = time.time()
+        if candidate is None:
+            candidate = FlagCandidateRecord(
+                normalized_flag=normalized,
+                raw_flag=flag.strip() or normalized,
+            )
+            self.flag_candidates[normalized] = candidate
+
+        candidate.submit_display = display
+        candidate.last_seen_at = now
+        if status in {"correct", "already_solved"}:
+            candidate.status = "confirmed"
+            self.confirmed_flag = normalized
+            self.winner = SolverResult(
+                flag=normalized,
+                status=FLAG_FOUND,
+                findings_summary=display,
+                step_count=max(candidate.step_counts.values(), default=0),
+                cost_usd=0.0,
+                log_path=next(iter(candidate.trace_paths.values()), ""),
+            )
+            if not self.winner_model_spec and candidate.source_models:
+                self.winner_model_spec = sorted(candidate.source_models)[0]
+            self.cancel_event.set()
+            await self._persist_runtime_state()
+            return
+
+        if status == "incorrect":
+            candidate.status = "rejected"
+            advisory = (
+                f'Candidate rejected by coordinator: "{candidate.raw_flag}". '
+                "Do not retry the same flag; keep exploring other hypotheses."
+            )
+            for model_spec in sorted(candidate.source_models):
+                solver = self.solvers.get(model_spec)
+                if solver:
+                    solver.bump_advisory(advisory)
+        await self._persist_runtime_state()
 
     @staticmethod
     def _advisor_backend_for_source(model_spec: str) -> str:
@@ -871,6 +1550,24 @@ class ChallengeSwarm:
                 logger.warning("[%s] Background task failed: %s", self.meta.name, exc)
 
         task.add_done_callback(_done)
+
+    async def _resume_pending_candidate_reviews(self) -> None:
+        for normalized_flag, candidate in sorted(self.flag_candidates.items()):
+            if candidate.status in {"confirmed", "rejected"}:
+                continue
+            if candidate._review_started:
+                continue
+            candidate._review_started = True
+            source_model = (
+                sorted(candidate.source_models)[0]
+                if candidate.source_models
+                else (self.model_specs[0] if self.model_specs else "")
+            )
+            if not source_model:
+                continue
+            self._schedule_background(self._review_flag_candidate(normalized_flag, source_model))
+        if self.flag_candidates:
+            await self._persist_runtime_state()
 
     async def _build_advised_coordinator_message(self, model_spec: str, message: str) -> str:
         advisor = self._get_advisor(model_spec)
@@ -1169,7 +1866,7 @@ class ChallengeSwarm:
                 continue
 
             sibling_findings = [
-                f"[{finding.model}] {finding.content}"
+                f"[{finding.model}] {finding.rendered_text()}"
                 for finding in findings
                 if finding.model != model_spec
             ]
@@ -1242,7 +1939,7 @@ class ChallengeSwarm:
         last_seen_posts = -1
         while not self.cancel_event.is_set():
             await asyncio.sleep(ADVISOR_LISTENER_INTERVAL_SECONDS)
-            posts = int(self.message_bus.stats_snapshot().get("total_posts", 0))
+            posts = _int_from_object(self.message_bus.stats_snapshot().get("total_posts", 0))
             if posts == last_seen_posts:
                 continue
             last_seen_posts = posts
@@ -1376,8 +2073,10 @@ class ChallengeSwarm:
             if finding and finding not in findings:
                 findings.append(finding)
 
-        trace_tail = latest_entry.get("recent_trace_tail") or []
-        trace_lines = "\n".join(f"- {line}" for line in trace_tail[:8]) or "- no recent trace tail captured"
+        trace_lines = (
+            "\n".join(f"- {line}" for line in _trace_tail_lines(latest_entry.get("recent_trace_tail")))
+            or "- no recent trace tail captured"
+        )
         restart_reason = str(latest_entry.get("restart_reason") or "").strip() or "- none recorded"
         shared_artifacts_path = str(latest_entry.get("shared_artifacts_path") or "").strip() or "-"
 
@@ -1430,8 +2129,10 @@ class ChallengeSwarm:
         last_command = str(entry.get("last_command") or "").strip()
         last_exit_hint = str(entry.get("last_exit_hint") or "").strip()
         findings = str(entry.get("findings_summary") or "").strip()
-        trace_tail = entry.get("recent_trace_tail") or []
-        trace_lines = "\n".join(str(line) for line in trace_tail[:8]) or "- no recent trace tail captured"
+        trace_lines = (
+            "\n".join(_trace_tail_lines(entry.get("recent_trace_tail")))
+            or "- no recent trace tail captured"
+        )
         shared_artifacts_path = str(entry.get("shared_artifacts_path") or "").strip()
         resume_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{resume_path.name}"
         manifest_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/manifest.md"
@@ -1467,14 +2168,27 @@ class ChallengeSwarm:
     def _is_context_refresh_reason(reason: str) -> bool:
         return reason.startswith("context refresh after ")
 
+    def _maybe_reset_restart_budget(
+        self,
+        model_spec: str,
+        state: LaneRestartState,
+        total_steps: int,
+    ) -> None:
+        if (
+            state.restart_count > 0
+            and total_steps - state.restart_budget_baseline_step >= RESTART_BUDGET_RESET_STEP_DELTA
+        ):
+            state.restart_count = 0
+            self._lane_restart_notes.pop(model_spec, None)
+
     def _compute_restart_reason(self, model_spec: str, entry: dict[str, object]) -> str:
         state = self._lane_restart_state.setdefault(model_spec, LaneRestartState())
-        total_steps = int(entry.get("step_count", 0) or 0)
+        total_steps = _int_from_object(entry.get("step_count", 0))
         status = str(entry.get("status") or "")
         last_command = str(entry.get("last_command") or "")
         last_exit_hint = str(entry.get("last_exit_hint") or "")
         findings_summary = str(entry.get("findings_summary") or "")
-        recent_trace_tail = "\n".join(str(line) for line in entry.get("recent_trace_tail") or [])
+        recent_trace_tail = "\n".join(_trace_tail_lines(entry.get("recent_trace_tail"), limit=1000))
         dead_end_fingerprint = self._fingerprint_text(f"{last_command}\n{last_exit_hint}")
         trace_fingerprint = self._fingerprint_text(recent_trace_tail)
 
@@ -1483,12 +2197,7 @@ class ChallengeSwarm:
         same_dead_end = bool(dead_end_fingerprint and dead_end_fingerprint == state.last_dead_end_fingerprint)
         same_trace = bool(trace_fingerprint and trace_fingerprint == state.last_trace_fingerprint)
 
-        if (
-            state.restart_count > 0
-            and total_steps - state.restart_budget_baseline_step >= RESTART_BUDGET_RESET_STEP_DELTA
-        ):
-            state.restart_count = 0
-            self._lane_restart_notes.pop(model_spec, None)
+        self._maybe_reset_restart_budget(model_spec, state, total_steps)
 
         state.last_total_steps = total_steps
         state.last_dead_end_fingerprint = dead_end_fingerprint
@@ -1526,7 +2235,8 @@ class ChallengeSwarm:
         state = self._lane_restart_state.setdefault(model_spec, LaneRestartState())
         if self._is_in_turn_stall(result):
             restart_reason = result.findings_summary[:200]
-            current_steps = int(preview_entry.get("step_count", 0) or 0)
+            current_steps = _int_from_object(preview_entry.get("step_count", 0))
+            self._maybe_reset_restart_budget(model_spec, state, current_steps)
             if current_steps > state.last_total_steps:
                 transient_stall = True
                 state.last_total_steps = current_steps
@@ -1568,14 +2278,14 @@ class ChallengeSwarm:
         replacement = self._create_solver(
             model_spec,
             sandbox=old_sandbox,
-            initial_step_count=int(entry.get("step_count", 0) or 0),
+            initial_step_count=_int_from_object(entry.get("step_count", 0)),
         )
         replacement.bump(restart_packet)
         self.solvers[model_spec] = replacement
         await replacement.start()
         if is_context_refresh:
-            state.last_context_refresh_step = int(entry.get("step_count", 0) or 0)
-        state.restart_budget_baseline_step = int(entry.get("step_count", 0) or 0)
+            state.last_context_refresh_step = _int_from_object(entry.get("step_count", 0))
+        state.restart_budget_baseline_step = _int_from_object(entry.get("step_count", 0))
         logger.info(
             "[%s/%s] Restarted stalled lane in-place (%d/%d)",
             self.meta.name,
@@ -1635,14 +2345,13 @@ class ChallengeSwarm:
                     and not (result.step_count == 0 and result.cost_usd == 0)
                     and result.findings_summary
                     and not result.findings_summary.startswith(("Error:", "Turn failed:"))):
-                shared_finding = self._shareable_text(
-                    f"finding-{self.meta.name}-{model_spec}",
-                    result.findings_summary,
-                    threshold=FINDING_ARTIFACT_THRESHOLD_CHARS,
+                finding_event = self._make_finding_event(
+                    model_spec=model_spec,
+                    prefix=f"finding-{self.meta.name}-{model_spec}",
+                    content=result.findings_summary,
                 )
-                self.findings[model_spec] = shared_finding
-                self.last_shared_finding = shared_finding
-                await self.message_bus.post(model_spec, shared_finding)
+                self._record_shared_finding(model_spec, finding_event)
+                await self.message_bus.post(model_spec, finding_event)
 
             await self._maybe_share_artifact_finding(model_spec, solver, result)
 
@@ -1657,6 +2366,22 @@ class ChallengeSwarm:
                     model_spec,
                 )
                 break
+
+            if result.status == FLAG_CANDIDATE:
+                if result.candidate_flag:
+                    await self.report_flag_candidate(
+                        result.candidate_flag,
+                        model_spec,
+                        evidence=result.candidate_evidence or result.findings_summary,
+                        confidence=result.candidate_confidence or "medium",
+                        step_count=result.step_count,
+                        trace_path=result.log_path,
+                    )
+                solver.bump(
+                    "Flag candidate queued for advisor/coordinator review. "
+                    "Keep exploring, gather stronger evidence, and do not resubmit the same candidate."
+                )
+                continue
 
             if result.status == FLAG_FOUND:
                 self.cancel_event.set()
@@ -1725,6 +2450,7 @@ class ChallengeSwarm:
 
     async def run(self) -> SolverResult | None:
         """Run all solvers in parallel. Returns the winner's result or None."""
+        await self._resume_pending_candidate_reviews()
         tasks = [
             asyncio.create_task(self._run_solver(spec), name=f"solver-{spec}")
             for spec in self.model_specs
@@ -1823,6 +2549,10 @@ class ChallengeSwarm:
             "advisor_note": self.last_advisor_note,
             "coordinator_advisor_note": self.last_coordinator_advisor_note,
             "shared_finding": self.last_shared_finding,
+            "shared_findings": {
+                model_spec: finding.snapshot()
+                for model_spec, finding in sorted(self.shared_finding_events.items())
+            },
             "signals": {
                 **self.message_bus.stats_snapshot(),
                 "coordinator_messages": self.coordinator_message_count,
@@ -1830,5 +2560,9 @@ class ChallengeSwarm:
                 "advisor_coordinator_appends": self.advisor_coordinator_count,
             },
             "solve": dict(self.saved_solve_artifacts),
+            "flag_candidates": {
+                flag: record.snapshot()
+                for flag, record in sorted(self.flag_candidates.items())
+            },
             "agents": agents,
         }

@@ -1,0 +1,589 @@
+/challenge/shared-artifacts/aeBPF_preview.txt-129:-		}
+/challenge/shared-artifacts/aeBPF_preview.txt-130:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/aeBPF_preview.txt-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/aeBPF_preview.txt-132:-			return -EINVAL;
+/challenge/shared-artifacts/aeBPF_preview.txt:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/aeBPF_preview.txt-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/aeBPF_preview.txt-135:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/aeBPF_preview.txt-136:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/aeBPF_preview.txt-137:+				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-129:   129: -		}
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-130:   130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-136:   136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776575457649-03378b84.txt-137:   137: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-129:   129: -		}
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-130:   130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-136:   136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776575457700-4057359e.txt-137:   137: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-129:   129: -		}
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-130:   130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-136:   136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776575517511-30adace9.txt-137:   137: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-45:   129:    129: -		}
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-46:   130:    130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-47:   131:    131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-48:   132:    132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt:49:   133:    133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-50:   134:    134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-51:   135:    135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-52:   136:    136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776575521236-6170f0b9.txt-53:   137:    137: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-129:   129: -		}
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-130:   130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-136:   136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776575751066-111fe96d.txt-137:   137: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-77:    77:   44: -		}
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-78:    78:   45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-79:    79:   46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-80:    80:   47: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt:81:    81:   48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-82:    82:   49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-83:    83:   50: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-84:    84:   51: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776577321077-5aa1647c.txt-85:    85:   52: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-129:   129: -		}
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-130:   130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-136:   136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776593908331-34b1b776.txt-137:   137: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-129:   129: -		}
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-130:   130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-136:   136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776596145450-f0102207.txt-137:   137: +				return -EACCES;
+--
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-129:   129: -		}
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-130:   130: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-131:   131: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-132:   132: -			return -EINVAL;
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt:133:   133: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-134:   134: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-135:   135: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-136:   136: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/peek-file-1776596214881-29cbc79d.txt-137:   137: +				return -EACCES;
+--
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-17:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-44:-		}
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-18:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-45:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-19:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-46:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-20:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-47:-			return -EINVAL;
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt:21:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch:48:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-22:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-49:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-23:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-50:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-24:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-51:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/search-text-1776536601089-9996fbdc.txt-25:/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-52:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-136:-		}
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-137:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-138:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-139:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log:140:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-141:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-142:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-143:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776528205520-750179f0.log-144:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-139:-		}
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-140:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-141:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-142:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log:143:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-144:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-145:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-146:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776528230099-c6bd72a1.log-147:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-112:-		}
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-113:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-114:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-115:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log:116:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-117:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-118:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-119:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776528385768-20a0c6ae.log-120:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-132:-		}
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-133:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-134:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-135:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log:136:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-137:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-138:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-139:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776529764261-72123dc2.log-140:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-132:-		}
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-133:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-134:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-135:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log:136:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-137:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-138:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-139:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776530820103-a770bacb.log-140:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-90:-		}
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-91:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-92:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-93:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log:94:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-95:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-96:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-97:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776536915657-74df95bb.log-98:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-77:-		}
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-78:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-79:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-80:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log:81:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-82:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-83:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-84:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776570089879-76b1610d.log-85:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-146:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-147:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-148:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-149:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log:150:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-151:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-152:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-153:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776570431804-eb8d0f5b.log-154:
+--
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-111:-		}
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-112:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-113:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-114:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log:115:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-116:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-117:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-118:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776571457240-cc694a3c.log-119:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-165:  44: -		}
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-166:  45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-167:  46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-168:  47: -			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log:169:  48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-170:  49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-171:  50: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-172:  51: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776574639250-94a45e93.log-173:  52: +				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-129:-		}
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-130:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-132:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-135:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-136:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776575453249-18513798.log-137:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-194:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-195:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-196:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-197:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log:198:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-199:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-200:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-201:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776576759297-8d907a17.log-202:
+--
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-196:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-197:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-198:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-199:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log:200:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-201:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-202:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-203:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776576762873-4540c383.log-204:
+--
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-77:  44: -		}
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-78:  45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-79:  46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-80:  47: -			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log:81:  48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-82:  49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-83:  50: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-84:  51: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776577309754-983fe91e.log-85:  52: +				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-108:  44: -		}
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-109:  45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-110:  46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-111:  47: -			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log:112:  48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-113:  49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-114:  50: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-115:  51: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776578039854-266046b0.log-116:  52: +				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-129:044: -		}
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-130:045: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-131:046: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-132:047: -			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log:133:048: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-134:049: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-135:050: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-136:051: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776578347412-d5d0ff5a.log-137:052: +				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-110:-		}
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-111:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-112:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-113:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log:114:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-115:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-116:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-117:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776578963754-e6f0477f.log-118:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-110:-		}
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-111:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-112:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-113:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log:114:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-115:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-116:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-117:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776578969491-6be05cbd.log-118:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-99:-		}
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-100:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-101:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-102:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log:103:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-104:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-105:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-106:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776580052907-44b24cdd.log-107:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-129:-		}
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-130:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-132:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-135:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-136:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776592387302-f5de1396.log-137:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-129:-		}
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-130:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-132:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-135:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-136:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776592393146-54b7cf9f.log-137:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-36:- L12: #     cp ../flag buildroot/flag
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-37:- L13: #     echo "Injected flag file into Docker build context."
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-38:- L15: #     echo "DH{fake_flag}" > buildroot/flag
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-39:- L16: #     echo "Injected fake flag into Docker build context."
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log:40:- L36: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-41:- L37: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-42:- L42: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-43:
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-44:## URLs
+--
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-211:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-212:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-213:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-214:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log:215:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-216:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-217:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-218:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776592869914-4348fa8f.log-219:
+--
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-36:- L12: #     cp ../flag buildroot/flag
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-37:- L13: #     echo "Injected flag file into Docker build context."
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-38:- L15: #     echo "DH{fake_flag}" > buildroot/flag
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-39:- L16: #     echo "Injected fake flag into Docker build context."
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log:40:- L36: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-41:- L37: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-42:- L42: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-43:
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-44:## URLs
+--
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-213:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-214:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-215:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-216:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log:217:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-218:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-219:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-220:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-221:
+--
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-295:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-296:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-297:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-298:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log:299:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-300:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-301:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-302:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776592875042-74660449.log-303:
+--
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-33:
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-34:## Tail sample
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-35:- he caller\n");
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-36:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log:37:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-38:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-39:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-40:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-41:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-110:- L32: - L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-111:- L33: - L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-112:- L34: - L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-113:- L35: - L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log:114:- L36: - L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-115:- L37: - L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-116:- L38: - L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-117:
+/challenge/shared-artifacts/stdout-1776593596348-b8f087f6.log-118:## URLs
+--
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-336:  44: -		}
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-337:  45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-338:  46: -			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-339:  47: -			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log:340:  48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-341:  49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-342:  50: +				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-343:  51: +				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776593646458-0f2ac45d.log-344:  52: +				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-34:- L32: - L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-35:- L33: - L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-36:- L34: - L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-37:- L35: - L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log:38:- L36: - L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-39:- L37: - L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-40:- L38: - L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-41:
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-42:## URLs
+--
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-84:
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-85:## Tail sample
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-86:- he caller\n");
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-87:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log:88:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-89:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-90:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-91:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776593663541-9479d278.log-92:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-129:-		}
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-130:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-131:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-132:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log:133:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-134:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-135:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-136:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776594349190-4bb6282c.log-137:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-132:-		}
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-133:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-134:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-135:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log:136:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-137:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-138:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-139:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776594413471-83a2e3e9.log-140:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-99:-		}
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-100:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-101:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-102:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log:103:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-104:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-105:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-106:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776594484151-5307d0ec.log-107:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-24:-		}
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-25:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-26:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-27:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log:28:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-29:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-30:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-31:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-32:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-97:-		}
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-98:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-99:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-100:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log:101:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-102:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-103:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-104:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776594489347-b1927902.log-105:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-99:-		}
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-100:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-101:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-102:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log:103:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-104:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-105:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-106:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776594489378-51c42e49.log-107:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-33:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-34:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-35:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-36:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log:37:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-38:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-39:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-40:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776594690525-891401b0.log-41:
+--
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-163:-		}
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-164:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-165:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-166:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log:167:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-168:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-169:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-170:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776595745735-be519b97.log-171:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-163:-		}
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-164:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-165:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-166:-			return -EINVAL;
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log:167:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-168:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-169:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-170:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/stdout-1776595749702-b41efd54.log-171:+				return -EACCES;
+--
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-33:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-34:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-35:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-36:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log:37:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-38:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-39:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-40:- L59: +		} else {
+/challenge/shared-artifacts/stdout-1776595815293-56cb628e.log-41:
+--
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-32:
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-33:## Tail sample
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-34:- he caller\n");
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-35:-			return -EINVAL;
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md:36:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-37:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-38:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-39:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-40:+				return -EACCES;
+--
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-35:- L12: #     cp ../flag buildroot/flag
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-36:- L13: #     echo "Injected flag file into Docker build context."
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-37:- L15: #     echo "DH{fake_flag}" > buildroot/flag
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-38:- L16: #     echo "Injected fake flag into Docker build context."
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md:39:- L36: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-40:- L37: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-41:- L42: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-42:
+/challenge/shared-artifacts/.advisor/aeBPF_preview.txt-de7322ea9e.digest.md-8d016cd479.digest.md-43:## URLs
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-32:- L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-33:- L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-34:- L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-35:- L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md:36:- L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-37:- L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-38:- L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-39:- L59: +		} else {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-40:
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-33:- L32: - L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-34:- L33: - L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-35:- L34: - L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-36:- L35: - L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md:37:- L36: - L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-38:- L37: - L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-39:- L38: - L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-40:
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-41:## URLs
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-35:- L33: - L32: - L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-36:- L34: - L33: - L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-37:- L35: - L34: - L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-38:- L36: - L35: - L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md:39:- L37: - L36: - L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-40:- L38: - L37: - L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-41:- L39: - L38: - L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-42:
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-43:## URLs
+--
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-35:- L35: - L33: - L32: - L21: if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-36:- L36: - L34: - L33: - L38: } else if (reg && is_spillable_regtype(reg->type)) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-37:- L37: - L35: - L34: - L40: -		if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-38:- L38: - L36: - L35: - L45: -		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md:39:- L39: - L37: - L36: - L48: +		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-40:- L40: - L38: - L37: - L49: +			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-41:- L41: - L39: - L38: - L54: +			if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-42:
+/challenge/shared-artifacts/.advisor/ebpf-nonconst-bounds-tracking.patch-0221489189.digest.md-6b8bf357c8.digest.md-b5de62e500.digest.md-e6177527ef.digest.md-43:## URLs
+--
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-44:-		}
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-45:-		if (state != cur && reg->type == PTR_TO_STACK) {
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-46:-			verbose(env, "cannot spill pointers to stack into stack frame of the caller\n");
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-47:-			return -EINVAL;
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch:48:+		if (env->allow_ptr_leaks) {
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-49:+			if (size != BPF_REG_SIZE) {
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-50:+				verbose_linfo(env, insn_idx, "; ");
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-51:+				verbose(env, "invalid size of register spill\n");
+/challenge/shared-artifacts/aeBPF/src/buildroot/ebpf-nonconst-bounds-tracking.patch-52:+				return -EACCES;

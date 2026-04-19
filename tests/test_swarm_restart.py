@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 from backend.agents.swarm import ChallengeSwarm, LaneRestartState
+from backend.message_bus import SharedFindingRef
 from backend.prompts import ChallengeMeta, build_prompt
 from backend.solver_base import ERROR, GAVE_UP, SolverResult
 
@@ -20,13 +23,14 @@ class _FakeSolver:
         *,
         model_spec: str,
         sandbox: object,
-        runtime_status: dict[str, object],
+        runtime_status: Mapping[str, object],
     ) -> None:
         self.model_spec = model_spec
         self.agent_name = f"agent/{model_spec}"
         self.sandbox = sandbox
         self._runtime_status = dict(runtime_status)
         self.bumped: list[str] = []
+        self.advisory_bumped: list[str] = []
         self.started = 0
         self.stopped = 0
         self.process_stopped = 0
@@ -39,6 +43,9 @@ class _FakeSolver:
 
     def bump(self, insights: str) -> None:
         self.bumped.append(insights)
+
+    def bump_advisory(self, insights: str) -> None:
+        self.advisory_bumped.append(insights)
 
     def get_runtime_status(self) -> dict[str, object]:
         return dict(self._runtime_status)
@@ -68,7 +75,7 @@ def _make_stalled_result(trace_path: Path) -> SolverResult:
     return SolverResult(
         flag=None,
         status=ERROR,
-        findings_summary="stalled: no progress across 3 samples",
+        findings_summary="stalled: post_tool_inactivity after 30s (bash)",
         step_count=12,
         cost_usd=0.25,
         log_path=str(trace_path),
@@ -87,6 +94,41 @@ def test_build_prompt_pushes_noisy_output_to_shared_artifacts() -> None:
     assert "/challenge/shared-artifacts/<name>.txt" in prompt
     assert "grep -R" in prompt
     assert "ffuf" in prompt
+    assert "you may run build or compose commands early" in prompt
+    assert "`docker compose`" in prompt
+    assert "`docker-compose`" in prompt
+    assert "`podman-compose`" in prompt
+    assert "`timeout_seconds` (for example 300 or 600)" in prompt
+    assert "/challenge/shared-artifacts/<name>.log" in prompt
+    assert "verify artifacts or service state first" in prompt
+    assert "`fs_query`" in prompt
+    assert "/opt/wordlists/seclists" in prompt
+    assert "`httpx`" in prompt
+    assert "`katana`" in prompt
+    assert prompt.count("/challenge/shared-artifacts/manifest.md") == 1
+    assert prompt.count("Artifact path: /challenge/shared-artifacts/...") == 1
+    assert len(prompt) < 5200
+
+
+def test_build_prompt_only_adds_binary_analysis_for_binary_like_challenges() -> None:
+    web_prompt = build_prompt(
+        ChallengeMeta(name="webby", category="web"),
+        ["index.html"],
+    )
+    reverse_prompt = build_prompt(
+        ChallengeMeta(name="re", category="reverse"),
+        ["readme.txt"],
+    )
+    heuristic_prompt = build_prompt(
+        ChallengeMeta(name="mystery", category="misc"),
+        ["challenge"],
+    )
+
+    assert "## Binary Analysis" not in web_prompt
+    assert "## Binary Analysis" in reverse_prompt
+    assert "## Binary Analysis" in heuristic_prompt
+    assert "pyghidra" not in reverse_prompt
+    assert "ghidra-headless" in reverse_prompt
 
 
 def test_stalled_lane_restart_reuses_same_sandbox_and_writes_handoff(tmp_path: Path) -> None:
@@ -121,9 +163,9 @@ def test_stalled_lane_restart_reuses_same_sandbox_and_writes_handoff(tmp_path: P
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4"],
     )
     model_spec = "codex/gpt-5.4"
@@ -153,7 +195,7 @@ def test_stalled_lane_restart_reuses_same_sandbox_and_writes_handoff(tmp_path: P
         created.append((sandbox, initial_step_count))
         return replacement_solver
 
-    swarm._create_solver = _fake_create_solver  # type: ignore[method-assign]
+    swarm._create_solver = cast(Any, _fake_create_solver)
 
     first = asyncio.run(
         swarm._maybe_restart_stalled_lane(model_spec, original_solver, _make_result(trace_path))
@@ -199,9 +241,9 @@ def test_in_turn_stall_restarts_on_first_occurrence(tmp_path: Path) -> None:
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4"],
     )
     model_spec = "codex/gpt-5.4"
@@ -213,8 +255,8 @@ def test_in_turn_stall_restarts_on_first_occurrence(tmp_path: Path) -> None:
             "lifecycle": "idle",
             "step_count": 12,
             "last_tool": "bash",
-            "last_command": "python3 - <<'PY' ... socket.create_connection(...)",
-            "last_exit_hint": "stalled: no progress across 3 samples",
+            "last_command": "find /challenge/distfiles/b440add5 -maxdepth 6 -type f | sed -n '1,400p'",
+            "last_exit_hint": "stalled: post_tool_inactivity after 30s (bash)",
         },
     )
     replacement_solver = _FakeSolver(
@@ -230,7 +272,7 @@ def test_in_turn_stall_restarts_on_first_occurrence(tmp_path: Path) -> None:
         created.append((sandbox, initial_step_count))
         return replacement_solver
 
-    swarm._create_solver = _fake_create_solver  # type: ignore[method-assign]
+    swarm._create_solver = cast(Any, _fake_create_solver)
 
     replacement = asyncio.run(
         swarm._maybe_restart_stalled_lane(model_spec, original_solver, _make_stalled_result(trace_path))
@@ -242,17 +284,18 @@ def test_in_turn_stall_restarts_on_first_occurrence(tmp_path: Path) -> None:
     assert created == [(sandbox, 12)]
     assert replacement_solver.bumped
     assert "/challenge/shared-artifacts/lane-resume-codex-gpt-5.4.md" in replacement_solver.bumped[0]
-    assert "stalled: no progress across 3 samples" in swarm._lane_restart_notes[model_spec]
+    assert replacement_solver.advisory_bumped == []
+    assert "stalled: post_tool_inactivity after 30s (bash)" in swarm._lane_restart_notes[model_spec]
 
     handoff_path = challenge_dir / "solve" / "lanes" / "codex-gpt-5.4.handoff.jsonl"
     lines = [json.loads(line) for line in handoff_path.read_text(encoding="utf-8").splitlines()]
     assert len(lines) == 1
-    assert lines[0]["restart_reason"] == "stalled: no progress across 3 samples"
+    assert lines[0]["restart_reason"] == "stalled: post_tool_inactivity after 30s (bash)"
 
     resume_path = challenge_dir / ".shared-artifacts" / "lane-resume-codex-gpt-5.4.md"
     resume_text = resume_path.read_text(encoding="utf-8")
-    assert "stalled: no progress across 3 samples" in resume_text
-    assert "python3 - <<'PY' ... socket.create_connection(...)" in resume_text
+    assert "stalled: post_tool_inactivity after 30s (bash)" in resume_text
+    assert "find /challenge/distfiles/b440add5 -maxdepth 6 -type f | sed -n '1,400p'" in resume_text
     assert "/challenge/shared-artifacts/manifest.md" in resume_text
     assert "/challenge/shared-artifacts/.advisor/" in resume_text
 
@@ -266,9 +309,9 @@ def test_high_step_lane_gets_context_refresh_restart(tmp_path: Path) -> None:
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4"],
     )
     model_spec = "codex/gpt-5.4"
@@ -297,7 +340,7 @@ def test_high_step_lane_gets_context_refresh_restart(tmp_path: Path) -> None:
         created.append((sandbox, initial_step_count))
         return replacement_solver
 
-    swarm._create_solver = _fake_create_solver  # type: ignore[method-assign]
+    swarm._create_solver = cast(Any, _fake_create_solver)
 
     replacement = asyncio.run(
         swarm._maybe_restart_stalled_lane(model_spec, original_solver, _make_result(trace_path))
@@ -321,9 +364,9 @@ def test_restart_budget_resets_only_after_ten_new_steps(tmp_path: Path) -> None:
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4"],
     )
     model_spec = "codex/gpt-5.4"
@@ -362,6 +405,60 @@ def test_restart_budget_resets_only_after_ten_new_steps(tmp_path: Path) -> None:
     assert swarm._lane_restart_state[model_spec].restart_count == 0
 
 
+def test_in_turn_stall_resets_restart_budget_after_ten_new_steps(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge"
+    challenge_dir.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text("", encoding="utf-8")
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="Midnight Roulette", category="web"),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    model_spec = "codex/gpt-5.4"
+    swarm._lane_restart_state[model_spec] = LaneRestartState(
+        last_total_steps=25,
+        restart_count=3,
+        restart_budget_baseline_step=20,
+    )
+    sandbox = _FakeSandbox()
+    original_solver = _FakeSolver(
+        model_spec=model_spec,
+        sandbox=sandbox,
+        runtime_status={
+            "lifecycle": "idle",
+            "step_count": 30,
+            "last_tool": "bash",
+            "last_command": "python3 analyze.py",
+            "last_exit_hint": "stalled: post_tool_inactivity after 30s (bash)",
+        },
+    )
+    replacement_solver = _FakeSolver(
+        model_spec=model_spec,
+        sandbox=sandbox,
+        runtime_status={"lifecycle": "starting", "step_count": 30},
+    )
+
+    def _fake_create_solver(spec: str, *, sandbox=None, initial_step_count: int = 0):
+        assert spec == model_spec
+        assert sandbox is original_solver.sandbox
+        assert initial_step_count == 30
+        return replacement_solver
+
+    swarm._create_solver = cast(Any, _fake_create_solver)
+
+    replacement = asyncio.run(
+        swarm._maybe_restart_stalled_lane(model_spec, original_solver, _make_stalled_result(trace_path))
+    )
+
+    assert replacement is replacement_solver
+    assert swarm._lane_restart_state[model_spec].restart_count == 0
+
+
 def test_artifact_finding_posts_fact_only_summary_and_manifest(tmp_path: Path) -> None:
     challenge_dir = tmp_path / "challenge"
     challenge_dir.mkdir()
@@ -369,9 +466,9 @@ def test_artifact_finding_posts_fact_only_summary_and_manifest(tmp_path: Path) -
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4", "gemini/gemini-2.5-flash"],
     )
     shared_dir = challenge_dir / ".shared-artifacts"
@@ -407,7 +504,8 @@ def test_artifact_finding_posts_fact_only_summary_and_manifest(tmp_path: Path) -
     assert len(unread) == 1
     assert unread[0].model == model_spec
     assert unread[0].content == "Artifact path: /challenge/shared-artifacts/k8s_dashboard.html"
-    assert swarm.last_shared_finding == unread[0].content
+    assert "Artifact path: /challenge/shared-artifacts/k8s_dashboard.html" in swarm.last_shared_finding
+    assert "Digest: /challenge/shared-artifacts/.advisor/" in swarm.last_shared_finding
 
     manifest_path = challenge_dir / ".shared-artifacts" / "manifest.md"
     manifest = manifest_path.read_text(encoding="utf-8")
@@ -425,9 +523,9 @@ def test_artifact_finding_deduplicates_and_ignores_generic_spill_files(tmp_path:
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4", "gemini/gemini-2.5-flash"],
     )
     shared_dir = challenge_dir / ".shared-artifacts"
@@ -490,9 +588,9 @@ def test_artifact_finding_shares_low_signal_facts_and_no_longer_caps_per_model(t
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4", "gemini/gemini-2.5-flash"],
     )
 
@@ -553,9 +651,9 @@ def test_artifact_finding_accepts_useful_non_high_signal_fact(tmp_path: Path) ->
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4", "gemini/gemini-2.5-flash"],
     )
     solver = _FakeSolver(
@@ -592,9 +690,9 @@ def test_live_artifact_monitor_shares_idle_lane_runtime_paths(tmp_path: Path) ->
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4", "gemini/gemini-2.5-flash"],
     )
     swarm.solvers["codex/gpt-5.4"] = _FakeSolver(
@@ -629,9 +727,9 @@ def test_lane_digest_updates_only_on_change(tmp_path: Path) -> None:
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
         meta=ChallengeMeta(name="Midnight Roulette", category="web"),
-        ctfd=object(),  # type: ignore[arg-type]
-        cost_tracker=object(),  # type: ignore[arg-type]
-        settings=SimpleNamespace(),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
         model_specs=["codex/gpt-5.4", "gemini/gemini-2.5-flash"],
     )
     codex_solver = _FakeSolver(
@@ -652,7 +750,13 @@ def test_lane_digest_updates_only_on_change(tmp_path: Path) -> None:
     login_path.write_text("<html><form><input name='csrf' value='token-123'></form></html>\n", encoding="utf-8")
 
     async def _run() -> None:
-        await swarm.message_bus.post("codex/gpt-5.4", "Artifact path: /challenge/shared-artifacts/login.html")
+        await swarm.message_bus.post(
+            "codex/gpt-5.4",
+            SharedFindingRef(
+                model="codex/gpt-5.4",
+                content="Artifact path: /challenge/shared-artifacts/login.html",
+            ),
+        )
         await swarm._maybe_issue_lane_digest_updates()
         await swarm._maybe_issue_lane_digest_updates()
         login_path.write_text(

@@ -1,111 +1,215 @@
 CTF SANDBOX TOOLS REFERENCE
 ============================
-All tools pre-installed in the sandbox. cat /tools.txt to view this file.
+Lane-usable only: this image intentionally includes CLI/headless tooling that a solver lane can drive via `bash`, stdout, and saved artifacts. GUI-only launchers are excluded.
 
-== NETWORKING ==
-nc (netcat)        TCP/UDP connections. nc host port <<'EOF' for heredoc sessions.
-curl               HTTP client. -s silent, -k skip TLS, -d data, -H header.
-wget               HTTP download. wget -O file url.
-nmap               Port scanner. nmap -sV host, nmap -p- host.
+Run `cat /tools.txt` inside the container to view this file.
 
-== BINARY ANALYSIS ==
-file               Identify file type. file binary
-strings            Extract printable strings. strings -n 8 binary
-xxd                Hex dump. xxd file | head, xxd -r to reverse.
-hexdump            Hex dump. hexdump -C file.
-binwalk            Firmware/embedded extraction. binwalk -e file to extract.
-objdump            Disassembly. objdump -d binary (from binutils).
-readelf            ELF header info. readelf -a binary.
-nm                 Symbol listing. nm binary.
+== SHELL / GENERAL ==
+bash, sh            Shells for scripts, pipelines, heredocs.
+rg                  Fast recursive grep. `rg -n pattern path`
+fd                  Fast file finder. Binary name is `fdfind` on Ubuntu.
+tree                Directory trees. `tree -a`
+less                Pager for large outputs.
+rlwrap              Readline wrapper for REPL-style tools.
+jq                  JSON processor.
+sqlite3             SQLite inspection.
+zip / unzip         ZIP archive handling.
+7z                  7z / multi-format archive handling.
+bsdtar              libarchive reader/writer for many archive formats.
+cabextract          Microsoft CAB extraction.
+git                 Version control and repository cloning.
 
-== DEBUGGERS / TRACING ==
-gdb                GNU debugger. gdb binary, then run, break, info, x/...
-ltrace             Library call tracer. ltrace ./binary
-strace             System call tracer. strace ./binary
-radare2            Reverse engineering. r2 binary, then aaa; pdf @main; afl
+== NETWORK / WEB / API ==
+nc                  TCP/UDP connections. `nc host port`
+socat               Socket relay and protocol glue.
+curl / wget         HTTP clients and downloaders.
+nmap                Port scanner / service detection.
+tcpdump             Packet capture and pcap inspection.
+tshark              CLI Wireshark dissector and pcap parser.
+dig / host          DNS queries from `dnsutils`.
+whois               Domain and registry lookups.
+http                HTTPie client for JSON-heavy APIs.
+httpx               Fast HTTP probing, tech fingerprints, screenshots, TLS info.
+subfinder           Passive subdomain enumeration.
+dnsx                Fast DNS resolution and validation.
+naabu               Fast TCP port scanning for recon pipelines.
+katana              Headless crawler for modern web assets.
+interactsh-client   OAST client for blind interaction workflows.
+amass               Internet-scale attack surface mapping.
+wfuzz               Web parameter and path fuzzing.
+sqlmap              Automated SQL injection testing.
+whatweb             Web stack fingerprinting.
+nikto               Web server checks.
+dirb                Directory brute force.
+hydra               Login brute forcing.
+ffuf                Fast web fuzzer / directory brute force.
+gobuster            Directory, vhost, and DNS brute force.
+feroxbuster         Recursive content discovery.
+nuclei              Template-based vulnerability scanning.
+redis-cli           Redis inspection.
+psql                PostgreSQL CLI.
+mysql               MySQL/MariaDB CLI.
+aws                 AWS CLI.
+az                  Azure CLI.
+gcloud              Google Cloud CLI.
+flask               Python callback/listener server.
+requests            Python HTTP client.
 
-== STEGANOGRAPHY ==
-steghide           Embed/extract in JPEG/BMP/WAV. steghide extract -sf file.jpg
-stegseek           Brute-force steghide passwords. stegseek file.jpg wordlist.txt
-zsteg              PNG/BMP steg detector. zsteg file.png (tries LSB, bit planes, etc.)
-exiftool           EXIF/metadata reader. exiftool file.jpg
-pngcheck           PNG structure checker. pngcheck -v file.png
+== BINARY / REV / PWN ==
+file                File type identification.
+strings             Printable strings extraction.
+xxd / hexdump       Hex dumping.
+binwalk             Firmware / embedded extraction.
+objdump / readelf   ELF/objdump utilities.
+nm                  Symbol listing.
+radare2             CLI reverse engineering framework.
+gdb                 Native debugger.
+gdb-multiarch       Cross-arch debugger.
+pwndbg              GDB enhancement layer for exploitation and reversing.
+ltrace / strace     Library / syscall tracing.
+patchelf            ELF interpreter / RPATH patching.
+checksec            Binary hardening inspection.
+nasm                Assembler.
+upx                 Packers / unpacking workflows.
+qemu-user-static    Foreign-arch usermode execution helpers.
+qemu-system-x86     x86 system emulation.
+qemu-system-misc    Additional system emulators (ARM, MIPS, etc.).
+ghidra-headless     Headless Ghidra analyzer/decompiler entrypoint.
+jadx                Android/Java decompiler (CLI/headless use).
+pwntools            Python exploit framework.
+ROPgadget           ROP gadget finder.
+ropper              Alternate gadget finder and ELF helper.
+angr                Binary analysis framework.
+capstone            Disassembly engine.
+keystone            Assembly engine.
+unicorn             CPU emulation engine.
+qiling              Full-system emulation framework.
 
-== IMAGE / MEDIA ==
-identify           ImageMagick: identify file properties. identify image.png
-convert            ImageMagick: transform images. convert in.png -enhance out.png
-montage            ImageMagick: tile images. montage *.png out.png
-tesseract          OCR. tesseract image.png stdout, or --psm 6 for block text.
-ffmpeg             Audio/video processing. ffmpeg -i in.wav out.mp3
-sox                Audio analysis. sox in.wav -n spectrogram -o spec.png
+== KERNEL / eBPF ==
+bpftool             BPF object, map, and program inspection.
+bpftrace            Tracing DSL for kernel/user probes.
+libbpf headers      Build support for BPF samples and tooling.
+dwarves / pahole    DWARF and BTF helpers.
+pyroute2            Python netlink and networking helpers.
 
-== FILESYSTEM FORENSICS ==
-mmls               Sleuthkit: partition layout. mmls disk.img
-fls                Sleuthkit: list files (incl. deleted). fls -r -o offset disk.img
-icat               Sleuthkit: extract file by inode. icat -o offset disk.img inode > out
-tsk_recover        Sleuthkit: recover deleted files. tsk_recover disk.img outdir/
-fsstat             Sleuthkit: filesystem stats. fsstat -o offset disk.img
-foremost           File carving by header/footer. foremost -i disk.img -o outdir/
-testdisk           Partition recovery. testdisk disk.img
-xfs_db             XFS debugger. xfs_db -c "sb 0" -c "p" disk.img
-xfs_repair         XFS repair. xfs_repair -n disk.img (read-only check).
-dcfldd             Forensic dd with hashing. dcfldd if=in of=out hash=md5
-volatility3        Memory forensics. vol -f memdump.raw windows.info
+== FORENSICS / FILESYSTEMS / MEMORY ==
+mmls, fls, icat     Sleuthkit core tools.
+tsk_recover         Sleuthkit recovery.
+fsstat              Filesystem statistics.
+foremost            File carving.
+testdisk            Partition / disk recovery.
+xfs_db / xfs_repair XFS analysis / repair.
+dcfldd              Forensic imaging with hashes.
+volatility3         Memory forensics.
+squashfs-tools      SquashFS extraction / creation.
+mtd-utils           NAND / NOR / flash tooling.
+u-boot-tools        uImage, FIT, env tooling.
+dtc                 Device-tree compiler.
+cramfsswap / fusecram CramFS endianness and mount tooling.
+jefferson           JFFS2 filesystem extraction.
+ubireader_*         UBI/UBIFS inspection and extraction.
+unblob              Recursive firmware and blob extractor.
+openocd             JTAG/SWD debug bridge.
+avrdude             AVR flashing and device interaction.
+srecord             S-record / Intel HEX tooling.
+qpdf / pdftotext    PDF structure and text extraction.
 
-== CRYPTOGRAPHY ==
-openssl            Crypto swiss army knife. openssl enc, openssl rsa, openssl s_client
-RsaCtfTool         Automated RSA attacks. RsaCtfTool -n N -e E --attack all
-sage               SageMath CAS. sage -c 'from sage.all import *; print(factor(n))'
-                   ECM factoring: sage -c 'from sage.all import *; print(ecm.factor(n))'
-                   LLL lattice: sage -c 'M=matrix(ZZ,[...]); print(M.LLL())'
-cado-nfs           Number Field Sieve (large factoring/DLP). cado-nfs <N>
-flatter            Fast LLL lattice reduction. flatter < input_matrix
+== STEGO / IMAGE / MEDIA ==
+steghide            JPEG/BMP/WAV hidden data.
+stegseek            Steghide password brute force.
+zsteg               PNG/BMP LSB analysis.
+exiftool            Metadata parsing.
+pngcheck            PNG structure validation.
+identify / convert  ImageMagick identification and transforms.
+montage             Image tiling.
+tesseract           OCR.
+ffmpeg              Audio/video conversion and probing.
+sox                 Audio transforms / spectrograms.
+Pillow              Python image processing.
+pytesseract         Python OCR wrapper.
 
-== BUILD TOOLS ==
-gcc / g++          C/C++ compiler. gcc -o exploit exploit.c
-make / cmake       Build systems.
-jq                 JSON processor. cat file.json | jq '.key'
+== CRYPTO / MATH / PASSWORDS ==
+openssl             Crypto swiss army knife.
+RsaCtfTool          Automated RSA attack suite.
+cado-nfs            Number field sieve factoring / DLP.
+flatter             Fast lattice reduction.
+sympy               Number theory and symbolic math.
+gmpy2               Fast big integer arithmetic.
+z3-solver           SMT solver.
+fpylll              LLL / BKZ reduction.
+john                Password cracking.
+hashcat             GPU/CPU cracking front-end.
+yara                Malware / signature matching.
+PyJWT               JWT encode/decode.
+pycryptodome        Python crypto primitives.
 
-== ARCHIVE ==
-zip / unzip        ZIP archives.
-git                Version control / clone repos.
+== WINDOWS / AD ==
+mono                .NET/Mono runtime and tools.
+monodis             .NET IL disassembly (via mono-utils).
+pefile              Python PE parsing.
+dnfile              Python .NET metadata parsing.
+binutils-mingw-w64  Cross-binutils for PE/COFF.
+mingw-w64-tools     PE / import library helpers.
+impacket-*          SMB/RPC/Kerberos offensive helper suite via pipx.
+nxc                 NetExec AD/SMB/WinRM enumeration and exec.
+certipy             AD CS enumeration and abuse tooling.
+evil-winrm          WinRM shell and upload/download helper.
+enum4linux-ng       SMB/LDAP/RPC enumeration wrapper.
+kerbrute            Fast Kerberos username/password and userenum helper.
+smbclient           SMB file share interaction.
+rpcclient           MSRPC/SAMR/LSA queries from Samba tooling.
 
-== CONTAINERS (Podman) ==
-podman             Run challenge Docker images inside the sandbox.
-                   podman run -d -p 8080:80 challenge-image
-                   podman build -t myimage .
-podman-compose     Docker Compose compatible. podman-compose up -d
-buildah            Build OCI container images. buildah bud -t myimage .
+== MOBILE / DYNAMIC ==
+adb                 Android Debug Bridge client.
+fastboot            Android bootloader flashing client.
+apktool             APK resources / manifest decompile-rebuild.
+jadx                Android/Java decompiler.
+smali               Assemble Dalvik bytecode.
+baksmali            Disassemble Dalvik bytecode.
+dex2jar             Convert DEX to JAR for alternate Java tooling.
+frida-ps            Frida device/process discovery CLI.
+objection           Frida-backed mobile runtime exploration.
 
-== PYTHON 3 LIBRARIES ==
-pwntools           CTF exploit framework. from pwn import *
-                   p64/p32 packing, remote/process, ROP, shellcraft, asm.
-pycryptodome       Crypto primitives. from Crypto.Cipher import AES
-sympy              Symbolic math. factorint(n), isprime(n), discrete_log, nthroot_mod.
-gmpy2              Fast multi-precision arithmetic. gmpy2.iroot, gmpy2.invert.
-z3-solver          SMT solver. from z3 import *; s=Solver(); s.add(...); s.check()
-fpylll             LLL/BKZ lattice reduction. from fpylll import IntegerMatrix, LLL.
-angr               Binary analysis framework. import angr; p=angr.Project('bin')
-capstone           Disassembly engine. from capstone import *
-unicorn            CPU emulator. from unicorn import *
-ropgadget          ROP gadget finder. ROPgadget --binary binary
-Pillow             Image processing. from PIL import Image
-pytesseract        Python OCR wrapper. pytesseract.image_to_string(img)
-scipy              Scientific computing. scipy.optimize, scipy.linalg.
-numpy              Numerical arrays. np.frombuffer, np.bitwise_xor.
-requests           HTTP client. requests.get(url), requests.post(url, data=...).
-flask              HTTP server. Quick listeners for callbacks.
-volatility3        Memory forensics framework (Python API).
-torch              PyTorch (CPU). import torch — tensors, neural nets, ML inference.
-keras              Keras deep learning. import keras — model loading, inference.
-PyJWT              JWT encode/decode. import jwt; jwt.encode(payload, key, algorithm='HS256')
+== BLOCKCHAIN / SMART CONTRACTS ==
+forge               Foundry build/test/fuzzing CLI.
+cast                Foundry RPC and ABI utility.
+anvil               Local Ethereum test node.
+slither             Smart contract static analysis.
+solc-select         Solidity compiler version manager.
+vyper               Vyper compiler.
+
+== STATIC ANALYSIS ==
+semgrep             General-purpose code and policy scanning.
+
+== CONTAINERS / K8S ==
+podman              Rootless-ish container runtime inside sandbox.
+podman compose      Compose-compatible workflow through podman's compose frontend.
+buildah             OCI image builder.
+skopeo              Registry / image inspection and copy.
+kubectl             Kubernetes CLI.
+helm                Helm chart CLI.
+
+== LANGUAGES / TOOLCHAINS ==
+gcc / g++           C/C++ compilation.
+make / cmake        Native build systems.
+python3 / pip / uv  Python execution and package installation.
+pipx                Isolated Python CLI installs.
+node / npm          JavaScript / Node workflows.
+go                  Go toolchain.
+rustc / cargo       Rust toolchain.
+ruby / gem          Ruby tooling (used for zsteg and gems).
+openjdk-21          Headless Java runtime/JDK for Ghidra and JVM tooling.
+sage                SageMath workbench for algebra, lattices, ECC, and crypto math.
+
+== WORDLISTS / DATA ==
+/opt/wordlists/seclists   Curated web, fuzzing, user/pass, and payload wordlists.
+/opt/wordlists/assetnote  Assetnote discovery lists and tech-specific payloads.
 
 == NOTES ==
-- Sandbox runs ARM64. Do NOT execute x86/x86-64 binaries locally.
-  Use Ghidra tools for RE, and interact with remote services for dynamic analysis.
-- Need a package not listed? Run `pip install <pkg>` or `uv pip install <pkg>`.
-- Distfiles are at /challenge/distfiles/ (read-only)
-- Write generated/repaired files to /challenge/workspace/ (writable)
-- Services on the host are reachable via host.docker.internal (bridge networking).
-- RsaCtfTool is at /opt/RsaCtfTool/
-- CADO-NFS is at /opt/cado-nfs/
+- Sandbox stays headless by design. If a tool requires clicking through a GUI, it is out of scope for solver lanes.
+- Distfiles are mounted read-only at `/challenge/distfiles/`.
+- Write repaired/generated files to `/challenge/workspace/`.
+- Shared artifacts live under `/challenge/shared-artifacts/`.
+- Services on the host are reachable via `host.docker.internal`.
+- Wordlists live under `/opt/wordlists/`; use these before downloading ad-hoc lists during a solve.
+- Run `sandbox-smoke-check` inside the container to verify major tooling after image updates.

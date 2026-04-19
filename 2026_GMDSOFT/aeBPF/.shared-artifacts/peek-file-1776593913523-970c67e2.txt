@@ -1,0 +1,120 @@
+1: 1: ===== build.sh =====
+     2:      2: #!/bin/bash
+     3:      3: 
+     4:      4: # if [ -f ../flag ]; then
+     5:      5: #     cp ../flag buildroot/flag
+     6:      6: #     echo "Injected flag file into Docker build context."
+     7:      7: # else 
+     8:      8: #     echo "DH{fake_flag}" > buildroot/flag
+     9:      9: #     echo "Injected fake flag into Docker build context."
+    10:     10: # fi
+    11:     11: 
+    12:     12: echo "Building Docker image..."
+    13:     13: 
+    14:     14: IMAGE_DIGEST=$(docker build -q buildroot)
+    15:     15: CONTAINER_DIGEST=$(docker create $IMAGE_DIGEST)
+    16:     16: 
+    17:     17: echo "Image Digest:     $IMAGE_DIGEST"
+    18:     18: echo "Container Digest: $CONTAINER_DIGEST"
+    19:     19: 
+    20:     20: echo "Starting build..."
+    21:     21: docker start -ai $CONTAINER_DIGEST
+    22:     22: 
+    23:     23: echo "Completed build. Copying files..."
+    24:     24: mkdir -p output
+    25:     25: docker cp $CONTAINER_DIGEST:/output/Image.gz                ./output/
+    26:     26: docker cp $CONTAINER_DIGEST:/output/rootfs.cpio.gz          ./output/
+    27:     27: 
+    28:     28: echo "Completed copy. Removing artifacts..."
+    29:     29: docker rm $CONTAINER_DIGEST
+    30:     30: docker rmi $IMAGE_DIGEST
+    31:     31: 
+    32:     32: cd output; ls -alF
+    33:     33: ===== init =====
+    34:     34: #!/bin/sh
+    35:     35: 
+    36:     36: echo -e "\nRunning init script...\n"
+    37:     37: 
+    38:     38: mount -t proc proc /proc
+    39:     39: mount -t sysfs sysfs /sys
+    40:     40: mount -t devtmpfs devtmpfs /dev
+    41:     41: mdev -s
+    42:     42: mkdir -p /dev/pts
+    43:     43: mount -vt devpts -o gid=4,mode=620 none /dev/pts
+    44:     44: 
+    45:     45: echo 0 0 0 0 > /proc/sys/kernel/printk
+    46:     46: echo 1 > /proc/sys/kernel/kptr_restrict
+    47:     47: echo 1 > /proc/sys/kernel/dmesg_restrict
+    48:     48: 
+    49:     49: echo -e "\nBoot took $(cut -d' ' -f1 /proc/uptime) seconds\n"
+    50:     50: 
+    51:     51: setsid cttyhack setuidgid 1000 /bin/sh
+    52:     52: 
+    53:     53: poweroff -f
+    54:     54: ===== build_script.sh =====
+    55:     55: #!/bin/bash
+    56:     56: 
+    57:     57: BUILDROOT=$(pwd)
+    58:     58: 
+    59:     59: # Build kernel & rootfs
+    60:     60: make
+    61:     61: 
+    62:     62: # Copy kernel image into /output
+    63:     63: mkdir -p /output
+    64:     64: cp $BUILDROOT/output/images/Image.gz /output/Image.gz
+    65:     65: 
+    66:     66: # Trim rootfs
+    67:     67: mkdir /rootfs
+    68:     68: cd /rootfs
+    69:     69: gunzip -c $BUILDROOT/output/images/rootfs.cpio.gz | cpio -vid
+    70:     70: 
+    71:     71: # Copy init script & mdev.conf into rootfs
+    72:     72: cp /init init && chmod 755 init
+    73:     73: cp /mdev.conf etc/mdev.conf && chmod 644 etc/mdev.conf
+    74:     74: 
+    75:     75: # Create rootfs with fake flag (public)
+    76:     76: echo 'DH{fake_flag}' > flag
+    77:     77: chmod 400 flag
+    78:     78: find . | cpio -H newc --owner root -o | gzip > /output/rootfs.cpio.gz
+    79:     79: 
+    80:     80: cd /output
+    81:     81: rm -rf /rootfs
+    82:     82: 
+    83:     83: pwd && ls -alF
+    84:     84: echo 'Done!'
+    85:     85: ===== patch =====
+    86:     86: diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+    87:     87: index 9d3cbe7..b611339 100644
+    88:     88: --- a/arch/arm64/Kconfig
+    89:     89: +++ b/arch/arm64/Kconfig
+    90:     90: @@ -1677,7 +1677,8 @@ config ARM64_BTI_KERNEL
+    91:     91:  	# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=94697
+    92:     92:  	depends on !CC_IS_GCC || GCC_VERSION >= 100100
+    93:     93:  	# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=106671
+    94:     94: -	depends on !CC_IS_GCC
+    95:     95: +	# Force enable BTI regardless of compiler bugs
+    96:     96: +	# depends on !CC_IS_GCC
+    97:     97:  	# https://github.com/llvm/llvm-project/commit/a88c722e687e6780dcd6a58718350dc76fcc4cc9
+    98:     98:  	depends on !CC_IS_CLANG || CLANG_VERSION >= 120000
+    99:     99:  	depends on (!FUNCTION_GRAPH_TRACER || DYNAMIC_FTRACE_WITH_REGS)
+   100:    100: diff --git a/arch/arm64/mm/init.c b/arch/arm64/mm/init.c
+   101:    101: index 3b269c7..dc159a5 100644
+   102:    102: --- a/arch/arm64/mm/init.c
+   103:    103: +++ b/arch/arm64/mm/init.c
+   104:    104: @@ -308,11 +308,8 @@ void __init arm64_memblock_init(void)
+   105:    105:  
+   106:    106:  	if (IS_ENABLED(CONFIG_RANDOMIZE_BASE)) {
+   107:    107:  		extern u16 memstart_offset_seed;
+   108:    108: -		u64 mmfr0 = read_cpuid(ID_AA64MMFR0_EL1);
+   109:    109: -		int parange = cpuid_feature_extract_unsigned_field(
+   110:    110: -					mmfr0, ID_AA64MMFR0_PARANGE_SHIFT);
+   111:    111:  		s64 range = linear_region_size -
+   112:    112: -			    BIT(id_aa64mmfr0_parange_to_phys_shift(parange));
+   113:    113: +			    (memblock_end_of_DRAM() - memblock_start_of_DRAM());
+   114:    114:  
+   115:    115:  		/*
+   116:    116:  		 * If the size of the linear region exceeds, by a sufficient
+   117:    117: diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+   118:    118: index 1c95d97..dd62e4f 100644
+   119:    119: --- a/kernel/bpf/verifier.c
+   120:    120: +++ b/kernel/bpf/verifier.c
