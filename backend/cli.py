@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
+import shutil
+import signal
+import subprocess
 import sys
 import time
 import webbrowser
 from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 import click
@@ -18,9 +24,10 @@ from rich.table import Table
 
 from backend.agents.codex_coordinator import run_codex_coordinator
 from backend.agents.coordinator_loop import build_deps, cleanup_coordinator_runtime
-from backend.auth import AuthValidationError, validate_required_auth
+from backend.auth import AuthValidationError, validate_claude_auth, validate_required_auth
 from backend.config import Settings
 from backend.models import DEFAULT_MODELS, provider_from_spec
+from backend.tracing import _sanitize as _sanitize_trace_component
 
 console = Console()
 ADVISOR_LABEL_RE = re.compile(r"^\[(?:claude\s+)?advisor\]\s*", re.IGNORECASE)
@@ -53,7 +60,204 @@ def _int_from_object(value: object) -> int:
     return 0
 
 
-def _setup_logging(verbose: bool = False) -> None:
+def _parse_memory_limit_bytes(value: object) -> int | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    try:
+        if text.endswith("g"):
+            return int(text[:-1]) * 1024 * 1024 * 1024
+        if text.endswith("m"):
+            return int(text[:-1]) * 1024 * 1024
+        if text.endswith("k"):
+            return int(text[:-1]) * 1024
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _host_memory_bytes() -> int | None:
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        total_pages = int(os.sysconf("SC_PHYS_PAGES"))
+    except (AttributeError, OSError, ValueError):
+        return None
+    total = page_size * total_pages
+    return total if total > 0 else None
+
+
+def _format_gib(value: int | None) -> str:
+    if not value or value <= 0:
+        return "unknown"
+    return f"{value / (1024 ** 3):.1f} GiB"
+
+
+def _memory_budget_summary(
+    memory_limit: object,
+    *,
+    lane_count: int,
+    challenge_count: int,
+    host_memory_bytes: int | None = None,
+) -> dict[str, object]:
+    per_lane_bytes = _parse_memory_limit_bytes(memory_limit)
+    safe_lane_count = max(1, lane_count)
+    safe_challenge_count = max(1, challenge_count)
+    one_challenge_bytes = (per_lane_bytes or 0) * safe_lane_count
+    max_total_bytes = one_challenge_bytes * safe_challenge_count
+    host_bytes = host_memory_bytes if host_memory_bytes is not None else _host_memory_bytes()
+    warn_single = bool(host_bytes and one_challenge_bytes > host_bytes)
+    warn_total = bool(host_bytes and max_total_bytes > host_bytes)
+    return {
+        "per_lane_bytes": per_lane_bytes or 0,
+        "one_challenge_bytes": one_challenge_bytes,
+        "max_total_bytes": max_total_bytes,
+        "host_memory_bytes": host_bytes or 0,
+        "per_lane_display": str(memory_limit or "unknown"),
+        "one_challenge_display": _format_gib(one_challenge_bytes),
+        "max_total_display": _format_gib(max_total_bytes),
+        "host_memory_display": _format_gib(host_bytes),
+        "warn_single": warn_single,
+        "warn_total": warn_total,
+    }
+
+
+def _discover_challenge_dirs(root: str | Path) -> list[Path]:
+    base = Path(root).resolve()
+    if (base / "metadata.yml").exists():
+        return [base]
+    if not base.exists():
+        return []
+    challenge_dirs: list[Path] = []
+    for entry in sorted(base.iterdir()):
+        if not entry.is_dir():
+            continue
+        if (entry / "metadata.yml").exists():
+            challenge_dirs.append(entry.resolve())
+    return challenge_dirs
+
+
+@dataclass
+class _RuntimeResetSummary:
+    lane_state_dirs: int = 0
+    shared_artifact_dirs: int = 0
+    solve_lane_dirs: int = 0
+    trace_files: int = 0
+
+    @property
+    def touched(self) -> bool:
+        return any(
+            (
+                self.lane_state_dirs,
+                self.shared_artifact_dirs,
+                self.solve_lane_dirs,
+                self.trace_files,
+            )
+        )
+
+
+def _challenge_trace_stems(challenge_dir: Path) -> set[str]:
+    stems = {_sanitize_trace_component(challenge_dir.name)}
+    metadata_path = challenge_dir / "metadata.yml"
+    if metadata_path.exists():
+        try:
+            from backend.prompts import ChallengeMeta
+
+            stems.add(_sanitize_trace_component(ChallengeMeta.from_yaml(metadata_path).name))
+        except Exception:
+            pass
+    return {stem for stem in stems if stem}
+
+
+def _remove_matching_trace_files(challenge_dir: Path, *, log_dir: str | Path = "logs") -> int:
+    root = Path(log_dir).resolve()
+    if not root.exists():
+        return 0
+    removed = 0
+    for stem in _challenge_trace_stems(challenge_dir):
+        for trace_path in root.glob(f"trace-{stem}-*.jsonl"):
+            if trace_path.name.startswith("ctf-solve-"):
+                continue
+            if trace_path.exists():
+                _remove_runtime_path(trace_path)
+                removed += 1
+    return removed
+
+
+def _reset_runtime_state_dirs(
+    challenge_dirs: Iterable[str | Path],
+    *,
+    log_dir: str | Path = "logs",
+) -> _RuntimeResetSummary:
+    summary = _RuntimeResetSummary()
+    seen: set[Path] = set()
+    for raw_dir in challenge_dirs:
+        challenge_dir = Path(raw_dir).resolve()
+        if challenge_dir in seen:
+            continue
+        seen.add(challenge_dir)
+        lane_state_dir = challenge_dir / ".lane-state"
+        shared_artifacts_dir = challenge_dir / ".shared-artifacts"
+        solve_lanes_dir = challenge_dir / "solve" / "lanes"
+        if lane_state_dir.exists():
+            _remove_runtime_path(lane_state_dir)
+            summary.lane_state_dirs += 1
+        if shared_artifacts_dir.exists():
+            _remove_runtime_path(shared_artifacts_dir)
+            summary.shared_artifact_dirs += 1
+        if solve_lanes_dir.exists():
+            _remove_runtime_path(solve_lanes_dir)
+            summary.solve_lane_dirs += 1
+        summary.trace_files += _remove_matching_trace_files(challenge_dir, log_dir=log_dir)
+    return summary
+
+
+def _remove_runtime_path(path: Path) -> None:
+    if not path.exists():
+        return
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return
+    except PermissionError:
+        _force_remove_runtime_path(path)
+
+
+def _force_remove_runtime_path(path: Path) -> None:
+    parent_dir = path.parent
+    target_name = path.name
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{parent_dir}:/lane-parent",
+            "ctf-sandbox",
+            "bash",
+            "-lc",
+            f"rm -rf -- /lane-parent/{shlex_quote(target_name)}",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def shlex_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _default_run_log_path() -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    log_dir = repo_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    return log_dir / f"ctf-solve-{timestamp}.log"
+
+
+def _setup_logging(verbose: bool = False, *, log_path: Path | None = None) -> Path | None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -62,7 +266,62 @@ def _setup_logging(verbose: bool = False) -> None:
     logging.getLogger("aiodocker").setLevel(logging.WARNING)
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)-8s %(message)s", datefmt="%X"))
-    logging.basicConfig(level=level, handlers=[handler], force=True)
+    handlers: list[logging.Handler] = [handler]
+    resolved_log_path = log_path.resolve() if log_path is not None else _default_run_log_path()
+    file_handler = logging.FileHandler(resolved_log_path, encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter("[%(asctime)s] %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    handlers.append(file_handler)
+    logging.basicConfig(level=level, handlers=handlers, force=True)
+    return resolved_log_path
+
+
+def _install_shutdown_signal_handlers(deps) -> list[signal.Signals]:
+    """Request graceful shutdown instead of letting asyncio.run cancel everything."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return []
+
+    installed: list[signal.Signals] = []
+    logger = logging.getLogger(__name__)
+    signal_count = {"count": 0}
+
+    def _request_shutdown(signame: str) -> None:
+        signal_count["count"] += 1
+        if signal_count["count"] == 1:
+            deps.shutdown_reason = f"signal {signame}"
+            deps.shutdown_event.set()
+            logger.info("Received %s; requesting graceful shutdown (press Ctrl+C again to force exit)", signame)
+            return
+
+        deps.shutdown_reason = f"forced signal {signame}"
+        logger.warning("Received %s again; forcing exit", signame)
+        logging.shutdown()
+        os._exit(130 if signame == "SIGINT" else 143)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown, sig.name)
+        except (NotImplementedError, RuntimeError, ValueError):
+            continue
+        installed.append(sig)
+    return installed
+
+
+def _remove_shutdown_signal_handlers(installed_signals: list[signal.Signals]) -> None:
+    if not installed_signals:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    for sig in installed_signals:
+        try:
+            loop.remove_signal_handler(sig)
+        except (RuntimeError, ValueError):
+            continue
 
 
 def _preview_line(value: object, limit: int = 120) -> str:
@@ -132,8 +391,11 @@ def _render_shared_finding_payload(
         summary = "-"
 
     extras: list[str] = []
+    artifact_path = _clean_status_text(payload.get("artifact_path") or "", limit=120)
     digest_path = _clean_status_text(payload.get("digest_path") or "", limit=120)
     pointer_path = _clean_status_text(payload.get("pointer_path") or "", limit=120)
+    if include_paths and artifact_path:
+        extras.append(f"artifact {artifact_path}")
     if digest_path:
         extras.append(f"digest {digest_path}")
     if include_paths and pointer_path:
@@ -191,20 +453,41 @@ def _format_models_line(models: list[str], *, compact: bool = False) -> str:
 
 def _format_agent_activity(agent: dict[str, object]) -> str:
     lifecycle = str(agent.get("lifecycle") or agent.get("status") or "?")
+    runtime_health = str(agent.get("runtime_health") or "")
+    activity_state = str(agent.get("activity_state") or "")
+    activity = _clean_status_text(_preview_line(agent.get("activity", ""), limit=140))
+    commentary = _clean_status_text(_preview_line(agent.get("commentary_preview", ""), limit=140))
     current_tool = str(agent.get("current_tool") or "")
     last_tool = str(agent.get("last_tool") or "")
     current_command = _clean_status_text(_preview_line(agent.get("current_command", ""), limit=140))
     last_command = _clean_status_text(_preview_line(agent.get("last_command", ""), limit=140))
     exit_hint = _clean_status_text(_preview_line(agent.get("last_exit_hint", ""), limit=80))
     findings = _clean_status_text(_preview_line(agent.get("findings", ""), limit=100))
+    heartbeat_age = agent.get("heartbeat_age_sec")
 
     parts = [lifecycle]
+    if activity_state and activity_state not in {"idle", lifecycle}:
+        parts.append(f"state: {activity_state}")
     if current_command:
         label = current_tool or "tool"
         parts.append(f"now/{label}: {current_command}")
+    elif activity and activity_state == "thinking":
+        parts.append(f"thinking: {activity}")
+    elif commentary:
+        parts.append(f"thinking: {commentary}")
+    elif activity:
+        parts.append(f"activity: {activity}")
     elif last_command:
         label = last_tool or "tool"
         parts.append(f"last/{label}: {last_command}")
+
+    if runtime_health and runtime_health not in {"healthy", lifecycle}:
+        parts.append(f"health: {runtime_health}")
+    if heartbeat_age is not None and runtime_health in {"stale", "resetting"}:
+        try:
+            parts.append(f"heartbeat: {float(heartbeat_age):.1f}s")
+        except (TypeError, ValueError):
+            pass
 
     if exit_hint and exit_hint not in {lifecycle, current_command, last_command}:
         parts.append(f"note: {exit_hint}")
@@ -732,7 +1015,7 @@ def _fetch_status_data(host: str, port: int) -> dict:
     import urllib.request
 
     req = urllib.request.Request(
-        f"http://{host}:{port}/status",
+        f"http://{host}:{port}/api/runtime/snapshot",
         method="GET",
     )
     with urllib.request.urlopen(req, timeout=5) as resp:
@@ -760,9 +1043,15 @@ def _validate_runtime_auth(
     coordinator_backend: str,
 ) -> None:
     """Validate home-directory auth sources needed for this run."""
-    needs_codex = coordinator_backend == "codex"
-    needs_claude = coordinator_backend == "claude"
+    needs_codex = True
+    needs_claude = False
     needs_gemini = False
+
+    if coordinator_backend != "codex":
+        logging.getLogger(__name__).warning(
+            "Ignoring unsupported coordinator backend %s; Codex coordinator is required.",
+            coordinator_backend,
+        )
 
     for spec in model_specs:
         provider = provider_from_spec(spec)
@@ -792,6 +1081,16 @@ def _validate_runtime_auth(
         logging.getLogger(__name__).info("Claude home auth validated")
     if validated.get("gemini"):
         logging.getLogger(__name__).info("Gemini home auth validated")
+    if settings.use_home_auth:
+        try:
+            validate_claude_auth(settings)
+        except AuthValidationError as exc:
+            logging.getLogger(__name__).warning(
+                "Claude advisor auth unavailable; advisory fallback will stay on Codex: %s",
+                exc,
+            )
+        else:
+            logging.getLogger(__name__).info("Claude home auth validated")
 
 
 @click.command()
@@ -799,11 +1098,16 @@ def _validate_runtime_auth(
 @click.option("--ctfd-token", default=None, help="CTFd API token (overrides .env)")
 @click.option("--image", default="ctf-sandbox", help="Docker sandbox image name")
 @click.option("--models", multiple=True, help="Model specs (default: all configured)")
-@click.option("--challenge", default=None, help="Solve a single challenge directory")
 @click.option("--challenges-dir", default="challenges", help="Directory for challenge files")
-@click.option("--no-submit", is_flag=True, help="Dry run — don't submit flags")
+@click.option("--no-submit", is_flag=True, help="Disable flag submission while still using CTFd challenge sync")
+@click.option(
+    "--local",
+    "local_mode",
+    is_flag=True,
+    help="Run from local challenge dirs only; skip all CTFd fetch/submit operations",
+)
 @click.option("--coordinator-model", default=None, help="Model for coordinator (default: backend-specific)")
-@click.option("--coordinator", default="claude", type=click.Choice(["claude", "codex"]), help="Coordinator backend")
+@click.option("--coordinator", default="codex", type=click.Choice(["codex"]), help="Coordinator backend")
 @click.option("--max-challenges", default=10, type=int, help="Max challenges solved concurrently")
 @click.option("--msg-port", default=9400, type=int, help="Operator message port (use 0 for auto)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging")
@@ -812,20 +1116,17 @@ def main(
     ctfd_token: str | None,
     image: str,
     models: tuple[str, ...],
-    challenge: str | None,
     challenges_dir: str,
     no_submit: bool,
+    local_mode: bool,
     coordinator_model: str | None,
     coordinator: str,
     max_challenges: int,
     msg_port: int,
     verbose: bool,
 ) -> None:
-    """CTF Agent — multi-model solver swarm.
-
-    Run without --challenge to start the full coordinator (Ctrl+C to stop).
-    """
-    _setup_logging(verbose)
+    """CTF Agent — multi-model coordinator over challenge directories."""
+    run_log_path = _setup_logging(verbose)
 
     settings = Settings(sandbox_image=image)
     if ctfd_url:
@@ -833,6 +1134,7 @@ def main(
     if ctfd_token:
         settings.ctfd_token = ctfd_token
     settings.max_concurrent_challenges = max_challenges
+    effective_no_submit = no_submit or local_mode
 
     model_specs = list(models) if models else list(DEFAULT_MODELS)
     try:
@@ -845,77 +1147,60 @@ def main(
         sys.exit(1)
 
     console.print("[bold]CTF Agent v2[/bold]")
-    console.print(f"  CTFd: {settings.ctfd_url}")
+    console.print(f"  Mode: {'local' if local_mode else 'ctfd'}")
+    console.print(f"  CTFd: {'disabled' if local_mode else settings.ctfd_url}")
+    if local_mode:
+        console.print("  Submission: operator approval only")
+    elif no_submit:
+        console.print("  Submission: disabled (--no-submit)")
+    else:
+        console.print("  Submission: enabled")
     console.print(f"  Models: {', '.join(model_specs)}")
+    console.print(f"  Challenges dir: {Path(challenges_dir).resolve()}")
     console.print(f"  Image: {settings.sandbox_image}")
     console.print(f"  Max challenges: {max_challenges}")
+    if run_log_path is not None:
+        console.print(f"  Run log: {run_log_path}")
+    memory_budget = _memory_budget_summary(
+        settings.container_memory_limit,
+        lane_count=len(model_specs),
+        challenge_count=max_challenges,
+    )
+    console.print(
+        f"  Lane memory: {memory_budget['per_lane_display']}"
+        f" | 1 challenge worst-case: {memory_budget['one_challenge_display']}"
+        f" | max configured worst-case: {memory_budget['max_total_display']}"
+    )
+    if memory_budget["host_memory_display"] != "unknown":
+        console.print(f"  Host RAM: {memory_budget['host_memory_display']}")
+    if memory_budget["warn_single"]:
+        console.print(
+            "[yellow]Warning:[/yellow] one challenge can reserve more memory than the host. "
+            "Lower CONTAINER_MEMORY_LIMIT or reduce the active model set."
+        )
+    elif memory_budget["warn_total"]:
+        console.print(
+            "[yellow]Warning:[/yellow] max configured concurrency can overcommit host RAM. "
+            "Lower --max-challenges, reduce models, or lower CONTAINER_MEMORY_LIMIT."
+        )
     console.print()
 
-    if challenge:
-        asyncio.run(_run_single(settings, challenge, model_specs, no_submit, max_challenges))
-    else:
-        asyncio.run(_run_coordinator(settings, model_specs, challenges_dir, no_submit, coordinator_model, coordinator, max_challenges, msg_port))
-
-
-async def _run_single(
-    settings: Settings,
-    challenge_dir: str,
-    model_specs: list[str],
-    no_submit: bool,
-    max_challenges: int,
-) -> None:
-    """Run a single challenge with a swarm."""
-    from backend.agents.swarm import ChallengeSwarm
-    from backend.cost_tracker import CostTracker
-    from backend.ctfd import CTFdClient
-    from backend.prompts import ChallengeMeta
-    from backend.sandbox import cleanup_orphan_containers, configure_semaphore
-
-    max_containers = max_challenges * len(model_specs)
-    configure_semaphore(max_containers)
-    await cleanup_orphan_containers()
-
-    challenge_path = Path(challenge_dir)
-    meta_path = challenge_path / "metadata.yml"
-    if not meta_path.exists():
-        console.print(f"[red]No metadata.yml found in {challenge_dir}[/red]")
-        sys.exit(1)
-
-    meta = ChallengeMeta.from_yaml(meta_path)
-    console.print(f"[bold]Challenge:[/bold] {meta.name} ({meta.category}, {meta.value} pts)")
-
-    ctfd = CTFdClient(
-        base_url=settings.ctfd_url,
-        token=settings.ctfd_token,
-        username=settings.ctfd_user,
-        password=settings.ctfd_pass,
-    )
-    cost_tracker = CostTracker()
-
-    swarm = ChallengeSwarm(
-        challenge_dir=str(challenge_path),
-        meta=meta,
-        ctfd=ctfd,
-        cost_tracker=cost_tracker,
-        settings=settings,
-        model_specs=model_specs,
-        no_submit=no_submit,
-    )
-
     try:
-        result = await swarm.run()
-        from backend.solver_base import FLAG_FOUND
-        if result and result.status == FLAG_FOUND:
-            console.print(f"\n[bold green]FLAG FOUND:[/bold green] {result.flag}")
-        else:
-            console.print("\n[bold red]No flag found.[/bold red]")
-
-        console.print("\n[bold]Cost Summary:[/bold]")
-        for agent_name in cost_tracker.by_agent:
-            console.print(f"  {agent_name}: {cost_tracker.format_usage(agent_name)}")
-        console.print(f"  [bold]Total: ${cost_tracker.total_cost_usd:.2f}[/bold]")
-    finally:
-        await ctfd.close()
+        asyncio.run(
+            _run_coordinator(
+                settings,
+                model_specs,
+                challenges_dir,
+                effective_no_submit,
+                local_mode,
+                coordinator_model,
+                coordinator,
+                max_challenges,
+                msg_port,
+            )
+        )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted while shutting down coordinator.[/yellow]")
 
 
 async def _run_coordinator(
@@ -923,6 +1208,7 @@ async def _run_coordinator(
     model_specs: list[str],
     challenges_dir: str,
     no_submit: bool,
+    local_mode: bool,
     coordinator_model: str | None,
     coordinator_backend: str,
     max_challenges: int,
@@ -934,62 +1220,36 @@ async def _run_coordinator(
     max_containers = max_challenges * len(model_specs)
     configure_semaphore(max_containers)
     await cleanup_orphan_containers()
-    console.print(f"[bold]Starting coordinator ({coordinator_backend}, Ctrl+C to stop)...[/bold]\n")
+    reset_summary = _reset_runtime_state_dirs(_discover_challenge_dirs(challenges_dir))
+    if reset_summary.touched:
+        logging.getLogger(__name__).info(
+            "Cleared runtime state under %s (lane-state=%d, shared-artifacts=%d, solve-lanes=%d, traces=%d)",
+            Path(challenges_dir).resolve(),
+            reset_summary.lane_state_dirs,
+            reset_summary.shared_artifact_dirs,
+            reset_summary.solve_lane_dirs,
+            reset_summary.trace_files,
+        )
+    resolved_backend = "codex"
+    console.print(f"[bold]Starting coordinator ({resolved_backend}, Ctrl+C to stop)...[/bold]\n")
     ctfd, cost_tracker, deps = build_deps(
         settings,
         model_specs,
         challenges_dir,
         no_submit,
+        local_mode,
     )
-    results: dict[str, object]
+    results: dict[str, object] = {}
+    installed_signals = _install_shutdown_signal_handlers(deps)
 
     try:
-        if coordinator_backend == "codex":
-            results = await run_codex_coordinator(
-                settings=settings,
-                model_specs=model_specs,
-                challenges_root=challenges_dir,
-                no_submit=no_submit,
-                coordinator_model=coordinator_model,
-                msg_port=msg_port,
-                ctfd=ctfd,
-                cost_tracker=cost_tracker,
-                deps=deps,
-                cleanup_runtime_on_exit=False,
-            )
-        else:
-            from backend.agents.claude_coordinator import (
-                ClaudeCoordinatorInactiveError,
-                run_claude_coordinator,
-            )
-            results = await run_claude_coordinator(
-                settings=settings,
-                model_specs=model_specs,
-                challenges_root=challenges_dir,
-                no_submit=no_submit,
-                coordinator_model=coordinator_model,
-                msg_port=msg_port,
-                ctfd=ctfd,
-                cost_tracker=cost_tracker,
-                deps=deps,
-                cleanup_runtime_on_exit=False,
-            )
-    except Exception as exc:
-        if coordinator_backend != "claude":
-            raise
-        from backend.agents.claude_coordinator import ClaudeCoordinatorInactiveError
-
-        reason = "inactive" if isinstance(exc, ClaudeCoordinatorInactiveError) else "unavailable"
-        console.print(
-            f"[yellow]Claude coordinator {reason} ({exc}). "
-            "Falling back to Codex coordinator without resetting active swarms.[/yellow]"
-        )
         results = await run_codex_coordinator(
             settings=settings,
             model_specs=model_specs,
             challenges_root=challenges_dir,
             no_submit=no_submit,
-            coordinator_model=None,
+            local_mode=local_mode,
+            coordinator_model=coordinator_model,
             msg_port=msg_port,
             ctfd=ctfd,
             cost_tracker=cost_tracker,
@@ -997,11 +1257,20 @@ async def _run_coordinator(
             cleanup_runtime_on_exit=False,
         )
     finally:
-        await cleanup_coordinator_runtime(deps, ctfd, cost_tracker)
+        _remove_shutdown_signal_handlers(installed_signals)
+        await cleanup_coordinator_runtime(
+            deps,
+            ctfd,
+            cost_tracker,
+            reason=str(results.get("shutdown_reason") or getattr(deps, "shutdown_reason", "") or ""),
+        )
 
     console.print("\n[bold]Final Results:[/bold]")
     for challenge, data in results.get("results", {}).items():
         console.print(f"  {challenge}: {data.get('flag', 'no flag')}")
+    shutdown_reason = str(results.get("shutdown_reason") or getattr(deps, "shutdown_reason", "") or "").strip()
+    if shutdown_reason:
+        console.print(f"\n[bold]Shutdown reason:[/bold] {shutdown_reason}")
     console.print(f"\n[bold]Total cost: ${results.get('total_cost_usd', 0):.2f}[/bold]")
 
 
@@ -1012,7 +1281,7 @@ async def _run_coordinator(
 def msg(message: str, port: int, host: str) -> None:
     """Send a message to the running coordinator."""
     try:
-        data = _post_operator_json(host, port, "/msg", {"message": message})
+        data = _post_operator_json(host, port, "/api/runtime/coordinator-message", {"message": message})
         console.print(f"[green]Sent:[/green] {data.get('queued', message[:200])}")
     except Exception as e:
         console.print(f"[red]Failed:[/red] {e}")
@@ -1032,10 +1301,10 @@ def bump(challenge_name: str, model_spec: str, port: int, host: str, insights: s
         data = _post_operator_json(
             host,
             port,
-            "/bump",
+            "/api/runtime/lane-bump",
             {
                 "challenge_name": challenge_name,
-                "model_spec": model_spec,
+                "lane_id": model_spec,
                 "insights": insights,
             },
         )

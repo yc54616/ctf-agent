@@ -64,34 +64,14 @@ def test_before_tool_does_not_append_shared_findings(monkeypatch) -> None:
     assert "[Shared findings from other lanes]" not in rewritten
 
 
-def test_before_tool_fs_query_uses_ipc(monkeypatch) -> None:
-    monkeypatch.setattr(
-        gemini_hook,
-        "_ipc_request",
-        lambda action, payload: {"output": f"{action}:{payload['query_action']}:{payload['path']}:{payload['maxdepth']}"},
-    )
-
+def test_before_tool_fs_query_returns_removed_tool_error() -> None:
     result = gemini_hook.handle_hook(
         {
             "hook_event_name": "BeforeTool",
             "tool_name": "run_shell_command",
-            "tool_input": {"command": "fs_query find /challenge/distfiles --maxdepth 5 --kind files"},
+            "tool_input": {"command": "fs_query find /challenge/distfiles"},
         }
     )
 
     rewritten = result["hookSpecificOutput"]["tool_input"]["command"]
-    assert "printf '%s\\n'" in rewritten
-    assert "fs_query:find:/challenge/distfiles:5" in rewritten
-
-
-def test_before_tool_fs_query_search_requires_query() -> None:
-    result = gemini_hook.handle_hook(
-        {
-            "hook_event_name": "BeforeTool",
-            "tool_name": "run_shell_command",
-            "tool_input": {"command": "fs_query search /challenge/distfiles"},
-        }
-    )
-
-    rewritten = result["hookSpecificOutput"]["tool_input"]["command"]
-    assert "Tool command error: fs_query search requires --query TEXT" in rewritten
+    assert "Tool command error: fs_query is removed." in rewritten

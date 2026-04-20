@@ -77,7 +77,12 @@ async def report_flag_candidate(
     evidence: str = "",
     confidence: str = "medium",
 ) -> str:
-    """Queue a candidate flag for advisor/coordinator review without submitting it."""
+    """Run the guarded candidate path.
+
+    In CTFd mode this applies simple placeholder guardrails and then submits the
+    candidate remotely. In local / --no-submit mode it queues the candidate for
+    operator confirmation instead.
+    """
     if not ctx.deps.report_flag_candidate_fn:
         return "No candidate reporter connected."
     runtime = ctx.deps.runtime_status_getter() if ctx.deps.runtime_status_getter else {}

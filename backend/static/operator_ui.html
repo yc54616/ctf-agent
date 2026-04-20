@@ -29,7 +29,16 @@
       </div>
     </header>
 
-    <section class="summary-grid" id="summaryGrid"></section>
+    <section class="summary-shell">
+      <div class="summary-header">
+        <div>
+          <p class="eyebrow">Runtime Health</p>
+          <h2>Fleet Overview</h2>
+        </div>
+        <p class="summary-copy">Track lane health, reset pressure, pending candidates, and Codex cache efficiency from one view.</p>
+      </div>
+      <div class="summary-grid" id="summaryGrid"></div>
+    </section>
 
     <main class="workspace">
       <aside class="panel sidebar">
@@ -146,6 +155,15 @@
           <form class="composer-body" id="challengeBumpForm">
             <textarea id="challengeBumpInput" rows="4" placeholder="Fan out to every non-final lane in this challenge"></textarea>
             <button type="submit">Bump challenge</button>
+          </form>
+        </details>
+
+        <details class="composer composer-fold">
+          <summary>Mark Challenge Solved</summary>
+          <form class="composer-body" id="externalSolveForm">
+            <input id="externalSolveFlagInput" type="text" placeholder="Flag solved outside the running lanes">
+            <textarea id="externalSolveNoteInput" rows="3" placeholder="Optional note: where it came from or why we are marking it solved"></textarea>
+            <button type="submit">Mark solved</button>
           </form>
         </details>
 

@@ -18,6 +18,10 @@ do
 done
 
 echo "[smoke] representative version/help checks"
+node -v >/dev/null
+npm -v >/dev/null
+codex --version >/dev/null
+gemini --version >/dev/null
 httpx -version >/dev/null
 subfinder -version >/dev/null
 dnsx -version >/dev/null
@@ -74,14 +78,18 @@ echo "[smoke] bundled data"
 
 echo "[smoke] python import checks"
 python3 - <<'PY'
+import aiodocker
 import angr
 import bs4
 import capstone
+import claude_agent_sdk
 import dnfile
+import httpx
 import keystone
 import lxml
 import oletools  # type: ignore
 import pefile
+import pydantic_ai
 import pyroute2
 import qiling
 import scapy.all  # type: ignore

@@ -150,8 +150,71 @@ def collect_advisory_history(
     limit: int = ADVISORY_HISTORY_LIMIT_DEFAULT,
     log_dir: str | Path = "logs",
 ) -> dict[str, Any]:
-    """Collect recent unique auto lane advisories for a challenge."""
+    """Collect recent lane advisories from structured runtime events plus legacy bump traces."""
+    entries: list[dict[str, Any]] = []
+
+    for events_path in _list_runtime_event_files(challenge_name):
+        control_dir = events_path.parent
+        model_spec, model_id = _load_lane_identity(control_dir)
+        for raw_line in events_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict) or event.get("type") != "advisory_applied":
+                continue
+            source = str(event.get("source") or "structured")
+            if source not in {"advisor", "auto", "advisory"}:
+                continue
+            text = str(event.get("insights", "")).strip()
+            if not text:
+                continue
+            entries.append(
+                {
+                    "ts": float(event.get("ts", 0) or 0),
+                    "model_id": model_id,
+                    "model_spec": model_spec,
+                    "trace_name": events_path.name,
+                    "source": source,
+                    "preview": " ".join(text.split())[:220],
+                    "text": text,
+                    "_priority": 0,
+                }
+            )
+
     traces = list_challenge_trace_files(challenge_name, log_dir=log_dir)
+    entries.extend(_collect_legacy_bump_entries(challenge_name, traces))
+
+    entries.sort(key=lambda item: (-float(item.get("ts", 0) or 0), int(item.get("_priority", 99)), str(item.get("model_id", ""))))
+    deduped: list[dict[str, Any]] = []
+    dedupe_index: list[tuple[str, str, float]] = []
+    for entry in entries:
+        model_id = str(entry.get("model_id", ""))
+        text = " ".join(str(entry.get("text", "")).split())
+        ts = float(entry.get("ts", 0) or 0)
+        if not model_id or not text:
+            continue
+        duplicate = False
+        for seen_model, seen_text, seen_ts in dedupe_index:
+            if seen_model != model_id or seen_text != text:
+                continue
+            if abs(seen_ts - ts) <= 60:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        dedupe_index.append((model_id, text, ts))
+        deduped.append({key: value for key, value in entry.items() if not key.startswith("_")})
+    return {
+        "challenge_name": challenge_name,
+        "entries": deduped[: max(1, int(limit))],
+    }
+
+
+def _collect_legacy_bump_entries(challenge_name: str, traces: list[Path]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for trace_path in traces:
         model_id = _trace_model_id(trace_path, challenge_name)
@@ -167,37 +230,63 @@ def collect_advisory_history(
                 continue
             if not isinstance(event, dict) or event.get("type") != "bump":
                 continue
-            if event.get("source") != "auto":
+            source = str(event.get("source") or "legacy")
+            if source not in {"auto", "advisory"}:
                 continue
-            insights = str(event.get("insights", ""))
+            insights = str(event.get("insights", "")).strip()
+            if not insights:
+                continue
             marker = "Private advisor note for this lane:\n"
-            if not insights.startswith(marker):
-                continue
-            text = insights[len(marker):].strip()
+            text = insights[len(marker):].strip() if insights.startswith(marker) else insights
             if not text:
                 continue
             entries.append(
                 {
                     "ts": float(event.get("ts", 0) or 0),
                     "model_id": model_id,
+                    "model_spec": "",
                     "trace_name": trace_path.name,
-                    "text": text,
+                    "source": source,
                     "preview": " ".join(text.split())[:220],
+                    "text": text,
+                    "_priority": 1,
                 }
             )
+    return entries
 
-    entries.sort(key=lambda item: (item.get("ts", 0), item.get("model_id", "")))
-    deduped: list[dict[str, Any]] = []
-    last_text_by_model: dict[str, str] = {}
-    for entry in entries:
-        model_id = str(entry.get("model_id", ""))
-        text = str(entry.get("text", ""))
-        if last_text_by_model.get(model_id) == text:
-            continue
-        last_text_by_model[model_id] = text
-        deduped.append(entry)
-    deduped.reverse()
-    return {
-        "challenge_name": challenge_name,
-        "entries": deduped[: max(1, int(limit))],
-    }
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _lane_event_glob_patterns(challenge_name: str) -> tuple[str, ...]:
+    return (
+        f"logs/**/{challenge_name}/.lane-state/*/control/events.jsonl",
+        f"challenges/**/{challenge_name}/.lane-state/*/control/events.jsonl",
+        f"{challenge_name}/.lane-state/*/control/events.jsonl",
+    )
+
+
+def _list_runtime_event_files(challenge_name: str) -> list[Path]:
+    root = _repo_root()
+    found: dict[Path, None] = {}
+    for pattern in _lane_event_glob_patterns(challenge_name):
+        for path in root.glob(pattern):
+            if path.is_file():
+                found[path.resolve()] = None
+    return sorted(found.keys())
+
+
+def _load_lane_identity(control_dir: Path) -> tuple[str, str]:
+    config_path = control_dir / "config.json"
+    model_spec = ""
+    if config_path.exists():
+        try:
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            model_spec = str(payload.get("model_spec") or "").strip()
+    if model_spec:
+        return model_spec, _sanitize(model_id_from_spec(model_spec))
+    return "", control_dir.parent.name

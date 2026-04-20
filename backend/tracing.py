@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
 import time
 from pathlib import Path
 
@@ -16,10 +17,20 @@ class SolverTracer:
     """Append-only JSONL event tracer. Flushes every write for tail -f streaming."""
 
     def __init__(self, challenge_name: str, model_id: str, log_dir: str = "logs") -> None:
+        log_dir = os.environ.get("CTF_AGENT_LOG_DIR", log_dir)
         Path(log_dir).mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d-%H%M%S")
-        self.path = str(Path(log_dir) / f"trace-{_sanitize(challenge_name)}-{_sanitize(model_id)}-{ts}.jsonl")
+        trace_path = Path(log_dir) / f"trace-{_sanitize(challenge_name)}-{_sanitize(model_id)}-{ts}.jsonl"
+        self.path = str(trace_path)
+        self.rpc_path = str(trace_path.with_name(f"{trace_path.stem}-rpc.jsonl"))
+        self._trace_rpc = os.environ.get("CTF_AGENT_TRACE_RPC", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         self._fh = open(self.path, "a")
+        self._rpc_fh = open(self.rpc_path, "a") if self._trace_rpc else None
         atexit.register(self._close)
 
     def close(self) -> None:
@@ -27,6 +38,11 @@ class SolverTracer:
         if not self._fh.closed:
             try:
                 self._fh.close()
+            except Exception:
+                pass
+        if self._rpc_fh is not None and not self._rpc_fh.closed:
+            try:
+                self._rpc_fh.close()
             except Exception:
                 pass
 
@@ -56,3 +72,12 @@ class SolverTracer:
 
     def event(self, kind: str, **kwargs) -> None:
         self._write({"type": kind, **kwargs})
+
+    def rpc_message(self, direction: str, payload: dict | list | str | int | float | bool | None) -> None:
+        if self._rpc_fh is None:
+            return
+        try:
+            self._rpc_fh.write(json.dumps({"ts": time.time(), "direction": direction, "payload": payload}) + "\n")
+            self._rpc_fh.flush()
+        except Exception:
+            pass

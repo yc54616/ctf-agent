@@ -35,12 +35,10 @@ from backend.solver_base import (
     QUOTA_ERROR,
     LaneRuntimeStatus,
     SolverResult,
-    is_read_only_tool,
     lifecycle_for_result,
     summarize_tool_input,
     summarize_tool_result,
 )
-from backend.tools.core import do_fs_query
 from backend.tracing import SolverTracer
 
 logger = logging.getLogger(__name__)
@@ -48,14 +46,13 @@ logger = logging.getLogger(__name__)
 FLAG_LINE_RE = re.compile(r"FLAG:\s*(\S+)")
 WATCHDOG_SAMPLE_SECONDS = 5
 WATCHDOG_TURN_START_SECONDS = 120.0
+WATCHDOG_TURN_ACTIVITY_SECONDS = 300.0
 WATCHDOG_SHORT_TOOL_SECONDS = 60.0
 WATCHDOG_DEFAULT_TOOL_SECONDS = 120.0
-WATCHDOG_POST_TOOL_SECONDS = 30.0
 WATCHDOG_TOOL_TIMEOUT_PADDING_SECONDS = 30.0
 WATCHDOG_MAX_BASH_TOOL_SECONDS = 600.0
 
 WATCHDOG_SHORT_TOOLS = {
-    "fs_query",
     "report_flag_candidate",
     "notify_coordinator",
 }
@@ -133,8 +130,6 @@ class GeminiSolver:
         self._watchdog_started_monotonic = 0.0
         self._watchdog_started_at: float | None = None
         self._watchdog_deadline_seconds = 0.0
-        self._read_only_streak = 0
-        self._last_progress_kind = "turn_start"
 
     async def start(self) -> None:
         await self.sandbox.start()
@@ -161,13 +156,22 @@ class GeminiSolver:
         settings = cast(Settings, self.settings)
 
         self._project_dir = self.sandbox.workspace_dir
-        self._ipc_dir = str(Path(self._project_dir) / ".gemini-ipc")
-        requests_dir = Path(self._ipc_dir) / "requests"
-        responses_dir = Path(self._ipc_dir) / "responses"
-        requests_dir.mkdir(parents=True, exist_ok=True)
-        responses_dir.mkdir(parents=True, exist_ok=True)
+        configured_ipc_dir = os.environ.get("CTF_AGENT_GEMINI_IPC_DIR", "").strip()
+        legacy_ipc_dir = Path(self._project_dir) / ".gemini-ipc"
+        if configured_ipc_dir:
+            self._ipc_dir = configured_ipc_dir
+            if legacy_ipc_dir.exists():
+                shutil.rmtree(legacy_ipc_dir, ignore_errors=True)
+        else:
+            self._ipc_dir = str(legacy_ipc_dir)
+        self._ensure_ipc_dirs()
 
-        self._gemini_home_dir = tempfile.mkdtemp(prefix="ctf-gemini-home-")
+        provider_home = os.environ.get("CTF_AGENT_PROVIDER_HOME", "").strip()
+        if provider_home:
+            self._gemini_home_dir = provider_home
+            Path(self._gemini_home_dir).mkdir(parents=True, exist_ok=True)
+        else:
+            self._gemini_home_dir = tempfile.mkdtemp(prefix="ctf-gemini-home-")
         gemini_home = Path(self._gemini_home_dir) / ".gemini"
         gemini_home.mkdir(parents=True, exist_ok=True)
 
@@ -235,6 +239,7 @@ class GeminiSolver:
         cost_before = self._cost_usd
         steps_before = self._step_count
         prompt = self._consume_turn_prompt()
+        prior_candidate = self._candidate_flag
 
         stdout_state: dict[str, Any] = {
             "response_chunks": [],
@@ -270,12 +275,12 @@ class GeminiSolver:
                 "CTF_AGENT_GEMINI_CONTAINER_ID": self.sandbox.container_id,
                 "CTF_AGENT_GEMINI_IPC_DIR": self._ipc_dir,
                 "CTF_AGENT_GEMINI_IPC_TIMEOUT": "60",
+                "CTF_AGENT_GEMINI_LOCAL_MODE": "1" if self.sandbox.container_id == "local-runtime" else "0",
             }
         )
 
         try:
             self._clear_watchdog()
-            self._reset_turn_progress_tracking()
             self._tool_names.clear()
             self._tool_args.clear()
             self._proc = await asyncio.create_subprocess_exec(
@@ -379,7 +384,7 @@ class GeminiSolver:
                     run_steps=self._step_count - steps_before,
                     run_cost=self._cost_usd - cost_before,
                 )
-            if self._candidate_flag:
+            if self._candidate_flag and self._candidate_flag != prior_candidate:
                 return self._result(
                     FLAG_CANDIDATE,
                     run_steps=self._step_count - steps_before,
@@ -432,8 +437,9 @@ class GeminiSolver:
                 content = event.get("content")
                 if isinstance(content, str):
                     self._touch_watchdog()
-                    self._set_progress_kind("assistant_message")
                     state["response_chunks"].append(content)
+                    self._runtime.note_commentary(content)
+                    self.tracer.model_response(content, self._step_count)
             elif event_type == "tool_use":
                 tool_name = str(event.get("tool_name", "tool"))
                 tool_id = str(event.get("tool_id", ""))
@@ -457,19 +463,18 @@ class GeminiSolver:
             elif event_type == "tool_result":
                 tool_id = str(event.get("tool_id", ""))
                 tool_name = self._tool_names.get(tool_id, tool_id or "tool")
-                tool_args = self._tool_args.pop(tool_id, {})
+                self._tool_args.pop(tool_id, None)
                 output = event.get("output")
                 error = event.get("error")
                 text = str(output) if output is not None else ""
                 if error:
                     text = f"{text}\n{error}".strip()
-                self._record_tool_progress(tool_name)
                 self._runtime.mark_idle(summarize_tool_result(text))
                 self.tracer.tool_result(tool_name, text[:500], self._step_count)
                 self._arm_watchdog(
-                    phase="post_tool",
+                    phase="turn_active",
                     step=self._step_count,
-                    deadline_seconds=self._post_tool_watchdog_seconds(tool_name, tool_args),
+                    deadline_seconds=self._turn_activity_watchdog_seconds(),
                     tool=tool_name,
                 )
                 if error and self._is_quota_error(str(error)):
@@ -521,26 +526,9 @@ class GeminiSolver:
         self._watchdog_deadline_seconds = float(deadline_seconds)
 
     def _touch_watchdog(self) -> None:
-        if self._watchdog_phase in {"turn_start", "post_tool"}:
+        if self._watchdog_phase in {"turn_start", "turn_active"}:
             self._watchdog_started_monotonic = time.monotonic()
             self._watchdog_started_at = time.time()
-
-    def _reset_turn_progress_tracking(self) -> None:
-        self._read_only_streak = 0
-        self._set_progress_kind("turn_start")
-
-    def _set_progress_kind(self, kind: str) -> None:
-        self._last_progress_kind = kind
-        self._runtime.last_progress_kind = kind
-        self._runtime.read_only_streak = self._read_only_streak
-
-    def _record_tool_progress(self, tool_name: str) -> None:
-        if is_read_only_tool(tool_name):
-            self._read_only_streak += 1
-            self._set_progress_kind("read_only_tool")
-            return
-        self._read_only_streak = 0
-        self._set_progress_kind("exec_tool")
 
     @staticmethod
     def _tool_call_watchdog_seconds(tool_name: str, args: dict[str, Any]) -> float:
@@ -563,8 +551,8 @@ class GeminiSolver:
         return WATCHDOG_DEFAULT_TOOL_SECONDS
 
     @staticmethod
-    def _post_tool_watchdog_seconds(tool_name: str, args: dict[str, Any]) -> float:
-        return WATCHDOG_POST_TOOL_SECONDS
+    def _turn_activity_watchdog_seconds() -> float:
+        return WATCHDOG_TURN_ACTIVITY_SECONDS
 
     def _watchdog_expired(self) -> bool:
         if not self._watchdog_phase:
@@ -578,10 +566,7 @@ class GeminiSolver:
         if self._watchdog_phase == "tool_call":
             tool_suffix = f" ({self._watchdog_tool})" if self._watchdog_tool else ""
             return f"stalled: tool_call_timeout after {deadline}s{tool_suffix}", "tool_call_timeout"
-        tool_suffix = f" ({self._watchdog_tool})" if self._watchdog_tool else ""
-        if self._watchdog_tool and is_read_only_tool(self._watchdog_tool):
-            tool_suffix = f" ({self._watchdog_tool}, read_only_streak={self._read_only_streak})"
-        return f"stalled: post_tool_inactivity after {deadline}s{tool_suffix}", "post_tool_inactivity"
+        return f"stalled: turn_inactivity after {deadline}s", "turn_inactivity"
 
     async def _watch_turn_progress(self, state: dict[str, Any]) -> None:
         while self._proc and self._proc.returncode is None:
@@ -603,8 +588,6 @@ class GeminiSolver:
                 watchdog_kind=kind,
                 deadline_seconds=int(self._watchdog_deadline_seconds),
                 tool=self._watchdog_tool or None,
-                read_only_streak=self._read_only_streak,
-                last_progress_kind=self._last_progress_kind,
             )
             await self._terminate_proc()
             return
@@ -636,10 +619,7 @@ class GeminiSolver:
         )
 
     async def _ipc_loop(self) -> None:
-        requests_dir = Path(self._ipc_dir) / "requests"
-        responses_dir = Path(self._ipc_dir) / "responses"
-        requests_dir.mkdir(parents=True, exist_ok=True)
-        responses_dir.mkdir(parents=True, exist_ok=True)
+        requests_dir, responses_dir = self._ensure_ipc_dirs()
 
         while not self._ipc_stop.is_set():
             for request_path in sorted(requests_dir.glob("*.json")):
@@ -663,6 +643,15 @@ class GeminiSolver:
 
             await asyncio.sleep(0.05)
 
+    def _ensure_ipc_dirs(self) -> tuple[Path, Path]:
+        ipc_root = Path(self._ipc_dir)
+        requests_dir = ipc_root / "requests"
+        responses_dir = ipc_root / "responses"
+        for path in (ipc_root, requests_dir, responses_dir):
+            path.mkdir(parents=True, exist_ok=True)
+            path.chmod(0o777)
+        return requests_dir, responses_dir
+
     async def _handle_ipc_request(self, request: dict[str, Any]) -> dict[str, Any]:
         action = request.get("action")
         if action == "report_flag_candidate":
@@ -679,27 +668,6 @@ class GeminiSolver:
                 await self.notify_coordinator(message)
                 return {"message": "Message sent to coordinator."}
             return {"message": "No coordinator connected."}
-
-        if action == "fs_query":
-            output = await do_fs_query(
-                self.sandbox,
-                action=str(request.get("query_action", "")),
-                path=str(request.get("path", "")),
-                maxdepth=int(request.get("maxdepth", 3)),
-                kind=str(request.get("kind", "files")),
-                pattern=str(request.get("pattern", "")),
-                limit=int(request.get("limit", 200)),
-                mode=str(request.get("mode", "text")),
-                start_line=int(request.get("start_line", 1)),
-                line_count=int(request.get("line_count", 120)),
-                byte_offset=int(request.get("byte_offset", 0)),
-                byte_count=int(request.get("byte_count", 256)),
-                query=str(request.get("query", "")),
-                glob=str(request.get("glob", "")),
-                ignore_case=bool(request.get("ignore_case", True)),
-                context_lines=int(request.get("context_lines", 2)),
-            )
-            return {"output": output}
 
         return {"message": f"Unsupported Gemini IPC action: {action}"}
 
@@ -804,8 +772,6 @@ class GeminiSolver:
         snapshot["watchdog_phase"] = self._watchdog_phase
         snapshot["watchdog_tool"] = self._watchdog_tool
         snapshot["watchdog_started_at"] = self._watchdog_started_at
-        snapshot["read_only_streak"] = self._read_only_streak
-        snapshot["last_progress_kind"] = self._last_progress_kind
         return snapshot
 
     def mark_terminal_status(self, status: str) -> None:

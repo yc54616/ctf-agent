@@ -17,6 +17,7 @@ from backend.agents.advisor_base import (
     build_flag_candidate_review_prompt,
     build_lane_hint_prompt,
 )
+from backend.agents.codex_rpc_io import read_jsonrpc_line
 from backend.auth import AuthValidationError, validate_codex_auth
 from backend.config import Settings
 
@@ -136,7 +137,7 @@ class _CodexAdvisorySession:
     async def _read_loop(self) -> None:
         assert self._proc and self._proc.stdout
         while True:
-            line = await self._proc.stdout.readline()
+            line = await read_jsonrpc_line(self._proc.stdout)
             if not line:
                 self._turn_done.set()
                 return
@@ -190,6 +191,8 @@ class CodexAdvisor:
     def __init__(self, challenge_name: str, model: str = ADVISOR_MODEL) -> None:
         self.challenge_name = challenge_name
         self.model = model
+        self._sessions: dict[str, _CodexAdvisorySession] = {}
+        self._session_lock = asyncio.Lock()
 
     @classmethod
     def maybe_create(cls, settings: object, challenge_name: str) -> CodexAdvisor | None:
@@ -218,7 +221,7 @@ class CodexAdvisor:
             finding=finding,
             sibling_insights=sibling_insights,
         )
-        return await self._query(prompt)
+        return await self._query(prompt, session_key="finding")
 
     async def annotate_coordinator_message(
         self,
@@ -235,7 +238,7 @@ class CodexAdvisor:
             message=message,
             sibling_insights=sibling_insights,
         )
-        return await self._query(prompt)
+        return await self._query(prompt, session_key="coordinator")
 
     async def suggest_lane_hint(
         self,
@@ -256,7 +259,7 @@ class CodexAdvisor:
             manifest_excerpt=manifest_excerpt,
             artifact_previews=artifact_previews,
         )
-        return await self._query(prompt)
+        return await self._query(prompt, session_key="lane-hint")
 
     async def review_flag_candidate(
         self,
@@ -275,7 +278,7 @@ class CodexAdvisor:
             evidence=evidence,
             sibling_insights=sibling_insights,
         )
-        raw = await self._query(prompt)
+        raw = await self._query(prompt, session_key="candidate-review")
         if not raw:
             return CandidateReview()
         try:
@@ -293,12 +296,19 @@ class CodexAdvisor:
         note = str(payload.get("note", "")).strip()[:ADVISOR_MAX_RESPONSE_CHARS]
         return CandidateReview(decision, note)
 
-    async def _query(self, prompt: str) -> str:
-        session = _CodexAdvisorySession(self.model)
-        try:
-            text = await session.query(prompt)
-        finally:
-            await session.stop()
+    async def _query(self, prompt: str, *, session_key: str = "general") -> str:
+        async with self._session_lock:
+            session = self._sessions.get(session_key)
+            if session is None:
+                session = _CodexAdvisorySession(self.model)
+                self._sessions[session_key] = session
+            try:
+                text = await session.query(prompt)
+            except Exception:
+                await session.stop()
+                if self._sessions.get(session_key) is session:
+                    self._sessions.pop(session_key, None)
+                raise
 
         text = " ".join(text.split()).strip()
         if not text or text == "NO_ADVICE" or "NO_ADVICE" in text:

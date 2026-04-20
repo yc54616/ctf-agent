@@ -24,7 +24,7 @@ def _make_solver() -> GeminiSolver:
 def test_gemini_shell_preamble_stays_short_and_specific() -> None:
     prompt = build_shell_solver_preamble()
 
-    assert "fs_query" in prompt
+    assert "fs_query" not in prompt
     assert "report_flag_candidate 'FLAG'" in prompt
     assert "notify_coordinator 'MSG'" in prompt
     assert len(prompt) < 700
@@ -83,27 +83,6 @@ def test_gemini_operator_bump_overrides_advisory_prompt() -> None:
     assert solver._operator_bump_insights is None
     assert solver._advisory_bump_insights is None
     assert solver._bump_insights is None
-
-
-@pytest.mark.asyncio
-async def test_gemini_fs_query_ipc_calls_core(monkeypatch) -> None:
-    solver = _make_solver()
-
-    async def fake_fs_query(*args, **kwargs) -> str:
-        return "found file-a"
-
-    monkeypatch.setattr("backend.agents.gemini_solver.do_fs_query", fake_fs_query)
-
-    response = await solver._handle_ipc_request(
-        {
-            "action": "fs_query",
-            "query_action": "find",
-            "path": "/challenge/distfiles",
-            "maxdepth": 4,
-        }
-    )
-
-    assert response == {"output": "found file-a"}
 
 
 @pytest.mark.asyncio
@@ -173,23 +152,21 @@ def test_gemini_tool_call_timeout_scales_with_bash_timeout() -> None:
     solver = _make_solver()
 
     assert solver._tool_call_watchdog_seconds("bash", {"timeout_seconds": 180}) == 210.0
-    assert solver._tool_call_watchdog_seconds("fs_query", {"action": "find", "path": "/tmp"}) == 60.0
+    assert solver._tool_call_watchdog_seconds("notify_coordinator", {"message": "hi"}) == 60.0
 
 
-def test_gemini_post_tool_timeout_restarts_quickly_after_tool_result() -> None:
+def test_gemini_turn_activity_timeout_allows_longer_post_tool_reasoning() -> None:
     solver = _make_solver()
 
-    assert solver._post_tool_watchdog_seconds("fs_query", {"action": "find", "path": "/tmp"}) == 30.0
-    assert solver._post_tool_watchdog_seconds("bash", {"command": "python3 solve.py"}) == 30.0
-    assert solver._post_tool_watchdog_seconds("bash", {"command": "sed -n '1,20p' out.txt"}) == 30.0
+    assert solver._turn_activity_watchdog_seconds() == 300.0
 
 
-def test_gemini_touch_watchdog_refreshes_post_tool_deadline() -> None:
+def test_gemini_touch_watchdog_refreshes_turn_activity_deadline() -> None:
     solver = _make_solver()
     solver._arm_watchdog(
-        phase="post_tool",
+        phase="turn_active",
         step=4,
-        deadline_seconds=30.0,
+        deadline_seconds=300.0,
         tool="bash",
     )
     started = solver._watchdog_started_monotonic
@@ -199,15 +176,46 @@ def test_gemini_touch_watchdog_refreshes_post_tool_deadline() -> None:
     assert solver._watchdog_started_monotonic >= started
 
 
-def test_gemini_read_only_progress_tracking_updates_runtime_status() -> None:
+def test_gemini_runtime_status_does_not_expose_read_only_tracking() -> None:
     solver = _make_solver()
 
-    solver._record_tool_progress("fs_query")
     status = solver.get_runtime_status()
-    assert status["read_only_streak"] == 1
-    assert status["last_progress_kind"] == "read_only_tool"
+    assert "read_only_streak" not in status
+    assert "last_progress_kind" not in status
 
-    solver._record_tool_progress("bash")
-    status = solver.get_runtime_status()
-    assert status["read_only_streak"] == 0
-    assert status["last_progress_kind"] == "exec_tool"
+
+def test_gemini_prepare_dirs_prefers_runtime_ipc_env(monkeypatch, tmp_path) -> None:
+    solver = _make_solver()
+    project_dir = tmp_path / "workspace"
+    project_dir.mkdir()
+    legacy_ipc = project_dir / ".gemini-ipc"
+    legacy_ipc.mkdir()
+    configured_ipc = tmp_path / "control" / "gemini-ipc"
+    solver.sandbox = SimpleNamespace(workspace_dir=str(project_dir))
+    solver._system_prompt = "Solve carefully."
+
+    auth_path = tmp_path / "oauth.json"
+    auth_path.write_text(
+        '{"access_token":"a","refresh_token":"r","token_type":"Bearer"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CTF_AGENT_GEMINI_IPC_DIR", str(configured_ipc))
+    monkeypatch.setenv("CTF_AGENT_PROVIDER_HOME", str(tmp_path / "provider-home"))
+    monkeypatch.setattr("backend.agents.gemini_solver.resolve_home_auth_paths", lambda settings: SimpleNamespace(gemini=auth_path))
+    monkeypatch.setattr(
+        "backend.agents.gemini_solver.refresh_gemini_oauth",
+        lambda settings: SimpleNamespace(
+            access_token="new-a",
+            refresh_token="new-r",
+            token_type="Bearer",
+            expiry_date_ms=None,
+        ),
+    )
+
+    solver._prepare_gemini_dirs()
+
+    assert solver._ipc_dir == str(configured_ipc)
+    assert not legacy_ipc.exists()
+    assert (configured_ipc / "requests").is_dir()
+    assert (configured_ipc / "responses").is_dir()
+    assert configured_ipc.stat().st_mode & 0o777 == 0o777

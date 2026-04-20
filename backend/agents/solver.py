@@ -37,13 +37,11 @@ from backend.solver_base import (
     GAVE_UP,
     LaneRuntimeStatus,
     SolverResult,
-    is_read_only_tool,
     lifecycle_for_result,
     summarize_tool_input,
 )
 from backend.tools.sandbox import (
     bash,
-    fs_query,
     notify_coordinator,
     report_flag_candidate,
 )
@@ -76,8 +74,6 @@ class TracingToolset(WrapperToolset[SolverDeps]):
         if loop_status == "break":
             logger.warning(f"Loop break on {name} at step {step}")
             self.tracer.event("loop_break", tool=name, step=step)
-            self.runtime.last_progress_kind = "exec_tool"
-            self.runtime.read_only_streak = 0
             self.runtime.mark_idle(LOOP_WARNING_MESSAGE)
             # Inject loop warning by returning it as the tool result
             return LOOP_WARNING_MESSAGE
@@ -86,12 +82,6 @@ class TracingToolset(WrapperToolset[SolverDeps]):
 
         result_str = str(result) if result is not None else ""
         self.tracer.tool_result(name, result_str, step)
-        if is_read_only_tool(name):
-            self.runtime.read_only_streak += 1
-            self.runtime.last_progress_kind = "read_only_tool"
-        else:
-            self.runtime.read_only_streak = 0
-            self.runtime.last_progress_kind = "exec_tool"
         self.runtime.mark_idle(result_str)
 
         # Inject loop warning alongside result on "warn" level
@@ -106,7 +96,6 @@ def _build_toolset(deps: SolverDeps) -> FunctionToolset[SolverDeps]:
     """Build the raw toolset for a solver agent."""
     tools: list[Any] = [
         bash,
-        fs_query,
         report_flag_candidate,
         notify_coordinator,
     ]

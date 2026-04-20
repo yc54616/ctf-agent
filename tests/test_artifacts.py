@@ -35,8 +35,10 @@ class _FakeBashSandbox:
         self.result = result
         self.tmp_path = tmp_path
         self.saved: list[FilePointer] = []
+        self.commands: list[str] = []
 
     async def exec(self, command: str, timeout_s: int = 60) -> ExecResult:
+        self.commands.append(command)
         return self.result
 
     async def save_shared_artifact(self, prefix: str, content: str | bytes, suffix: str = ".log") -> FilePointer:
@@ -161,10 +163,11 @@ def test_output_spooler_spills_to_file(tmp_path: Path) -> None:
 
     spooler.feed(b"hello")
     spooler.feed(b"-world")
-    preview, pointer, total_bytes = spooler.finalize()
+    preview, pointer, total_bytes, total_lines = spooler.finalize()
 
     assert preview == "hello"
     assert total_bytes == 11
+    assert total_lines == 1
     assert pointer is not None
     assert pointer.size_bytes == 11
     assert pointer.host_path is not None
@@ -172,13 +175,14 @@ def test_output_spooler_spills_to_file(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_do_bash_returns_preview_and_saved_path_for_spilled_output() -> None:
+async def test_do_bash_returns_saved_path_without_preview_for_spilled_output() -> None:
     sandbox = _FakeBashSandbox(
         ExecResult(
             exit_code=0,
             stdout="line-1\nline-2\n",
             stderr="",
             stdout_bytes=120_000,
+            stdout_lines=2,
             stdout_pointer=FilePointer(
                 container_path=f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/stdout.log",
                 size_bytes=120_000,
@@ -188,8 +192,8 @@ async def test_do_bash_returns_preview_and_saved_path_for_spilled_output() -> No
 
     out = await do_bash(sandbox, "yes | head")
 
-    assert "[stdout preview]" in out
-    assert f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/stdout.log" in out
+    assert "[stdout preview]" not in out
+    assert f"[stdout saved] {SHARED_ARTIFACTS_CONTAINER_ROOT}/stdout.log (120000 bytes, 2 lines)" in out
     assert "sed -n '1,120p'" in out
 
 
@@ -206,11 +210,50 @@ async def test_do_bash_materializes_medium_output_even_without_sandbox_pointer(t
 
     out = await do_bash(sandbox, "cat lots.txt")
 
-    assert "[stdout preview]" in out
-    assert "[stdout saved] /challenge/shared-artifacts/stdout.log" in out
+    assert "[stdout preview]" not in out
+    assert "[stdout saved] /challenge/shared-artifacts/stdout.log (999 bytes, 200 lines)" in out
     assert "sed -n '1,120p' /challenge/shared-artifacts/stdout.log" in out
     assert sandbox.saved
     assert Path(sandbox.saved[0].host_path or "").read_text(encoding="utf-8").startswith("line\nline\n")
+
+
+@pytest.mark.asyncio
+async def test_do_bash_keeps_small_output_inline() -> None:
+    sandbox = _FakeBashSandbox(
+        ExecResult(
+            exit_code=0,
+            stdout="flag-ish candidate\n",
+            stderr="",
+        )
+    )
+
+    out = await do_bash(sandbox, "printf 'flag-ish candidate\\n'")
+
+    assert out == "flag-ish candidate"
+
+
+@pytest.mark.asyncio
+async def test_do_bash_blocks_forbidden_reread_patterns() -> None:
+    sandbox = _FakeBashSandbox(ExecResult(exit_code=0, stdout="should not run", stderr=""))
+
+    out = await do_bash(sandbox, "sed -n '1,80p' /challenge/host-logs/trace-test.jsonl")
+
+    assert "Blocked reread of prior traces or solve history" in out
+    assert "/challenge/distfiles" in out
+    assert not sandbox.commands
+
+
+@pytest.mark.asyncio
+async def test_do_bash_blocks_relative_python_reread_patterns() -> None:
+    sandbox = _FakeBashSandbox(ExecResult(exit_code=0, stdout="should not run", stderr=""))
+
+    out = await do_bash(
+        sandbox,
+        "python3 - <<'PY'\nfrom pathlib import Path\nprint(Path('challenge-src/solve/result.json').read_text())\nPY",
+    )
+
+    assert "Blocked reread of prior traces or solve history" in out
+    assert not sandbox.commands
 
 
 @pytest.mark.asyncio
@@ -258,10 +301,8 @@ async def test_do_web_fetch_rejects_local_file_urls() -> None:
     out = await do_web_fetch("file:///challenge/distfiles/flag.txt")
 
     assert "web_fetch only supports http:// or https:// URLs" in out
-    assert "fs_query" in out
-    assert "`peek`" in out
-    assert "`inspect`" in out
-    assert "`find`" in out
+    assert "`bash`" in out
+    assert "/challenge/shared-artifacts/" in out
 
 
 @pytest.mark.asyncio
@@ -269,10 +310,8 @@ async def test_do_web_fetch_rejects_local_container_paths() -> None:
     out = await do_web_fetch("/challenge/distfiles/flag.txt")
 
     assert "web_fetch only supports http:// or https:// URLs" in out
-    assert "fs_query" in out
-    assert "`peek`" in out
-    assert "`inspect`" in out
-    assert "`find`" in out
+    assert "`bash`" in out
+    assert "/challenge/shared-artifacts/" in out
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     sandbox_image: str = "ctf-sandbox"
     max_concurrent_challenges: int = 10
     max_attempts_per_challenge: int = 3
-    container_memory_limit: str = "16g"
+    container_memory_limit: str = "4g"
     exec_output_spill_threshold_bytes: int = 65_536
     read_file_spill_threshold_bytes: int = 262_144
     artifact_preview_bytes: int = 8_192

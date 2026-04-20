@@ -48,6 +48,7 @@ body {
 }
 
 .topbar,
+.summary-shell,
 .panel,
 .metric-pill,
 .challenge-card,
@@ -111,6 +112,33 @@ h1 {
   background: rgba(12, 29, 47, 0.75);
 }
 
+.summary-shell {
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: calc(var(--radius) + 2px);
+  background: rgba(9, 20, 31, 0.76);
+  padding: 18px;
+}
+
+.summary-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.summary-header h2 {
+  font-size: clamp(20px, 2vw, 28px);
+}
+
+.summary-copy {
+  max-width: 460px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .metric-label {
   display: block;
   color: var(--muted);
@@ -125,6 +153,33 @@ h1 {
   gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   min-width: 0;
+}
+
+.summary-grid .metric-pill:nth-child(1),
+.summary-grid .metric-pill:nth-child(2),
+.summary-grid .metric-pill:nth-child(3) {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 45%),
+    rgba(12, 29, 47, 0.86);
+  min-height: 98px;
+}
+
+.summary-grid .metric-pill:nth-child(1) {
+  border-color: rgba(110, 231, 183, 0.3);
+}
+
+.summary-grid .metric-pill:nth-child(2) {
+  border-color: rgba(255, 209, 102, 0.3);
+}
+
+.summary-grid .metric-pill:nth-child(3) {
+  border-color: rgba(125, 211, 252, 0.3);
+}
+
+.summary-grid .metric-pill strong {
+  display: block;
+  font-size: clamp(20px, 2vw, 28px);
+  line-height: 1.15;
 }
 
 .workspace {
@@ -601,6 +656,27 @@ button:disabled {
   margin-bottom: 6px;
 }
 
+.candidate-action {
+  border: 1px solid rgba(152, 185, 210, 0.18);
+  background: rgba(152, 185, 210, 0.08);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.candidate-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.candidate-action-secondary {
+  border-color: rgba(255, 122, 122, 0.3);
+  background: rgba(255, 122, 122, 0.08);
+  color: #ffd1d1;
+}
+
 .candidate-subtle {
   color: var(--muted);
   font-size: 12px;
@@ -717,6 +793,10 @@ button:disabled {
   color: var(--warn);
 }
 
+.badge.incorrect {
+  color: var(--warn);
+}
+
 .empty {
   padding: 22px 14px;
   color: var(--muted);
@@ -737,5 +817,10 @@ button:disabled {
   .topbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .summary-header {
+    align-items: start;
+    flex-direction: column;
   }
 }

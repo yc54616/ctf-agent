@@ -12,10 +12,17 @@ def test_sandbox_dockerfile_targets_lane_usable_headless_tooling() -> None:
     assert "archive.ubuntu.com/ubuntu" in dockerfile
     assert "security.ubuntu.com/ubuntu" in dockerfile
     assert "PIPX_BIN_DIR=/usr/local/bin" in dockerfile
+    assert "ARG NODE_MAJOR=22" in dockerfile
     assert "openjdk-21-jdk-headless" in dockerfile
     assert "linux-tools-common" in dockerfile
     assert "bpftool" in dockerfile
     assert "bpftrace" in dockerfile
+    assert "deb.nodesource.com/node_${NODE_MAJOR}.x" in dockerfile
+    assert '"@openai/codex@${CODEX_CLI_VERSION}"' in dockerfile
+    assert '"@google/gemini-cli@${GEMINI_CLI_VERSION}"' in dockerfile
+    assert "pydantic-ai" in dockerfile
+    assert "claude-agent-sdk" in dockerfile
+    assert "aiodocker" in dockerfile
     assert "pipx install certipy-ad" in dockerfile
     assert "pipx install awscli" in dockerfile
     assert 'pipx install "git+https://github.com/Pennyw0rth/NetExec"' in dockerfile
@@ -145,8 +152,16 @@ def test_sandbox_smoke_check_covers_new_headless_contract() -> None:
         "feroxbuster --help",
         "az version",
         "gcloud --version",
+        "node -v",
+        "npm -v",
+        "codex --version",
+        "gemini --version",
         "/opt/wordlists/seclists",
         "/opt/wordlists/assetnote",
         "pi import pwndbg",
+        "import aiodocker",
+        "import claude_agent_sdk",
+        "import httpx",
+        "import pydantic_ai",
     ):
         assert needle in smoke

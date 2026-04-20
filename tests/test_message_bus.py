@@ -30,7 +30,8 @@ async def test_message_bus_formats_structured_pointer_events() -> None:
             kind="artifact_ref",
             content="Artifact path: /challenge/shared-artifacts/app.js",
             summary="JS bundle references hidden auth route",
-            pointer_path="/challenge/shared-artifacts/app.js",
+            artifact_path="/challenge/shared-artifacts/app.js",
+            pointer_path="/challenge/shared-artifacts/artifact-ref-challenge-a-gemini.md",
             digest_path="/challenge/shared-artifacts/.advisor/app.js-123.digest.md",
         ),
     )
@@ -38,11 +39,13 @@ async def test_message_bus_formats_structured_pointer_events() -> None:
     unread = await bus.check("claude/observer")
 
     rendered = bus.format_unread(unread)
-    assert "Potential admin API at /api/v1/k8s/get" in rendered
     assert "Digest: /challenge/shared-artifacts/.advisor/finding.digest.md" in rendered
     assert "Pointer: /challenge/shared-artifacts/finding.txt" in rendered
-    assert "Artifact path: /challenge/shared-artifacts/app.js" in rendered
+    assert "Hint: Potential admin API at /api/v1/k8s/get" in rendered
+    assert "Pointer: /challenge/shared-artifacts/artifact-ref-challenge-a-gemini.md" in rendered
+    assert "Artifact: /challenge/shared-artifacts/app.js" not in rendered
     assert "Digest: /challenge/shared-artifacts/.advisor/app.js-123.digest.md" in rendered
+    assert "Hint: JS bundle references hidden auth route" not in rendered
 
 
 @pytest.mark.asyncio
@@ -95,3 +98,19 @@ def test_candidate_ref_and_coordinator_note_render_compact_pointer_messages() ->
     assert "Evidence digest: /challenge/shared-artifacts/.advisor/candidate.digest.md" in candidate.rendered_text()
     assert "Evidence pointer: /challenge/shared-artifacts/candidate.txt" in candidate.rendered_text()
     assert "ADVISOR MESSAGE: [challenge-a/codex/gpt-5.4] Focus on the admin route evidence first." in note.rendered_text()
+
+
+def test_shared_finding_ref_migrates_legacy_artifact_pointer_snapshot() -> None:
+    finding = SharedFindingRef.from_snapshot(
+        {
+            "model": "codex/gpt-5.4",
+            "kind": "artifact_ref",
+            "content": "Artifact path: /challenge/shared-artifacts/app.js",
+            "pointer_path": "/challenge/shared-artifacts/app.js",
+            "digest_path": "/challenge/shared-artifacts/.advisor/app.js-123.digest.md",
+        }
+    )
+
+    assert finding is not None
+    assert finding.artifact_path == "/challenge/shared-artifacts/app.js"
+    assert finding.pointer_path == ""

@@ -14,7 +14,7 @@ The agent solves challenges across all categories — pwn, rev, crypto, forensic
 
 ## How It Works
 
-A **coordinator** LLM reads the live challenge feed and assigns work to **solver swarms**. Each swarm launches multiple AI models in parallel on the same challenge — the first to find the flag wins, and that result is shared with the rest via a cross-solver message bus.
+A **coordinator** LLM reads the live challenge feed or scans local challenge directories and assigns work to **solver swarms**. Each swarm launches multiple AI models in parallel on the same challenge — the first confirmed flag wins, and that result is shared with the rest via a cross-solver message bus.
 
 ```
                         +-----------------+
@@ -27,7 +27,7 @@ A **coordinator** LLM reads the live challenge feed and assigns work to **solver
                                  |
                         +--------v--------+
                         | Coordinator LLM |
-                        | (Claude/Codex)  |
+                        |     (Codex)     |
                         +--------+--------+
                                  |
               +------------------+------------------+
@@ -58,8 +58,7 @@ Each solver runs in an isolated Docker container with CTF tools pre-installed. S
 
 | Component | File | Role |
 |-----------|------|------|
-| Coordinator loop | `backend/agents/coordinator_loop.py` | Main event loop; reads CTFd feed; drives the coordinator LLM |
-| Claude coordinator | `backend/agents/claude_coordinator.py` | LLM orchestration via Claude Agent SDK MCP |
+| Coordinator loop | `backend/agents/coordinator_loop.py` | Main event loop; reads CTFd feed or local challenge dirs; drives the coordinator LLM |
 | Codex coordinator | `backend/agents/codex_coordinator.py` | LLM orchestration via Codex JSON-RPC |
 | Challenge swarm | `backend/agents/swarm.py` | Manages parallel solver lanes for one challenge |
 | Claude solver | `backend/agents/solver.py` | Pydantic AI agent (claude-sdk provider) |
@@ -95,6 +94,20 @@ uv run ctf-solve \
   --max-challenges 10 \
   -v
 
+# Run in local mode against already-pulled challenge directories only
+uv run ctf-solve \
+  --local \
+  --challenges-dir challenges \
+  --max-challenges 10 \
+  -v
+
+# Keep CTFd sync, but disable actual flag submission
+uv run ctf-solve \
+  --ctfd-url https://ctf.example.com \
+  --ctfd-token ctfd_your_token \
+  --challenges-dir challenges \
+  --no-submit
+
 # Open the browser operator console
 uv run ctf-status
 
@@ -115,15 +128,22 @@ uv run ctf-bump --challenge "Midnight Roulette" --model "codex/gpt-5.4" \
   "Use the provided CTFd token and verify /ctfd/api/v1/challenges first"
 ```
 
-## Coordinator Backends
+### Mode semantics
 
 ```bash
-# Claude SDK coordinator (default)
-uv run ctf-solve --coordinator claude ...
+# Local mode: no CTFd fetch, no CTFd submit, operator approval allowed
+uv run ctf-solve --local --challenges-dir challenges
 
-# Codex coordinator (GPT-5.4-mini via JSON-RPC)
-uv run ctf-solve --coordinator codex ...
+# CTFd mode with submit suppression: still syncs challenges, does not submit flags
+uv run ctf-solve --ctfd-url ... --ctfd-token ... --no-submit
 ```
+
+- `--local` means the coordinator only uses local challenge directories under `--challenges-dir`.
+- `--local` also enables operator-side approval for flag candidates, because there is no CTFd confirmation path.
+- `--no-submit` does **not** mean local mode. It disables submission while leaving CTFd challenge sync enabled.
+- Operator confirmation is available from the browser console in every mode. In normal CTFd mode it acts as a manual override; in `--local` and `--no-submit` it is the primary confirmation path.
+- The browser console also lets you mark a challenge solved from outside the swarm when you solved it manually or on another machine.
+- The `ctf-bump` helper still uses `--challenge` because it targets a specific running challenge swarm by name.
 
 ## Solver Models
 
@@ -168,10 +188,12 @@ docker run --rm ctf-sandbox sandbox-smoke-check
 - **Multi-model racing** — multiple AI models attack each challenge simultaneously; first to find the flag wins
 - **Coordinator LLM** — reads solver traces and crafts targeted technical guidance per lane
 - **Cross-solver insights** — discoveries are shared between models via an in-memory message bus so no solver re-discovers the same dead end
-- **Auto-spawn** — new challenges detected from the CTFd feed are automatically spawned into swarms
+- **Auto-spawn** — new challenges detected from the CTFd feed, or unsolved local challenge dirs in `--local` mode, are automatically spawned into swarms
 - **Cooldown gating** — escalating submission cooldowns per model after incorrect flags (0s → 30s → 2m → 5m → 10m) to prevent rate-limit bans
 - **Operator messaging** — send hints to the coordinator or directly to a running lane mid-competition
 - **Browser operator console** — live challenge status, per-lane traces, JSONL event browser, and inline controls
+- **Manual candidate approval** — an operator can approve or reject a flag candidate from the browser console in any mode
+- **External solve reporting** — if you solve a challenge outside the running lanes, you can mark it solved manually and persist the flag/result from the browser console
 - **Artifact spooling** — large command output is saved to a shared directory and pointer-summarized to keep context windows clean
 - **Cost tracking** — per-agent token and dollar accounting via `genai-prices`
 - **Solve artifacts** — when a flag is confirmed, the winning lane's workspace, trace, and a draft writeup are saved automatically
@@ -216,7 +238,7 @@ Direct API providers (Azure, Bedrock, Zen) are not supported. If a lane hits quo
 
 ### Solve artifacts
 
-When a lane confirms a real flag, the winner's artifacts are saved under `challenges/<challenge>/solve/`:
+When a lane confirms a real flag through CTFd, an operator approves a candidate manually, or an operator reports an external solve, the winner's artifacts are saved under `challenges/<challenge>/solve/`:
 
 ```
 challenges/<challenge>/solve/
@@ -229,13 +251,15 @@ challenges/<challenge>/solve/
 
 Shared outputs (intermediate files, findings) remain in `challenges/<challenge>/.shared-artifacts/` and are referenced from the saved writeup metadata.
 
+If you mark a challenge solved externally without a live swarm workspace, the agent still saves `flag.txt` and `result.json`, but there may be no `trace.jsonl`, `writeup.md`, or `workspace/` snapshot to preserve.
+
 ## Requirements
 
 - Python 3.14+
 - Docker
 - Home auth configured for at least one of `codex`, `claude`, or `gemini`
 - `codex` CLI (for Codex solver/coordinator)
-- `claude` CLI bundled with `claude-agent-sdk` (for Claude coordinator)
+- `claude` home auth if you want Claude advisor fallback
 - `gemini` CLI if you want `gemini/*` models
 
 ## Acknowledgements

@@ -1,6 +1,7 @@
 """SDK-agnostic tool logic — pure async functions, no Pydantic AI types."""
 
 import json
+import re
 import shlex
 from pathlib import Path
 from urllib.parse import urlparse
@@ -8,11 +9,34 @@ from urllib.parse import urlparse
 import httpx
 
 MAX_OUTPUT = 24_000
-INLINE_EXEC_OUTPUT_LIMIT = 4_000
-INLINE_EXEC_OUTPUT_LINE_LIMIT = 120
+INLINE_EXEC_OUTPUT_LIMIT = 2_000
+INLINE_EXEC_OUTPUT_LINE_LIMIT = 80
 WEB_FETCH_PREVIEW_LIMIT = 8_192
 INSPECT_PATH_HASH_LIMIT_BYTES = 32 * 1024 * 1024
 LIST_ARCHIVE_MAX_ZIP_BYTES = 64 * 1024 * 1024
+
+_READLIKE_COMMAND_RE = re.compile(r"\b(?:cat|sed|tail|head|rg|grep|find|nl|wc|awk)\b")
+_PYTHON_FILE_READ_RE = re.compile(
+    r"\bpython3?\b.*(?:\bopen\s*\(|\bPath\s*\([^)]*\)\.(?:read_text|read_bytes)\s*\()",
+    re.IGNORECASE | re.DOTALL,
+)
+_TRACE_JSONL_RE = re.compile(r"(?:^|[\s'\"/=])(?:[^/\s'\"=]+/)*trace-[^/\s'\"=]+\.jsonl\b")
+_FORBIDDEN_REREAD_MARKERS = (
+    "/challenge/agent-repo",
+    "agent-repo/",
+    "/challenge/host-logs",
+    "host-logs/",
+    "/challenge/challenge-src/solve",
+    "challenge-src/solve",
+    "/challenge/challenge-src/.shared-artifacts",
+    "challenge-src/.shared-artifacts",
+)
+_BASH_REREAD_BLOCK_MESSAGE = (
+    "Blocked reread of prior traces or solve history. "
+    "Use allowed roots only: /challenge/distfiles, /challenge/challenge-src "
+    "(excluding solve/ and .shared-artifacts/), /challenge/workspace, "
+    "/challenge/shared-artifacts, /challenge/metadata.yml"
+)
 
 
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
@@ -58,6 +82,34 @@ def _should_materialize_exec_output(text: str, *, line_threshold: int | None = N
         else min(line_threshold, INLINE_EXEC_OUTPUT_LINE_LIMIT)
     )
     return len(text) > INLINE_EXEC_OUTPUT_LIMIT or text.count("\n") > threshold
+
+
+def _normalize_command_text(command: str) -> str:
+    return " ".join(str(command or "").split())
+
+
+def _count_text_lines(text: str) -> int:
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
+def _should_block_reread_command(command: str) -> bool:
+    normalized = _normalize_command_text(command)
+    lowered = normalized.lower()
+    has_forbidden_path = any(marker in lowered for marker in _FORBIDDEN_REREAD_MARKERS) or bool(
+        _TRACE_JSONL_RE.search(lowered)
+    )
+    if not has_forbidden_path:
+        return False
+    return bool(_READLIKE_COMMAND_RE.search(lowered) or _PYTHON_FILE_READ_RE.search(normalized))
+
+
+def _saved_exec_result(label: str, pointer, *, line_count: int) -> str:
+    return (
+        f"[{label} saved] {pointer.container_path} "
+        f"({pointer.size_bytes} bytes, {line_count} lines)"
+    )
 
 
 async def _materialize_exec_output(
@@ -123,7 +175,12 @@ async def do_bash(
     command: str,
     timeout_seconds: int = 60,
 ) -> str:
+    if _should_block_reread_command(command):
+        return _BASH_REREAD_BLOCK_MESSAGE
+
     result = await sandbox.exec(command, timeout_s=timeout_seconds)
+    stdout_line_count = int(getattr(result, "stdout_lines", 0) or 0) or _count_text_lines(result.stdout)
+    stderr_line_count = int(getattr(result, "stderr_lines", 0) or 0) or _count_text_lines(result.stderr)
     stdout_text, stdout_pointer = await _materialize_exec_output(
         sandbox,
         "stdout",
@@ -137,26 +194,19 @@ async def do_bash(
         result.stderr_pointer,
     )
     parts: list[str] = []
-    if stdout_text:
-        if stdout_pointer:
-            parts.append(_preview_block("stdout", stdout_text))
-        else:
-            parts.append(stdout_text)
-    if stderr_text:
-        if stderr_pointer:
-            parts.append(_preview_block("stderr", stderr_text))
-        else:
-            parts.append(f"[stderr]\n{stderr_text}")
+    if stdout_text and not stdout_pointer:
+        parts.append(stdout_text)
+    if stderr_text and not stderr_pointer:
+        parts.append(f"[stderr]\n{stderr_text}")
     if stdout_pointer:
-        parts.append(
-            f"[stdout saved] {stdout_pointer.container_path} ({stdout_pointer.size_bytes} bytes)"
-        )
+        parts.append(_saved_exec_result("stdout", stdout_pointer, line_count=stdout_line_count))
     if stderr_pointer:
-        parts.append(
-            f"[stderr saved] {stderr_pointer.container_path} ({stderr_pointer.size_bytes} bytes)"
-        )
-    if stdout_pointer or stderr_pointer:
-        pointer_path = (stdout_pointer or stderr_pointer).container_path
+        parts.append(_saved_exec_result("stderr", stderr_pointer, line_count=stderr_line_count))
+    pointer_paths: list[str] = []
+    for pointer in (stdout_pointer, stderr_pointer):
+        if pointer and pointer.container_path not in pointer_paths:
+            pointer_paths.append(pointer.container_path)
+    for pointer_path in pointer_paths:
         parts.append(_text_pointer_hint(pointer_path))
     if result.exit_code != 0:
         parts.append(f"[exit {result.exit_code}]")
@@ -727,7 +777,7 @@ def _web_fetch_scheme_error(url: str) -> str | None:
 
     local_hint = (
         "Fetch error: web_fetch only supports http:// or https:// URLs.\n"
-        "For local files use `fs_query` with `peek`, `inspect`, or `find` actions."
+        "For local files use `bash` with a short preview or save the output under `/challenge/shared-artifacts/`."
     )
     if stripped.startswith(("file://", "/", "./", "../", "~")):
         return local_hint

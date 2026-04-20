@@ -64,7 +64,12 @@ class CTFdPoller:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                pass
+            except RuntimeError as exc:
+                if "Event loop is closed" not in str(exc):
+                    raise
+            except Exception:
                 pass
 
     async def get_event(self, timeout: float = 1.0) -> PollEvent | None:
@@ -73,6 +78,10 @@ class CTFdPoller:
             return await asyncio.wait_for(self._event_queue.get(), timeout=timeout)
         except (TimeoutError, asyncio.CancelledError):
             return None
+        except RuntimeError as exc:
+            if "Event loop is closed" in str(exc):
+                raise
+            raise
 
     def drain_events(self) -> list[PollEvent]:
         """Drain all pending events without blocking."""
@@ -178,8 +187,11 @@ class CTFdPoller:
         self._last_error_text = error_text
 
     async def _loop(self) -> None:
-        while not self._stop.is_set():
-            await asyncio.sleep(self._current_interval_s or self.interval_s)
-            if self._stop.is_set():
-                break
-            await self._poll_once()
+        try:
+            while not self._stop.is_set():
+                await asyncio.sleep(self._current_interval_s or self.interval_s)
+                if self._stop.is_set():
+                    break
+                await self._poll_once()
+        except asyncio.CancelledError:
+            return

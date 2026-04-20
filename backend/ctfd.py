@@ -190,7 +190,18 @@ class CTFdClient:
         for stub in data.get("data", []):
             if stub.get("type") == "hidden":
                 continue
-            detail = await self._get(f"/challenges/{stub['id']}")
+            try:
+                detail = await self._get(f"/challenges/{stub['id']}")
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 404:
+                    logger.warning(
+                        "Skipping missing CTFd challenge detail for id=%s name=%r",
+                        stub.get("id"),
+                        stub.get("name"),
+                    )
+                    continue
+                raise
             challenges.append(detail["data"])
         return challenges
 

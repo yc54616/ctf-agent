@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from backend.config import Settings
-from backend.cost_tracker import CostTracker
+from backend.cost_tracker import CostTracker, _fmt_tokens
 from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
 from backend.message_bus import CandidateRef, CoordinatorNoteRef
@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 # Callable type for a coordinator turn: (message) -> None
 TurnFn = Callable[[str], Coroutine[Any, Any, None]]
+
+
+def _is_loop_closed_error(exc: BaseException) -> bool:
+    return isinstance(exc, RuntimeError) and "Event loop is closed" in str(exc)
 
 
 def _render_solver_message(event: object) -> str:
@@ -124,12 +128,14 @@ def _local_known_challenge_names(deps: CoordinatorDeps) -> set[str]:
     return set(deps.challenge_dirs) | set(deps.challenge_metas)
 
 
-def _known_challenge_names(deps: CoordinatorDeps, poller: CTFdPoller) -> set[str]:
-    return set(poller.known_challenges) | _local_known_challenge_names(deps) | set(deps.results)
+def _known_challenge_names(deps: CoordinatorDeps, poller: CTFdPoller | None) -> set[str]:
+    poller_names = set(poller.known_challenges) if poller is not None else set()
+    return poller_names | _local_known_challenge_names(deps) | set(deps.results)
 
 
-def _known_solved_names(deps: CoordinatorDeps, poller: CTFdPoller) -> set[str]:
-    return set(poller.known_solved) | _restored_solved_names(deps)
+def _known_solved_names(deps: CoordinatorDeps, poller: CTFdPoller | None) -> set[str]:
+    poller_names = set(poller.known_solved) if poller is not None else set()
+    return poller_names | _restored_solved_names(deps)
 
 
 def build_deps(
@@ -137,6 +143,7 @@ def build_deps(
     model_specs: list[str] | None = None,
     challenges_root: str = "challenges",
     no_submit: bool = False,
+    local_mode: bool = False,
     challenge_dirs: dict[str, str] | None = None,
     challenge_metas: dict[str, ChallengeMeta] | None = None,
 ) -> tuple[CTFdClient, CostTracker, CoordinatorDeps]:
@@ -157,7 +164,8 @@ def build_deps(
         settings=settings,
         model_specs=specs,
         challenges_root=challenges_root,
-        no_submit=no_submit,
+        no_submit=(no_submit or local_mode),
+        local_mode=local_mode,
         max_concurrent_challenges=getattr(settings, "max_concurrent_challenges", 10),
         challenge_dirs=challenge_dirs or {},
         challenge_metas=challenge_metas or {},
@@ -188,18 +196,97 @@ async def cleanup_coordinator_runtime(
     deps: CoordinatorDeps,
     ctfd: CTFdClient,
     cost_tracker: CostTracker,
+    *,
+    reason: str | None = None,
 ) -> None:
+    shutdown_reason = " ".join(str(reason or deps.shutdown_reason or "coordinator cleanup").split()).strip()
     for swarm in deps.swarms.values():
-        swarm.kill()
+        swarm.kill(reason=shutdown_reason)
     for task in deps.swarm_tasks.values():
         task.cancel()
     if deps.swarm_tasks:
         await asyncio.gather(*deps.swarm_tasks.values(), return_exceptions=True)
     cost_tracker.log_summary()
+    _log_shutdown_cost_details(deps, cost_tracker)
     try:
         await ctfd.close()
     except Exception:
         pass
+
+
+def _lane_last_command(deps: CoordinatorDeps, agent_name: str) -> str:
+    challenge_name, _, _model_name = agent_name.rpartition("/")
+    if not challenge_name:
+        return ""
+    swarm = deps.swarms.get(challenge_name)
+    if swarm is None:
+        return ""
+    for solver in getattr(swarm, "solvers", {}).values():
+        if getattr(solver, "agent_name", "") != agent_name:
+            continue
+        runtime_getter = getattr(solver, "get_runtime_status", None)
+        if not callable(runtime_getter):
+            return ""
+        runtime = runtime_getter()
+        return str(runtime.get("current_command") or runtime.get("last_command") or "").strip()
+    return ""
+
+
+def _log_shutdown_cost_details(deps: CoordinatorDeps, cost_tracker: CostTracker) -> None:
+    usage_by_agent = cost_tracker.get_usage_by_agent()
+    lane_usage = {
+        agent_name: stats
+        for agent_name, stats in usage_by_agent.items()
+        if "/" in agent_name
+    }
+    if not lane_usage:
+        return
+
+    by_challenge: dict[str, dict[str, float | int]] = {}
+    for agent_name, stats in lane_usage.items():
+        challenge_name, _, _model_name = agent_name.rpartition("/")
+        if not challenge_name:
+            continue
+        bucket = by_challenge.setdefault(
+            challenge_name,
+            {"cost": 0.0, "input": 0, "cached": 0, "output": 0},
+        )
+        bucket["cost"] = float(bucket["cost"]) + float(stats.get("cost", 0.0) or 0.0)
+        bucket["input"] = int(bucket["input"]) + int(stats.get("input", 0) or 0)
+        bucket["cached"] = int(bucket["cached"]) + int(stats.get("cached", 0) or 0)
+        bucket["output"] = int(bucket["output"]) + int(stats.get("output", 0) or 0)
+
+    if by_challenge:
+        top_challenge_name, top_challenge_stats = max(
+            by_challenge.items(),
+            key=lambda item: (float(item[1]["cost"]), int(item[1]["input"]), item[0]),
+        )
+        logger.info(
+            "  Top challenge: %s | $%.2f | %s in / %s cached / %s out",
+            top_challenge_name,
+            float(top_challenge_stats["cost"]),
+            _fmt_tokens(int(top_challenge_stats["input"])),
+            _fmt_tokens(int(top_challenge_stats["cached"])),
+            _fmt_tokens(int(top_challenge_stats["output"])),
+        )
+
+    hot_agent_name, hot_agent_stats = max(
+        lane_usage.items(),
+        key=lambda item: (
+            int(item[1].get("input", 0) or 0),
+            float(item[1].get("cost", 0.0) or 0.0),
+            item[0],
+        ),
+    )
+    last_command = _lane_last_command(deps, hot_agent_name) or "-"
+    logger.info(
+        "  Peak lane: %s | %s in / %s cached / %s out | last=%s",
+        hot_agent_name,
+        _fmt_tokens(int(hot_agent_stats.get("input", 0) or 0)),
+        _fmt_tokens(int(hot_agent_stats.get("cached", 0) or 0)),
+        _fmt_tokens(int(hot_agent_stats.get("output", 0) or 0)),
+        last_command,
+    )
 
 
 async def run_event_loop(
@@ -220,8 +307,10 @@ async def run_event_loop(
         turn_fn: Async function that sends a message to the coordinator LLM.
         status_interval: Seconds between status updates.
     """
-    poller = CTFdPoller(ctfd=ctfd, interval_s=5.0)
-    await poller.start()
+    poller: CTFdPoller | None = None
+    if not deps.local_mode:
+        poller = CTFdPoller(ctfd=ctfd, interval_s=5.0)
+        await poller.start()
 
     # Start operator message HTTP endpoint
     msg_server = await _start_msg_server(deps.operator_inbox, deps, deps.msg_port)
@@ -238,27 +327,52 @@ async def run_event_loop(
     deps.known_solved_count = len(known_solved)
 
     unsolved = known_challenges - known_solved
-    initial_msg = (
-        f"CTF is LIVE. {len(known_challenges)} challenges, "
-        f"{len(known_solved)} solved.\n"
-        f"Unsolved: {sorted(unsolved) if unsolved else 'NONE'}\n"
-        "Fetch challenges and spawn swarms for all unsolved."
-    )
+    if deps.local_mode:
+        initial_msg = (
+            f"LOCAL MODE. {len(known_challenges)} local challenges loaded, "
+            f"{len(known_solved)} already marked solved.\n"
+            f"Unsolved: {sorted(unsolved) if unsolved else 'NONE'}\n"
+            "Spawn swarms for all unsolved local challenges. Do not fetch or submit to CTFd."
+        )
+    else:
+        initial_msg = (
+            f"CTF is LIVE. {len(known_challenges)} challenges, "
+            f"{len(known_solved)} solved.\n"
+            f"Unsolved: {sorted(unsolved) if unsolved else 'NONE'}\n"
+            "Fetch challenges and spawn swarms for all unsolved."
+        )
 
+    shutdown_reason = ""
     try:
         await turn_fn(initial_msg)
 
         # Auto-spawn swarms for unsolved challenges if coordinator LLM didn't
         await _auto_spawn_unsolved(deps, poller)
 
-        last_status = asyncio.get_event_loop().time()
+        last_status = asyncio.get_running_loop().time()
 
         while True:
+            if deps.shutdown_event.is_set():
+                shutdown_reason = deps.shutdown_reason or "coordinator shutdown requested"
+                logger.info("Coordinator shutdown requested: %s", shutdown_reason)
+                break
             events = []
-            evt = await poller.get_event(timeout=5.0)
+            evt = None
+            if poller is not None:
+                try:
+                    evt = await poller.get_event(timeout=5.0)
+                except RuntimeError as exc:
+                    if _is_loop_closed_error(exc):
+                        shutdown_reason = "coordinator loop closed during shutdown"
+                        logger.info("Coordinator loop is closing; shutting down cleanly")
+                        break
+                    raise
+            else:
+                await asyncio.sleep(5.0)
             if evt:
                 events.append(evt)
-            events.extend(poller.drain_events())
+            if poller is not None:
+                events.extend(poller.drain_events())
             deps.known_challenge_count = len(_known_challenge_names(deps, poller))
             deps.known_solved_count = len(_known_solved_names(deps, poller))
 
@@ -267,7 +381,7 @@ async def run_event_loop(
                 if evt.kind == "challenge_solved" and evt.challenge_name in deps.swarms:
                     swarm = deps.swarms[evt.challenge_name]
                     if not swarm.cancel_event.is_set():
-                        swarm.kill()
+                        swarm.kill(reason=f"challenge solved elsewhere: {evt.challenge_name}")
                         logger.info("Auto-killed swarm for: %s", evt.challenge_name)
                 if evt.kind == "challenge_solved":
                     from backend.agents.coordinator_core import _drop_pending_swarm
@@ -324,7 +438,7 @@ async def run_event_loop(
                     break
 
             # Periodic status update — only when there are active swarms or other events
-            now = asyncio.get_event_loop().time()
+            now = asyncio.get_running_loop().time()
             if now - last_status >= status_interval:
                 last_status = now
                 active = [n for n, t in deps.swarm_tasks.items() if not t.done()]
@@ -344,25 +458,50 @@ async def run_event_loop(
                 msg = "\n\n".join(parts)
                 logger.info("Event -> coordinator: %s", msg[:200])
                 await turn_fn(msg)
+                if deps.shutdown_event.is_set():
+                    shutdown_reason = deps.shutdown_reason or "coordinator shutdown requested"
+                    logger.info("Coordinator shutdown requested after turn: %s", shutdown_reason)
+                    break
 
-    except (KeyboardInterrupt, asyncio.CancelledError):
+    except KeyboardInterrupt:
+        shutdown_reason = "KeyboardInterrupt"
+        logger.info("Coordinator shutting down...")
+    except asyncio.CancelledError:
+        shutdown_reason = "coordinator task cancelled"
         logger.info("Coordinator shutting down...")
     except Exception as e:
+        shutdown_reason = f"coordinator fatal: {type(e).__name__}: {e}"
         logger.error("Coordinator fatal: %s", e, exc_info=True)
         if propagate_fatal:
             raise
     finally:
+        deps.shutdown_reason = shutdown_reason or deps.shutdown_reason or "coordinator event loop exited"
         if msg_server:
-            msg_server.close()
-            await msg_server.wait_closed()
-        await poller.stop()
+            try:
+                msg_server.close()
+                await msg_server.wait_closed()
+            except RuntimeError as exc:
+                if not _is_loop_closed_error(exc):
+                    raise
+        if poller is not None:
+            try:
+                await poller.stop()
+            except RuntimeError as exc:
+                if not _is_loop_closed_error(exc):
+                    raise
         if cleanup_runtime_on_exit:
-            await cleanup_coordinator_runtime(deps, ctfd, cost_tracker)
+            await cleanup_coordinator_runtime(
+                deps,
+                ctfd,
+                cost_tracker,
+                reason=deps.shutdown_reason,
+            )
 
     return {
         "results": deps.results,
         "total_cost_usd": cost_tracker.total_cost_usd,
         "total_tokens": cost_tracker.total_tokens,
+        "shutdown_reason": deps.shutdown_reason,
     }
 
 
@@ -378,30 +517,40 @@ async def _auto_spawn_one(deps: CoordinatorDeps, challenge_name: str) -> None:
         logger.warning(f"Auto-spawn failed for {challenge_name}: {e}")
 
 
-async def _auto_spawn_unsolved(deps: CoordinatorDeps, poller) -> None:
+async def _auto_spawn_unsolved(deps: CoordinatorDeps, poller: CTFdPoller | None) -> None:
     """Auto-spawn swarms for all unsolved challenges that don't have active swarms."""
     solved_names = _known_solved_names(deps, poller)
     known_names = _known_challenge_names(deps, poller)
     unsolved = known_names - solved_names
     if not unsolved:
         return
-    try:
-        challenge_stubs = await deps.ctfd.fetch_challenge_stubs()
-    except Exception as e:
-        logger.warning("Could not fetch challenge solves for ordering: %s", e)
-        ordered = sorted(unsolved)
-    else:
-        ranked = sorted(
-            (stub for stub in challenge_stubs if stub.get("name") in unsolved),
-            key=lambda stub: (-int(stub.get("solves", 0) or 0), str(stub.get("name", ""))),
+    if deps.local_mode:
+        ordered = sorted(
+            unsolved,
+            key=lambda name: (
+                -int(getattr(deps.challenge_metas.get(name), "solves", 0) or 0),
+                name,
+            ),
         )
-        ordered = [str(stub.get("name")) for stub in ranked]
-        missing = sorted(name for name in unsolved if name not in set(ordered))
-        ordered.extend(missing)
+    else:
+        try:
+            challenge_stubs = await deps.ctfd.fetch_challenge_stubs()
+        except Exception as e:
+            logger.warning("Could not fetch challenge solves for ordering: %s", e)
+            ordered = sorted(unsolved)
+        else:
+            ranked = sorted(
+                (stub for stub in challenge_stubs if stub.get("name") in unsolved),
+                key=lambda stub: (-int(stub.get("solves", 0) or 0), str(stub.get("name", ""))),
+            )
+            ordered = [str(stub.get("name")) for stub in ranked]
+            missing = sorted(name for name in unsolved if name not in set(ordered))
+            ordered.extend(missing)
     local_only = [
         name
         for name in ordered
-        if name in _local_known_challenge_names(deps) and name not in set(poller.known_challenges)
+        if name in _local_known_challenge_names(deps)
+        and name not in (set(poller.known_challenges) if poller is not None else set())
     ]
     if local_only:
         ranked_local = sorted(
@@ -462,6 +611,120 @@ def _status_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
     }
 
 
+def _pending_candidate_count(challenges: list[dict[str, Any]], results: dict[str, Any]) -> int:
+    count = 0
+    for challenge in challenges:
+        raw_candidates = challenge.get("flag_candidates", {})
+        if not isinstance(raw_candidates, dict):
+            continue
+        for candidate in raw_candidates.values():
+            if not isinstance(candidate, dict):
+                continue
+            if str(candidate.get("status") or "").strip().lower() not in {"confirmed", "rejected"}:
+                count += 1
+    for payload in results.values():
+        if not isinstance(payload, dict):
+            continue
+        raw_candidates = payload.get("flag_candidates", {})
+        if not isinstance(raw_candidates, dict):
+            continue
+        for candidate in raw_candidates.values():
+            if not isinstance(candidate, dict):
+                continue
+            if str(candidate.get("status") or "").strip().lower() not in {"confirmed", "rejected"}:
+                count += 1
+    return count
+
+
+def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
+    legacy = _status_snapshot(deps)
+    active = legacy.get("active_swarms", {})
+    finished = legacy.get("finished_swarms", {})
+    results = legacy.get("results", {})
+    active_values = [value for value in active.values() if isinstance(value, dict)]
+    finished_values = [value for value in finished.values() if isinstance(value, dict)]
+
+    healthy_lanes = 0
+    stale_lanes = 0
+    resetting_lanes = 0
+    error_lanes = 0
+    busy_lanes = 0
+    for swarm in [*active_values, *finished_values]:
+        agents = swarm.get("agents", {})
+        if not isinstance(agents, dict):
+            continue
+        for agent in agents.values():
+            if not isinstance(agent, dict):
+                continue
+            runtime_health = str(agent.get("runtime_health") or "")
+            lifecycle = str(agent.get("lifecycle") or agent.get("status") or "")
+            if runtime_health == "stale":
+                stale_lanes += 1
+            elif runtime_health == "resetting":
+                resetting_lanes += 1
+            else:
+                healthy_lanes += 1
+            if lifecycle in {"error", "quota_error"}:
+                error_lanes += 1
+            if lifecycle == "busy":
+                busy_lanes += 1
+
+    usage_by_model = deps.cost_tracker.get_usage_by_model()
+    total_input = sum(int(entry.get("input", 0) or 0) for entry in usage_by_model.values())
+    total_cached = sum(int(entry.get("cached", 0) or 0) for entry in usage_by_model.values())
+    total_output = sum(int(entry.get("output", 0) or 0) for entry in usage_by_model.values())
+    cache_hit_rate = (total_cached / total_input) if total_input > 0 else 0.0
+
+    return {
+        "session_started_at": legacy.get("session_started_at"),
+        "health_summary": {
+            "healthy_lanes": healthy_lanes,
+            "stale_lanes": stale_lanes,
+            "resetting_lanes": resetting_lanes,
+            "error_lanes": error_lanes,
+            "busy_lanes": busy_lanes,
+        },
+        "cost_summary": {
+            "cost_usd": legacy.get("cost_usd", 0.0),
+            "input_tokens": total_input,
+            "cached_tokens": total_cached,
+            "output_tokens": total_output,
+            "cache_hit_rate": cache_hit_rate,
+        },
+        "challenge_summary": {
+            "known_challenge_count": legacy.get("known_challenge_count", 0),
+            "known_solved_count": legacy.get("known_solved_count", 0),
+            "active_challenge_count": len(active_values),
+            "pending_challenge_count": len(legacy.get("pending_challenges", [])),
+            "pending_candidate_count": _pending_candidate_count(
+                [*active_values, *finished_values],
+                results if isinstance(results, dict) else {},
+            ),
+            "local_approval_enabled": bool(deps.local_mode),
+            "manual_approval_enabled": True,
+            "external_solve_enabled": True,
+        },
+        "models": legacy.get("models", []),
+        "active_swarms": active,
+        "finished_swarms": finished,
+        "pending_challenges": legacy.get("pending_challenges", []),
+        "results": results,
+        "known_challenge_count": legacy.get("known_challenge_count", 0),
+        "known_solved_count": legacy.get("known_solved_count", 0),
+        "active_swarm_count": legacy.get("active_swarm_count", 0),
+        "finished_swarm_count": legacy.get("finished_swarm_count", 0),
+        "pending_challenge_count": legacy.get("pending_challenge_count", 0),
+        "cost_usd": legacy.get("cost_usd", 0.0),
+        "total_step_count": legacy.get("total_step_count", 0),
+        "signals": {
+            "coordinator_queue_depth": legacy.get("coordinator_queue_depth", 0),
+            "operator_queue_depth": legacy.get("operator_queue_depth", 0),
+        },
+        "no_submit": bool(deps.no_submit),
+        "local_mode": bool(deps.local_mode),
+    }
+
+
 async def _start_msg_server(
     inbox: asyncio.Queue,
     deps: CoordinatorDeps,
@@ -469,7 +732,12 @@ async def _start_msg_server(
 ) -> asyncio.Server | None:
     """Start a tiny HTTP server that accepts operator messages and exposes status."""
 
-    from backend.agents.coordinator_core import do_bump_agent
+    from backend.agents.coordinator_core import (
+        do_approve_flag_candidate,
+        do_bump_agent,
+        do_mark_challenge_solved,
+        do_reject_flag_candidate,
+    )
 
     async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         def _write_response(status: str, body: bytes, content_type: str) -> None:
@@ -487,7 +755,7 @@ async def _start_msg_server(
         def _json_response(status: str, payload: dict[str, Any]) -> None:
             _write_response(status, json.dumps(payload).encode(), "application/json")
 
-        async def _status_stream_response() -> None:
+        async def _runtime_stream_response() -> None:
             writer.write(
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: text/event-stream\r\n"
@@ -498,9 +766,9 @@ async def _start_msg_server(
             await writer.drain()
             previous_payload: str | None = None
             while not writer.is_closing() and not reader.at_eof():
-                payload = json.dumps(_status_snapshot(deps), sort_keys=True)
+                payload = json.dumps(_runtime_snapshot(deps), sort_keys=True)
                 if payload != previous_payload:
-                    writer.write(f"event: status\ndata: {payload}\n\n".encode())
+                    writer.write(f"event: snapshot\ndata: {payload}\n\n".encode())
                     previous_payload = payload
                 else:
                     writer.write(b": keepalive\n\n")
@@ -527,10 +795,10 @@ async def _start_msg_server(
             query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
             content_length = int(headers.get("content-length", 0))
 
-            if method == "GET" and path == "/status":
-                _json_response("200 OK", _status_snapshot(deps))
-            elif method == "GET" and path == "/status/stream":
-                await _status_stream_response()
+            if method == "GET" and path == "/api/runtime/snapshot":
+                _json_response("200 OK", _runtime_snapshot(deps))
+            elif method == "GET" and path == "/api/runtime/stream":
+                await _runtime_stream_response()
             elif method == "GET" and path in {"/ui", "/ui.css", "/ui.js"}:
                 asset_name = {
                     "/ui": "operator_ui.html",
@@ -539,32 +807,28 @@ async def _start_msg_server(
                 }[path]
                 content_type, text = load_ui_asset(asset_name)
                 _write_response("200 OK", text.encode("utf-8"), content_type)
-            elif method == "GET" and path == "/trace-files":
+            elif method == "GET" and path == "/api/runtime/traces":
                 challenge_name = str(query.get("challenge_name", "")).strip()
-                model_spec = str(query.get("model_spec", "")).strip()
-                if not challenge_name or not model_spec:
+                lane_id = str(query.get("lane_id", "")).strip()
+                if not challenge_name or not lane_id:
                     _json_response(
                         "400 Bad Request",
-                        {"error": "challenge_name and model_spec are required"},
+                        {"error": "challenge_name and lane_id are required"},
                     )
                 else:
                     trace_files = [
                         trace_path.name
-                        for trace_path in list_trace_files(challenge_name, model_spec)
+                        for trace_path in list_trace_files(challenge_name, lane_id)
                     ]
-                    _json_response("200 OK", {"trace_files": trace_files})
-            elif method == "GET" and path == "/trace":
+                    _json_response("200 OK", {"challenge_name": challenge_name, "lane_id": lane_id, "trace_files": trace_files})
+            elif method == "GET" and path == "/api/runtime/trace-window":
                 challenge_name = str(query.get("challenge_name", "")).strip()
-                model_spec = str(query.get("model_spec", "")).strip()
+                lane_id = str(query.get("lane_id", "")).strip()
                 trace_name = str(query.get("trace_name", "")).strip()
-                if not challenge_name or not model_spec or not trace_name:
+                if not challenge_name or not lane_id or not trace_name:
                     _json_response(
                         "400 Bad Request",
-                        {
-                            "error": (
-                                "challenge_name, model_spec, and trace_name are required"
-                            )
-                        },
+                        {"error": "challenge_name, lane_id, and trace_name are required"},
                     )
                 else:
                     cursor_raw = query.get("cursor")
@@ -574,7 +838,7 @@ async def _start_msg_server(
                         limit = int(limit_raw) if limit_raw is not None else 200
                         payload = read_trace_window(
                             challenge_name,
-                            model_spec,
+                            lane_id,
                             trace_name,
                             cursor=cursor,
                             limit=limit,
@@ -591,7 +855,7 @@ async def _start_msg_server(
                         )
                     else:
                         _json_response("200 OK", payload)
-            elif method == "GET" and path == "/advisories":
+            elif method == "GET" and path == "/api/runtime/advisories":
                 challenge_name = str(query.get("challenge_name", "")).strip()
                 if not challenge_name:
                     _json_response(
@@ -612,7 +876,7 @@ async def _start_msg_server(
                             "200 OK",
                             collect_advisory_history(challenge_name, limit=limit),
                         )
-            elif method == "POST" and path == "/msg" and content_length > 0:
+            elif method == "POST" and path == "/api/runtime/coordinator-message" and content_length > 0:
                 body = await asyncio.wait_for(reader.read(content_length), timeout=5)
                 try:
                     data = json.loads(body)
@@ -621,8 +885,8 @@ async def _start_msg_server(
                     message = body.decode("utf-8", errors="replace")
 
                 inbox.put_nowait(message)
-                _json_response("200 OK", {"ok": True, "queued": message[:200]})
-            elif method == "POST" and path == "/bump" and content_length > 0:
+                _json_response("200 OK", {"ok": True, "queued": str(message)[:200]})
+            elif method == "POST" and path == "/api/runtime/lane-bump" and content_length > 0:
                 body = await asyncio.wait_for(reader.read(content_length), timeout=5)
                 try:
                     data = json.loads(body)
@@ -630,32 +894,116 @@ async def _start_msg_server(
                     data = {}
 
                 challenge_name = str(data.get("challenge_name", "")).strip()
-                model_spec = str(data.get("model_spec", "")).strip()
+                lane_id = str(data.get("lane_id") or data.get("model_spec") or "").strip()
                 insights = str(data.get("insights", "")).strip()
 
-                if not challenge_name or not model_spec or not insights:
+                if not challenge_name or not lane_id or not insights:
                     _json_response(
                         "400 Bad Request",
-                        {
-                            "error": "challenge_name, model_spec, and insights are required",
-                            "usage": {
-                                "bump_lane": (
-                                    'POST /bump {"challenge_name": "...", '
-                                    '"model_spec": "...", "insights": "..."}'
-                                ),
-                            },
-                        },
+                        {"error": "challenge_name, lane_id, and insights are required"},
                     )
                 else:
-                    result = await do_bump_agent(deps, challenge_name, model_spec, insights)
+                    result = await do_bump_agent(deps, challenge_name, lane_id, insights)
                     if result.startswith("No "):
                         _json_response("404 Not Found", {"ok": False, "error": result})
                     else:
-                        logger.info(
-                            "Operator lane bump: challenge=%s model=%s",
-                            challenge_name,
-                            model_spec,
-                        )
+                        _json_response("200 OK", {"ok": True, "result": result})
+            elif method == "POST" and path == "/api/runtime/challenge-bump" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                insights = str(data.get("insights", "")).strip()
+                if not challenge_name or not insights:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and insights are required"},
+                    )
+                else:
+                    swarm = deps.swarms.get(challenge_name)
+                    if swarm is None:
+                        _json_response("404 Not Found", {"ok": False, "error": f"No swarm for challenge {challenge_name}"})
+                    else:
+                        statuses = swarm.get_status()
+                        agents = statuses.get("agents", {}) if isinstance(statuses, dict) else {}
+                        results: list[dict[str, str]] = []
+                        if isinstance(agents, dict):
+                            for model_spec, lane in agents.items():
+                                lane_payload = lane if isinstance(lane, dict) else {}
+                                lifecycle = str(lane_payload.get("lifecycle") or "")
+                                if lifecycle in {"won", "finished", "cancelled", "flag_found"}:
+                                    continue
+                                result = await do_bump_agent(deps, challenge_name, str(model_spec), insights)
+                                results.append({"lane_id": str(model_spec), "result": result})
+                        _json_response("200 OK", {"ok": True, "challenge_name": challenge_name, "results": results})
+            elif method == "POST" and path == "/api/runtime/approve-candidate" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                flag = str(data.get("flag", "")).strip()
+                if not challenge_name or not flag:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and flag are required"},
+                    )
+                else:
+                    result = await do_approve_flag_candidate(deps, challenge_name, flag)
+                    if result.startswith("No ") or result.startswith("Cannot ") or result.startswith("Candidate approval rejected"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    elif result.startswith("Already solved"):
+                        _json_response("409 Conflict", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+            elif method == "POST" and path == "/api/runtime/reject-candidate" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                flag = str(data.get("flag", "")).strip()
+                if not challenge_name or not flag:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and flag are required"},
+                    )
+                else:
+                    result = await do_reject_flag_candidate(deps, challenge_name, flag)
+                    if result.startswith("No ") or result.startswith("Cannot ") or result.startswith("Candidate rejection rejected"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+            elif method == "POST" and path == "/api/runtime/mark-solved" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                flag = str(data.get("flag", "")).strip()
+                note = str(data.get("note", "")).strip()
+                if not challenge_name or not flag:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and flag are required"},
+                    )
+                else:
+                    result = await do_mark_challenge_solved(
+                        deps,
+                        challenge_name,
+                        flag,
+                        note=note,
+                    )
+                    if result.startswith("Unknown challenge") or result.startswith("External solve rejected"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    elif result.startswith("Already solved") or result.startswith("Cannot "):
+                        _json_response("409 Conflict", {"ok": False, "error": result})
+                    else:
                         _json_response("200 OK", {"ok": True, "result": result})
             else:
                 _json_response(
@@ -663,22 +1011,38 @@ async def _start_msg_server(
                     {
                         "error": "Unsupported request",
                         "usage": {
-                            "send_message": "POST /msg {\"message\": \"...\"}",
-                            "bump_lane": (
-                                'POST /bump {"challenge_name": "...", '
-                                '"model_spec": "...", "insights": "..."}'
-                            ),
-                            "status": "GET /status",
-                            "status_stream": "GET /status/stream",
+                            "runtime_snapshot": "GET /api/runtime/snapshot",
+                            "runtime_stream": "GET /api/runtime/stream",
                             "ui": "GET /ui",
-                            "trace_files": (
-                                "GET /trace-files?challenge_name=...&model_spec=..."
+                            "runtime_traces": (
+                                "GET /api/runtime/traces?challenge_name=...&lane_id=..."
                             ),
-                            "trace": (
-                                "GET /trace?challenge_name=...&model_spec=..."
+                            "runtime_trace_window": (
+                                "GET /api/runtime/trace-window?challenge_name=...&lane_id=..."
                                 "&trace_name=...&cursor=...&limit=..."
                             ),
-                            "advisories": "GET /advisories?challenge_name=...&limit=...",
+                            "runtime_advisories": "GET /api/runtime/advisories?challenge_name=...&limit=...",
+                            "coordinator_message": 'POST /api/runtime/coordinator-message {"message": "..."}',
+                            "lane_bump": (
+                                'POST /api/runtime/lane-bump {"challenge_name": "...", '
+                                '"lane_id": "...", "insights": "..."}'
+                            ),
+                            "challenge_bump": (
+                                'POST /api/runtime/challenge-bump {"challenge_name": "...", '
+                                '"insights": "..."}'
+                            ),
+                            "approve_candidate": (
+                                'POST /api/runtime/approve-candidate {"challenge_name": "...", '
+                                '"flag": "..."}'
+                            ),
+                            "reject_candidate": (
+                                'POST /api/runtime/reject-candidate {"challenge_name": "...", '
+                                '"flag": "..."}'
+                            ),
+                            "mark_solved": (
+                                'POST /api/runtime/mark-solved {"challenge_name": "...", '
+                                '"flag": "...", "note": "..."}'
+                            ),
                         },
                     },
                 )

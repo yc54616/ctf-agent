@@ -16,18 +16,6 @@ QUOTA_ERROR = "quota_error"
 
 # Flag confirmation markers from CTFd
 CORRECT_MARKERS = ("CORRECT", "ALREADY SOLVED")
-READ_ONLY_TOOL_NAMES = frozenset(
-    {
-        "fs_query",
-        "view_image",
-    }
-)
-
-
-def is_read_only_tool(tool_name: str) -> bool:
-    return tool_name in READ_ONLY_TOOL_NAMES
-
-
 def _compact_runtime_text(value: object, limit: int = 160) -> str:
     text = str(value or "")
     text = " ".join(text.split())
@@ -36,15 +24,30 @@ def _compact_runtime_text(value: object, limit: int = 160) -> str:
     return text[:limit]
 
 
+def _append_runtime_text(existing: str, delta: str, *, limit: int) -> str:
+    existing = str(existing or "")
+    delta = str(delta or "")
+    if (
+        existing
+        and delta
+        and not existing[-1].isspace()
+        and not delta[0].isspace()
+        and existing[-1].isalnum()
+        and delta[0].isalnum()
+    ):
+        combined = f"{existing} {delta}"
+    else:
+        combined = f"{existing}{delta}"
+    combined = " ".join(combined.split())
+    if len(combined) <= limit:
+        return combined
+    tail = combined[-(limit - 1) :].lstrip()
+    return f"…{tail}" if tail else combined[-limit:]
+
+
 def summarize_tool_input(tool_name: str, payload: object) -> str:
     if isinstance(payload, dict):
         payload_dict = {str(key): value for key, value in payload.items()}
-        if tool_name == "fs_query":
-            action = payload_dict.get("action")
-            path = payload_dict.get("path")
-            if action:
-                target = f"{action} {path}".strip() if path else str(action)
-                return _compact_runtime_text(f"{tool_name} {target}")
         for key in ("command", "path", "filename", "url", "flag", "message", "uuid"):
             value = payload_dict.get(key)
             if value:
@@ -83,12 +86,12 @@ class LaneRuntimeStatus:
     current_tool: str = ""
     current_command: str = ""
     current_started_at: float | None = None
+    commentary_preview: str = ""
+    commentary_at: float | None = None
     last_tool: str = ""
     last_command: str = ""
     last_completed_at: float | None = None
     last_exit_hint: str = ""
-    read_only_streak: int = 0
-    last_progress_kind: str = "turn_start"
 
     def mark_ready(self) -> None:
         if self.lifecycle == "starting":
@@ -115,6 +118,24 @@ class LaneRuntimeStatus:
         elif lifecycle in {"cancelled", "error", "quota_error", "won", "finished"}:
             self.last_exit_hint = self.last_exit_hint or lifecycle
 
+    def note_commentary(self, text: str) -> None:
+        preview = _compact_runtime_text(text, limit=220)
+        if not preview:
+            return
+        self.commentary_preview = preview
+        self.commentary_at = time.time()
+
+    def append_commentary(self, text: str) -> None:
+        delta = " ".join(str(text or "").split())
+        if not delta:
+            return
+        self.commentary_preview = _append_runtime_text(
+            self.commentary_preview,
+            delta,
+            limit=220,
+        )
+        self.commentary_at = time.time()
+
     def snapshot(self) -> dict[str, object]:
         return {
             "lifecycle": self.lifecycle,
@@ -122,12 +143,12 @@ class LaneRuntimeStatus:
             "current_tool": self.current_tool,
             "current_command": self.current_command,
             "current_started_at": self.current_started_at,
+            "commentary_preview": self.commentary_preview,
+            "commentary_at": self.commentary_at,
             "last_tool": self.last_tool,
             "last_command": self.last_command,
             "last_completed_at": self.last_completed_at,
             "last_exit_hint": self.last_exit_hint,
-            "read_only_streak": self.read_only_streak,
-            "last_progress_kind": self.last_progress_kind,
         }
 
     def _roll_current_to_last(self) -> None:

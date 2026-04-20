@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -45,7 +47,8 @@ def test_build_thread_params_keeps_reasoning_for_codex_53() -> None:
 def test_codex_sandbox_tools_include_minimal_solver_surface() -> None:
     names = {tool["name"] for tool in SANDBOX_TOOLS}
 
-    assert {"bash", "fs_query", "report_flag_candidate", "notify_coordinator"} <= names
+    assert {"bash", "report_flag_candidate", "notify_coordinator"} <= names
+    assert "fs_query" not in names
     assert "submit_flag" not in names
     assert "find_files" not in names
 
@@ -147,27 +150,19 @@ async def test_codex_watchdog_marks_turn_start_stall(monkeypatch) -> None:
 
 def test_codex_tool_call_timeout_scales_with_bash_timeout() -> None:
     assert CodexSolver._tool_call_watchdog_seconds("bash", {"timeout_seconds": 180}) == 210.0
-    assert CodexSolver._tool_call_watchdog_seconds("fs_query", {"action": "find", "path": "/tmp"}) == 60.0
+    assert CodexSolver._tool_call_watchdog_seconds("notify_coordinator", {"message": "hi"}) == 60.0
 
 
-def test_codex_post_tool_timeout_restarts_quickly_after_tool_result() -> None:
-    assert CodexSolver._post_tool_watchdog_seconds("fs_query", {"action": "find", "path": "/tmp"}) == 30.0
-    assert CodexSolver._post_tool_watchdog_seconds("bash", {"command": "python3 solve.py"}) == 30.0
-    assert CodexSolver._post_tool_watchdog_seconds("bash", {"command": "sed -n '1,20p' out.txt"}) == 30.0
+def test_codex_turn_activity_timeout_allows_longer_post_tool_reasoning() -> None:
+    assert CodexSolver._turn_activity_watchdog_seconds() == 300.0
 
 
-def test_codex_read_only_progress_tracking_updates_runtime_status() -> None:
+def test_codex_runtime_status_does_not_expose_read_only_tracking() -> None:
     solver = _make_solver("codex/gpt-5.4")
 
-    solver._record_tool_progress("fs_query")
     status = solver.get_runtime_status()
-    assert status["read_only_streak"] == 1
-    assert status["last_progress_kind"] == "read_only_tool"
-
-    solver._record_tool_progress("bash")
-    status = solver.get_runtime_status()
-    assert status["read_only_streak"] == 0
-    assert status["last_progress_kind"] == "exec_tool"
+    assert "read_only_streak" not in status
+    assert "last_progress_kind" not in status
 
 
 def test_codex_tool_call_phase_expires_when_local_tool_runs_past_deadline() -> None:
@@ -181,3 +176,248 @@ def test_codex_tool_call_phase_expires_when_local_tool_runs_past_deadline() -> N
     )
 
     assert solver._watchdog_expired() is True
+
+
+@pytest.mark.asyncio
+async def test_codex_agent_message_delta_updates_commentary_preview() -> None:
+    solver = _make_solver("codex/gpt-5.4")
+
+    await solver._handle_notification(
+        "item/agentMessage/delta",
+        {
+            "itemId": "agent-1",
+            "delta": "Checking whether the extracted rootfs contains ",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+        },
+    )
+    await solver._handle_notification(
+        "item/agentMessage/delta",
+        {
+            "itemId": "agent-1",
+            "delta": "the verifier patch.",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+        },
+    )
+    await solver._handle_notification(
+        "item/completed",
+        {
+            "item": {
+                "id": "agent-1",
+                "type": "agentMessage",
+                "phase": "commentary",
+                "text": "",
+            }
+        },
+    )
+
+    status = solver.get_runtime_status()
+
+    assert status["commentary_preview"] == "Checking whether the extracted rootfs contains the verifier patch."
+    assert solver._findings == "Checking whether the extracted rootfs contains the verifier patch."
+
+
+@pytest.mark.asyncio
+async def test_codex_item_started_is_traced_with_item_type() -> None:
+    solver = _make_solver("codex/gpt-5.4")
+
+    await solver._handle_notification(
+        "item/started",
+        {
+            "item": {
+                "id": "reasoning-1",
+                "type": "reasoning",
+            }
+        },
+    )
+
+    payloads = [
+        line
+        for line in Path(solver.tracer.path).read_text(encoding="utf-8").splitlines()
+        if "rpc_item_started" in line
+    ]
+    assert payloads
+    assert '"item_type": "reasoning"' in payloads[-1]
+
+
+@pytest.mark.asyncio
+async def test_codex_reasoning_summary_deltas_show_without_raw_reasoning_text() -> None:
+    solver = _make_solver("codex/gpt-5.4")
+
+    await solver._handle_notification(
+        "item/reasoning/summaryPartAdded",
+        {
+            "itemId": "reasoning-1",
+            "summaryIndex": 0,
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+        },
+    )
+    await solver._handle_notification(
+        "item/reasoning/summaryTextDelta",
+        {
+            "itemId": "reasoning-1",
+            "summaryIndex": 0,
+            "delta": "Inspecting the ELF header ",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+        },
+    )
+    await solver._handle_notification(
+        "item/reasoning/summaryTextDelta",
+        {
+            "itemId": "reasoning-1",
+            "summaryIndex": 0,
+            "delta": "and checking whether the footer is fake.",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+        },
+    )
+    before = solver.get_runtime_status()["commentary_preview"]
+
+    await solver._handle_notification(
+        "item/reasoning/textDelta",
+        {
+            "itemId": "reasoning-1",
+            "contentIndex": 0,
+            "delta": "private raw reasoning text",
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+        },
+    )
+    after = solver.get_runtime_status()["commentary_preview"]
+
+    assert before == "Inspecting the ELF header and checking whether the footer is fake."
+    assert after == before
+
+    payloads = [
+        line
+        for line in Path(solver.tracer.path).read_text(encoding="utf-8").splitlines()
+        if "reasoning_text_delta_seen" in line
+    ]
+    assert payloads
+
+
+@pytest.mark.asyncio
+async def test_codex_compaction_is_requested_out_of_band() -> None:
+    solver = _make_solver("codex/gpt-5.4")
+    solver._thread_id = "thread-1"
+    called: list[tuple[int, int | None]] = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_request_compaction(*, total_tokens: int, context_window: int | None) -> None:
+        called.append((total_tokens, context_window))
+        started.set()
+        await release.wait()
+        solver._compact_task = None
+
+    solver._request_compaction = fake_request_compaction  # type: ignore[method-assign]
+
+    await solver._handle_notification(
+        "thread/tokenUsage/updated",
+        {
+            "tokenUsage": {
+                "modelContextWindow": 100_000,
+                "last": {"inputTokens": 10, "outputTokens": 2, "cachedInputTokens": 0},
+                "total": {"totalTokens": 80_000, "inputTokens": 80_000, "outputTokens": 2, "cachedInputTokens": 0},
+            }
+        },
+    )
+
+    assert solver._compact_requested is True
+    assert solver._compact_task is not None
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert called == [(80_000, 100_000)]
+
+    release.set()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_codex_declines_command_execution_approval_requests() -> None:
+    solver = _make_solver("codex/gpt-5.4")
+    responses: list[tuple[int, dict[str, object]]] = []
+
+    async def fake_respond(request_id: int, result: Any) -> None:
+        responses.append((request_id, result))
+
+    solver._respond_to_request = fake_respond  # type: ignore[method-assign]
+
+    await solver._handle_approval_request(
+        41,
+        "item/commandExecution/requestApproval",
+        {
+            "itemId": "cmd-1",
+            "reason": "Need approval to run shell command",
+            "command": "strings Image.gz | rg commit_creds",
+        },
+    )
+
+    assert responses == [(41, {"decision": "decline"})]
+    payloads = [
+        line
+        for line in Path(solver.tracer.path).read_text(encoding="utf-8").splitlines()
+        if "approval_request_declined" in line
+    ]
+    assert payloads
+    assert '"method": "item/commandExecution/requestApproval"' in payloads[-1]
+
+
+@pytest.mark.asyncio
+async def test_codex_read_loop_routes_command_execution_approval_requests() -> None:
+    solver = _make_solver("codex/gpt-5.4")
+    called: list[tuple[int, str, dict[str, object]]] = []
+
+    async def fake_handle(request_id: int, method: str, params: dict[str, Any]) -> None:
+        called.append((request_id, method, params))
+
+    solver._handle_approval_request = fake_handle  # type: ignore[method-assign]
+
+    class _FakeStdout:
+        def __init__(self) -> None:
+            self._lines = [
+                json.dumps(
+                    {
+                        "id": 77,
+                        "method": "item/commandExecution/requestApproval",
+                        "params": {
+                            "itemId": "cmd-1",
+                            "reason": "Need approval to run shell command",
+                            "command": "id",
+                        },
+                    }
+                ),
+                "",
+            ]
+
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.stdout = _FakeStdout()
+
+    solver._proc = cast(Any, _FakeProc())
+
+    async def fake_read_jsonrpc_line(_stdout: Any) -> str:
+        return solver._proc.stdout._lines.pop(0)
+
+    import backend.agents.codex_solver as codex_solver_module
+
+    original = codex_solver_module.read_jsonrpc_line
+    codex_solver_module.read_jsonrpc_line = fake_read_jsonrpc_line
+    try:
+        await solver._read_loop()
+    finally:
+        codex_solver_module.read_jsonrpc_line = original
+
+    assert called == [
+        (
+            77,
+            "item/commandExecution/requestApproval",
+            {
+                "itemId": "cmd-1",
+                "reason": "Need approval to run shell command",
+                "command": "id",
+            },
+        )
+    ]

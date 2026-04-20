@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -14,8 +17,12 @@ from backend.agents.claude_coordinator import (
 from backend.agents.codex_coordinator import (
     COORDINATOR_PROMPT as CODEX_COORDINATOR_PROMPT,
 )
-from backend.agents.codex_coordinator import run_codex_coordinator
-from backend.agents.coordinator_loop import _render_solver_message
+from backend.agents.codex_coordinator import CodexCoordinator, run_codex_coordinator
+from backend.agents.coordinator_loop import (
+    _render_solver_message,
+    cleanup_coordinator_runtime,
+    run_event_loop,
+)
 from backend.cli import _run_coordinator
 from backend.cost_tracker import CostTracker
 from backend.deps import CoordinatorDeps
@@ -23,15 +30,12 @@ from backend.message_bus import CandidateRef
 
 
 @pytest.mark.asyncio
-async def test_run_coordinator_falls_back_to_codex_when_claude_fails(monkeypatch) -> None:
+async def test_run_coordinator_uses_codex_only(monkeypatch) -> None:
     async def fake_cleanup() -> None:
         return None
 
     def fake_configure(_max_containers: int) -> None:
         return None
-
-    async def fail_claude(**kwargs):  # type: ignore[no-untyped-def]
-        raise RuntimeError("claude down")
 
     async def run_codex(**kwargs):  # type: ignore[no-untyped-def]
         return {"results": {"chal": {"flag": "flag{ok}"}}, "total_cost_usd": 0.0}
@@ -42,14 +46,16 @@ async def test_run_coordinator_falls_back_to_codex_when_claude_fails(monkeypatch
     monkeypatch.setattr("backend.sandbox.configure_semaphore", fake_configure)
     monkeypatch.setattr(
         "backend.cli.build_deps",
-        lambda settings, model_specs, challenges_root, no_submit: (
+        lambda settings, model_specs, challenges_root, no_submit, local_mode: (
             object(),
             object(),
             type("Deps", (), {"msg_port": 0, "results": {}, "swarms": {}, "swarm_tasks": {}})(),
         ),
     )
-    monkeypatch.setattr("backend.cli.cleanup_coordinator_runtime", lambda deps, ctfd, cost_tracker: fake_cleanup())
-    monkeypatch.setattr("backend.agents.claude_coordinator.run_claude_coordinator", fail_claude)
+    monkeypatch.setattr(
+        "backend.cli.cleanup_coordinator_runtime",
+        lambda deps, ctfd, cost_tracker, **kwargs: fake_cleanup(),
+    )
     monkeypatch.setattr("backend.cli.run_codex_coordinator", run_codex)
     monkeypatch.setattr("backend.cli.console.print", lambda *args, **kwargs: printed.append(" ".join(map(str, args))))
 
@@ -58,64 +64,63 @@ async def test_run_coordinator_falls_back_to_codex_when_claude_fails(monkeypatch
         model_specs=["codex/gpt-5.4"],
         challenges_dir="challenges",
         no_submit=True,
+        local_mode=False,
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
         msg_port=9400,
     )
 
-    assert any("Falling back to Codex coordinator" in line for line in printed)
+    assert any("Starting coordinator (codex" in line for line in printed)
     assert any("flag{ok}" in line for line in printed)
 
 
 @pytest.mark.asyncio
-async def test_run_coordinator_reports_inactive_claude_before_fallback(monkeypatch) -> None:
+async def test_run_coordinator_ignores_non_codex_backend_argument(monkeypatch) -> None:
     async def fake_cleanup() -> None:
         return None
 
     def fake_configure(_max_containers: int) -> None:
         return None
 
-    async def fail_claude(**kwargs):  # type: ignore[no-untyped-def]
-        raise ClaudeCoordinatorInactiveError("Claude coordinator produced no tool actions")
-
+    seen: dict[str, object] = {}
     async def run_codex(**kwargs):  # type: ignore[no-untyped-def]
+        seen["backend"] = "codex"
         return {"results": {}, "total_cost_usd": 0.0}
-
-    printed: list[str] = []
 
     monkeypatch.setattr("backend.sandbox.cleanup_orphan_containers", fake_cleanup)
     monkeypatch.setattr("backend.sandbox.configure_semaphore", fake_configure)
     monkeypatch.setattr(
         "backend.cli.build_deps",
-        lambda settings, model_specs, challenges_root, no_submit: (
+        lambda settings, model_specs, challenges_root, no_submit, local_mode: (
             object(),
             object(),
             type("Deps", (), {"msg_port": 0, "results": {}, "swarms": {}, "swarm_tasks": {}})(),
         ),
     )
-    monkeypatch.setattr("backend.cli.cleanup_coordinator_runtime", lambda deps, ctfd, cost_tracker: fake_cleanup())
-    monkeypatch.setattr("backend.agents.claude_coordinator.run_claude_coordinator", fail_claude)
+    monkeypatch.setattr(
+        "backend.cli.cleanup_coordinator_runtime",
+        lambda deps, ctfd, cost_tracker, **kwargs: fake_cleanup(),
+    )
     monkeypatch.setattr("backend.cli.run_codex_coordinator", run_codex)
-    monkeypatch.setattr("backend.cli.console.print", lambda *args, **kwargs: printed.append(" ".join(map(str, args))))
 
     await _run_coordinator(
         settings=cast(Any, object()),
         model_specs=["codex/gpt-5.4"],
         challenges_dir="challenges",
         no_submit=True,
+        local_mode=False,
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
         msg_port=9400,
     )
 
-    assert any("Claude coordinator inactive" in line for line in printed)
-    assert any("Falling back to Codex coordinator" in line for line in printed)
+    assert seen["backend"] == "codex"
 
 
 @pytest.mark.asyncio
-async def test_run_coordinator_fallback_reuses_active_runtime(monkeypatch) -> None:
+async def test_run_coordinator_reuses_active_runtime(monkeypatch) -> None:
     async def fake_cleanup() -> None:
         return None
 
@@ -132,14 +137,8 @@ async def test_run_coordinator_fallback_reuses_active_runtime(monkeypatch) -> No
     shared_cost_tracker = CostTracker()
     shared_state: dict[str, object] = {}
 
-    def fake_build_deps(settings, model_specs, challenges_root, no_submit):  # type: ignore[no-untyped-def]
+    def fake_build_deps(settings, model_specs, challenges_root, no_submit, local_mode):  # type: ignore[no-untyped-def]
         return shared_ctfd, shared_cost_tracker, deps
-
-    async def fail_claude(**kwargs):  # type: ignore[no-untyped-def]
-        shared_state["claude_deps"] = kwargs["deps"]
-        kwargs["deps"].swarms["chal"] = "alive"
-        kwargs["deps"].results["chal"] = {"flag": "flag{kept}"}
-        raise ClaudeCoordinatorInactiveError("Claude coordinator produced no tool actions")
 
     async def run_codex(**kwargs):  # type: ignore[no-untyped-def]
         assert kwargs["deps"] is deps
@@ -150,31 +149,35 @@ async def test_run_coordinator_fallback_reuses_active_runtime(monkeypatch) -> No
         shared_state["codex_deps"] = kwargs["deps"]
         return {"results": {"chal": {"flag": "flag{kept}"}}, "total_cost_usd": 0.0}
 
-    async def fake_cleanup_runtime(deps_obj, ctfd_obj, cost_tracker_obj):  # type: ignore[no-untyped-def]
+    async def fake_cleanup_runtime(deps_obj, ctfd_obj, cost_tracker_obj, **kwargs):  # type: ignore[no-untyped-def]
         assert deps_obj is deps
         assert ctfd_obj is shared_ctfd
         assert cost_tracker_obj is shared_cost_tracker
+        shared_state["cleanup_reason"] = kwargs.get("reason")
 
     monkeypatch.setattr("backend.sandbox.cleanup_orphan_containers", fake_cleanup)
     monkeypatch.setattr("backend.sandbox.configure_semaphore", fake_configure)
     monkeypatch.setattr("backend.cli.build_deps", fake_build_deps)
     monkeypatch.setattr("backend.cli.cleanup_coordinator_runtime", fake_cleanup_runtime)
-    monkeypatch.setattr("backend.agents.claude_coordinator.run_claude_coordinator", fail_claude)
     monkeypatch.setattr("backend.cli.run_codex_coordinator", run_codex)
+
+    deps.swarms["chal"] = "alive"
+    deps.results["chal"] = {"flag": "flag{kept}"}
 
     await _run_coordinator(
         settings=cast(Any, object()),
         model_specs=["codex/gpt-5.4"],
         challenges_dir="challenges",
         no_submit=True,
+        local_mode=False,
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
         msg_port=9400,
     )
 
-    assert shared_state["claude_deps"] is deps
     assert shared_state["codex_deps"] is deps
+    assert shared_state["cleanup_reason"] in {"", None}
 
 
 def test_next_inactive_turn_count_tracks_missing_tool_actions() -> None:
@@ -247,7 +250,7 @@ def test_render_solver_message_formats_pointer_first_candidate_events() -> None:
 async def test_run_codex_coordinator_defaults_to_gpt_54(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_build_deps(settings, model_specs, challenges_root, no_submit):  # type: ignore[no-untyped-def]
+    def fake_build_deps(settings, model_specs, challenges_root, no_submit, local_mode):  # type: ignore[no-untyped-def]
         return object(), object(), type("Deps", (), {"msg_port": 0})()
 
     class FakeCoordinator:
@@ -265,7 +268,7 @@ async def test_run_codex_coordinator_defaults_to_gpt_54(monkeypatch) -> None:
 
     async def fake_run_event_loop(deps, ctfd, cost_tracker, turn_fn, **kwargs):  # type: ignore[no-untyped-def]
         await turn_fn("ping")
-        return {"results": {}, "total_cost_usd": 0.0}
+        return {"results": {}, "total_cost_usd": 0.0, "shutdown_reason": "test shutdown"}
 
     monkeypatch.setattr("backend.agents.codex_coordinator.build_deps", fake_build_deps)
     monkeypatch.setattr("backend.agents.codex_coordinator.CodexCoordinator", FakeCoordinator)
@@ -276,9 +279,250 @@ async def test_run_codex_coordinator_defaults_to_gpt_54(monkeypatch) -> None:
         model_specs=["codex/gpt-5.4"],
         challenges_root="challenges",
         no_submit=True,
+        local_mode=False,
         coordinator_model=None,
         msg_port=9400,
     )
 
     assert captured["model"] == "gpt-5.4"
-    assert result == {"results": {}, "total_cost_usd": 0.0}
+    assert result["results"] == {}
+    assert result["total_cost_usd"] == 0.0
+    assert result["shutdown_reason"] == "test shutdown"
+
+
+@pytest.mark.asyncio
+async def test_codex_coordinator_read_loop_handles_oversized_jsonrpc_line() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    coordinator = CodexCoordinator(deps, model="gpt-5.4")
+    reader = asyncio.StreamReader(limit=32)
+    coordinator._proc = cast(Any, SimpleNamespace(stdout=reader))
+
+    future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+    coordinator._pending_responses[7] = future
+
+    payload = {
+        "id": 7,
+        "result": {
+            "thread": {"id": "thread-1"},
+            "blob": "x" * 4096,
+        },
+    }
+    reader.feed_data((json.dumps(payload) + "\n").encode())
+    reader.feed_eof()
+
+    await coordinator._read_loop()
+
+    assert future.done()
+    assert future.result()["result"]["thread"]["id"] == "thread-1"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_coordinator_runtime_propagates_shutdown_reason() -> None:
+    recorded: list[str] = []
+
+    class _FakeSwarm:
+        def kill(self, reason: str = "swarm cancelled") -> None:
+            recorded.append(reason)
+
+    class _FakeCTFd:
+        async def close(self) -> None:
+            return None
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    deps.swarms["chal"] = cast(Any, _FakeSwarm())
+    deps.swarm_tasks["chal"] = asyncio.create_task(asyncio.sleep(0))
+
+    await cleanup_coordinator_runtime(
+        deps,
+        cast(Any, _FakeCTFd()),
+        deps.cost_tracker,
+        reason="KeyboardInterrupt",
+    )
+
+    assert recorded == ["KeyboardInterrupt"]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_coordinator_runtime_logs_top_challenge_and_peak_lane(caplog) -> None:
+    class _FakeSolver:
+        agent_name = "hot-chal/gpt-5.4"
+
+        def get_runtime_status(self) -> dict[str, object]:
+            return {
+                "lifecycle": "idle",
+                "last_command": "rg -n token /challenge/shared-artifacts/login.html",
+            }
+
+    class _FakeSwarm:
+        def __init__(self) -> None:
+            self.solvers = {"codex/gpt-5.4": _FakeSolver()}
+
+        def kill(self, reason: str = "swarm cancelled") -> None:
+            return None
+
+    class _FakeCTFd:
+        async def close(self) -> None:
+            return None
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    deps.swarms["hot-chal"] = cast(Any, _FakeSwarm())
+    deps.cost_tracker.record_tokens(
+        "hot-chal/gpt-5.4",
+        "gpt-5.4",
+        input_tokens=12_000,
+        output_tokens=900,
+        cache_read_tokens=6_000,
+        provider_spec="codex",
+    )
+    deps.cost_tracker.record_tokens(
+        "cold-chal/gpt-5.4-mini",
+        "gpt-5.4-mini",
+        input_tokens=2_000,
+        output_tokens=120,
+        cache_read_tokens=500,
+        provider_spec="codex",
+    )
+
+    with caplog.at_level("INFO"):
+        await cleanup_coordinator_runtime(
+            deps,
+            cast(Any, _FakeCTFd()),
+            deps.cost_tracker,
+            reason="test shutdown",
+        )
+
+    assert "Top challenge: hot-chal" in caplog.text
+    assert "Peak lane: hot-chal/gpt-5.4" in caplog.text
+    assert "last=rg -n token /challenge/shared-artifacts/login.html" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_event_loop_treats_loop_closed_as_shutdown(monkeypatch) -> None:
+    class _FakePoller:
+        def __init__(self, ctfd, interval_s=5.0) -> None:
+            self.known_challenges = set()
+            self.known_solved = set()
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def get_event(self, timeout: float = 1.0):
+            raise RuntimeError("Event loop is closed")
+
+        def drain_events(self) -> list[object]:
+            return []
+
+    class _FakeServer:
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    async def _fake_start_msg_server(inbox, deps, port):
+        return _FakeServer()
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+
+    messages: list[str] = []
+
+    async def turn_fn(message: str) -> None:
+        messages.append(message)
+
+    monkeypatch.setattr("backend.agents.coordinator_loop.CTFdPoller", _FakePoller)
+    monkeypatch.setattr("backend.agents.coordinator_loop._start_msg_server", _fake_start_msg_server)
+    monkeypatch.setattr("backend.agents.coordinator_loop._auto_spawn_unsolved", lambda deps, poller: asyncio.sleep(0))
+
+    result = await run_event_loop(
+        deps,
+        cast(Any, object()),
+        deps.cost_tracker,
+        turn_fn,
+        cleanup_runtime_on_exit=False,
+    )
+
+    assert messages
+    assert result["shutdown_reason"] == "coordinator loop closed during shutdown"
+
+
+@pytest.mark.asyncio
+async def test_run_event_loop_honors_shutdown_event(monkeypatch) -> None:
+    class _FakePoller:
+        def __init__(self, ctfd, interval_s=5.0) -> None:
+            self.known_challenges = set()
+            self.known_solved = set()
+
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def get_event(self, timeout: float = 1.0):
+            await asyncio.sleep(0)
+            return None
+
+        def drain_events(self) -> list[object]:
+            return []
+
+    class _FakeServer:
+        def close(self) -> None:
+            return None
+
+        async def wait_closed(self) -> None:
+            return None
+
+    async def _fake_start_msg_server(inbox, deps, port):
+        return _FakeServer()
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    deps.shutdown_reason = "signal SIGINT"
+    deps.shutdown_event.set()
+
+    messages: list[str] = []
+
+    async def turn_fn(message: str) -> None:
+        messages.append(message)
+
+    monkeypatch.setattr("backend.agents.coordinator_loop.CTFdPoller", _FakePoller)
+    monkeypatch.setattr("backend.agents.coordinator_loop._start_msg_server", _fake_start_msg_server)
+    monkeypatch.setattr("backend.agents.coordinator_loop._auto_spawn_unsolved", lambda deps, poller: asyncio.sleep(0))
+
+    result = await run_event_loop(
+        deps,
+        cast(Any, object()),
+        deps.cost_tracker,
+        turn_fn,
+        cleanup_runtime_on_exit=False,
+    )
+
+    assert messages
+    assert result["shutdown_reason"] == "signal SIGINT"

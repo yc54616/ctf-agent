@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -19,7 +20,7 @@ class _FakeWrappedToolset:
 
 
 @pytest.mark.asyncio
-async def test_tracing_toolset_updates_runtime_status_for_read_only_tool(tmp_path) -> None:
+async def test_tracing_toolset_updates_runtime_status_for_tool_result(tmp_path) -> None:
     runtime = LaneRuntimeStatus()
     tracer = SolverTracer("chal", "model")
     toolset = TracingToolset(
@@ -31,19 +32,17 @@ async def test_tracing_toolset_updates_runtime_status_for_read_only_tool(tmp_pat
     )
 
     result = await toolset.call_tool(
-        "fs_query",
-        {"action": "find", "path": "/tmp"},
+        "bash",
+        {"command": "ls -la /tmp"},
         cast(Any, None),
         cast(Any, None),
     )
 
-    assert result == "ok:fs_query"
+    assert result == "ok:bash"
     snapshot = runtime.snapshot()
     assert snapshot["lifecycle"] == "idle"
     assert snapshot["step_count"] == 1
-    assert snapshot["last_tool"] == "fs_query"
-    assert snapshot["read_only_streak"] == 1
-    assert snapshot["last_progress_kind"] == "read_only_tool"
+    assert snapshot["last_tool"] == "bash"
     tracer.close()
 
 
@@ -69,6 +68,32 @@ def test_generic_solver_exposes_runtime_status_and_terminal_marking(tmp_path) ->
     final = solver.get_runtime_status()
     assert final["lifecycle"] == "finished"
     assert final["last_exit_hint"] == "finished"
+
+
+def test_solver_tracer_writes_rpc_sidecar(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CTF_AGENT_LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("CTF_AGENT_TRACE_RPC", "1")
+    tracer = SolverTracer("chal", "model")
+
+    tracer.rpc_message("in", {"method": "item/started", "params": {"item": {"type": "reasoning"}}})
+    tracer.close()
+
+    rpc_path = Path(tracer.rpc_path)
+    assert rpc_path.exists()
+    content = rpc_path.read_text(encoding="utf-8")
+    assert '"direction": "in"' in content
+    assert '"method": "item/started"' in content
+
+
+def test_solver_tracer_skips_rpc_sidecar_by_default(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CTF_AGENT_LOG_DIR", str(tmp_path))
+    monkeypatch.delenv("CTF_AGENT_TRACE_RPC", raising=False)
+    tracer = SolverTracer("chal", "model")
+
+    tracer.rpc_message("in", {"method": "item/started"})
+    tracer.close()
+
+    assert not Path(tracer.rpc_path).exists()
 
 
 class _SlowAgent:

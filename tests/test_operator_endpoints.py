@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any, cast
 
 from backend.agents.coordinator_loop import _start_msg_server
@@ -32,6 +33,37 @@ class _LegacyFakeSolver:
 class _FakeSwarm:
     def __init__(self, model_spec: str, solver: object) -> None:
         self.solvers = {model_spec: solver}
+        self.approved: list[str] = []
+        self.rejected: list[str] = []
+        self.external_solved: list[str] = []
+
+    async def approve_flag_candidate(self, flag: str, *, approved_by: str = "operator_local") -> str:
+        self.approved.append(f"{approved_by}:{flag}")
+        if approved_by == "operator_local":
+            return f'USER CONFIRMED LOCALLY — "{flag}" marked solved in local mode.'
+        return f'USER CONFIRMED MANUALLY — "{flag}" marked solved without CTFd confirmation.'
+
+    async def reject_flag_candidate(self, flag: str, *, rejected_by: str = "operator_local") -> str:
+        self.rejected.append(f"{rejected_by}:{flag}")
+        if rejected_by == "operator_local":
+            return f'USER REJECTED — "{flag}" dismissed in local mode.'
+        return f'USER REJECTED — "{flag}" dismissed by operator review.'
+
+    async def mark_solved_externally(
+        self,
+        flag: str,
+        *,
+        note: str = "",
+        approved_by: str = "operator_external",
+    ) -> str:
+        entry = f"{approved_by}:{flag}"
+        if note:
+            entry = f"{entry}:{note}"
+        self.external_solved.append(entry)
+        display = f'USER REPORTED EXTERNAL SOLVE — "{flag}" marked solved from operator input.'
+        if note:
+            display = f"{display} Note: {note}"
+        return display
 
 
 async def _get_json(port: int, path: str) -> tuple[str, dict]:
@@ -130,10 +162,10 @@ def test_bump_endpoint_targets_requested_lane() -> None:
         try:
             return await _post_json(
                 port,
-                "/bump",
+                "/api/runtime/lane-bump",
                 {
                     "challenge_name": "Midnight Roulette",
-                    "model_spec": "codex/gpt-5.4",
+                    "lane_id": "codex/gpt-5.4",
                     "insights": "Check the authenticated /ctfd/api/v1/challenges path.",
                 },
             )
@@ -165,10 +197,10 @@ def test_bump_endpoint_falls_back_to_legacy_bump() -> None:
         try:
             return await _post_json(
                 port,
-                "/bump",
+                "/api/runtime/lane-bump",
                 {
                     "challenge_name": "Midnight Roulette",
-                    "model_spec": "codex/gpt-5.4",
+                    "lane_id": "codex/gpt-5.4",
                     "insights": "Switch to the token-authenticated API path first.",
                 },
             )
@@ -195,7 +227,7 @@ def test_bump_endpoint_rejects_missing_fields() -> None:
         assert server is not None
         port = server.sockets[0].getsockname()[1]
         try:
-            return await _post_json(port, "/bump", {"challenge_name": "PickleRick"})
+            return await _post_json(port, "/api/runtime/lane-bump", {"challenge_name": "PickleRick"})
         finally:
             server.close()
             await server.wait_closed()
@@ -203,7 +235,474 @@ def test_bump_endpoint_rejects_missing_fields() -> None:
     status_line, payload = asyncio.run(_exercise())
 
     assert status_line.startswith("HTTP/1.1 400")
-    assert payload["error"] == "challenge_name, model_spec, and insights are required"
+    assert payload["error"] == "challenge_name, lane_id, and insights are required"
+
+
+def test_approve_candidate_endpoint_marks_local_candidate_solved() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=True,
+        local_mode=True,
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Local Only"] = swarm
+    deps.results["Local Only"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {"flag{local}": {"status": "pending"}},
+    }
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/approve-candidate",
+                {
+                    "challenge_name": "Local Only",
+                    "flag": "flag{local}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {"ok": True, "result": 'USER CONFIRMED LOCALLY — "flag{local}" marked solved in local mode.'}
+    assert swarm.approved == ["operator_local:flag{local}"]
+
+
+def test_approve_candidate_endpoint_marks_no_submit_candidate_solved() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=True,
+        local_mode=False,
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Manual Confirm"] = swarm
+    deps.results["Manual Confirm"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {"flag{manual}": {"status": "reviewing"}},
+    }
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/approve-candidate",
+                {
+                    "challenge_name": "Manual Confirm",
+                    "flag": "flag{manual}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER CONFIRMED MANUALLY — "flag{manual}" marked solved without CTFd confirmation.',
+    }
+    assert swarm.approved == ["operator_manual:flag{manual}"]
+
+
+def test_approve_candidate_endpoint_marks_normal_ctfd_candidate_solved() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=False,
+        local_mode=False,
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Local Only"] = swarm
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/approve-candidate",
+                {
+                    "challenge_name": "Local Only",
+                    "flag": "flag{local}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER CONFIRMED MANUALLY — "flag{local}" marked solved without CTFd confirmation.',
+    }
+    assert swarm.approved == ["operator_manual:flag{local}"]
+
+
+def test_approve_candidate_endpoint_uses_stored_candidate_without_active_swarm() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=False,
+        local_mode=False,
+    )
+    deps.results["Stored Candidate"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {
+            "flag{stored}": {
+                "status": "pending",
+                "flag": "flag{stored}",
+            }
+        },
+    }
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/approve-candidate",
+                {
+                    "challenge_name": "Stored Candidate",
+                    "flag": "flag{stored}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER CONFIRMED MANUALLY — "flag{stored}" marked solved without CTFd confirmation.',
+    }
+    assert deps.results["Stored Candidate"]["status"] == "flag_found"
+    assert deps.results["Stored Candidate"]["confirmation_source"] == "operator_manual"
+
+
+def test_approve_candidate_endpoint_uses_stored_incorrect_candidate_without_active_swarm() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=False,
+        local_mode=False,
+    )
+    deps.results["Stored Candidate"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {
+            "flag{stored}": {
+                "status": "incorrect",
+                "flag": "flag{stored}",
+                "submit_display": 'INCORRECT — "flag{stored}" rejected.',
+            }
+        },
+    }
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/approve-candidate",
+                {
+                    "challenge_name": "Stored Candidate",
+                    "flag": "flag{stored}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER CONFIRMED MANUALLY — "flag{stored}" marked solved without CTFd confirmation.',
+    }
+    assert deps.results["Stored Candidate"]["status"] == "flag_found"
+    assert deps.results["Stored Candidate"]["confirmation_source"] == "operator_manual"
+    assert deps.results["Stored Candidate"]["flag_candidates"]["flag{stored}"]["status"] == "confirmed"
+
+
+def test_reject_candidate_endpoint_marks_local_candidate_rejected() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=True,
+        local_mode=True,
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Local Only"] = swarm
+    deps.results["Local Only"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {"flag{local}": {"status": "pending"}},
+    }
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/reject-candidate",
+                {
+                    "challenge_name": "Local Only",
+                    "flag": "flag{local}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {"ok": True, "result": 'USER REJECTED — "flag{local}" dismissed in local mode.'}
+    assert swarm.rejected == ["operator_local:flag{local}"]
+
+
+def test_reject_candidate_endpoint_marks_no_submit_candidate_rejected() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=True,
+        local_mode=False,
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Manual Confirm"] = swarm
+    deps.results["Manual Confirm"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {"flag{manual}": {"status": "reviewing"}},
+    }
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/reject-candidate",
+                {
+                    "challenge_name": "Manual Confirm",
+                    "flag": "flag{manual}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER REJECTED — "flag{manual}" dismissed by operator review.',
+    }
+    assert swarm.rejected == ["operator_manual:flag{manual}"]
+
+
+def test_reject_candidate_endpoint_marks_normal_ctfd_candidate_rejected() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=False,
+        local_mode=False,
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Normal Reject"] = swarm
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/reject-candidate",
+                {
+                    "challenge_name": "Normal Reject",
+                    "flag": "flag{manual}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER REJECTED — "flag{manual}" dismissed by operator review.',
+    }
+    assert swarm.rejected == ["operator_manual:flag{manual}"]
+
+
+def test_reject_candidate_endpoint_uses_stored_candidate_without_active_swarm() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=False,
+        local_mode=False,
+    )
+    deps.results["Stored Candidate"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {
+            "flag{stored}": {
+                "status": "pending",
+                "flag": "flag{stored}",
+            }
+        },
+    }
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/reject-candidate",
+                {
+                    "challenge_name": "Stored Candidate",
+                    "flag": "flag{stored}",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER REJECTED — "flag{stored}" dismissed by operator review.',
+    }
+    assert deps.results["Stored Candidate"]["status"] == "pending"
+    assert deps.results["Stored Candidate"]["flag_candidates"]["flag{stored}"]["status"] == "rejected"
+
+
+def test_mark_solved_endpoint_marks_active_swarm_solved() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=False,
+        local_mode=False,
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Operator Solved"] = swarm
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/mark-solved",
+                {
+                    "challenge_name": "Operator Solved",
+                    "flag": "flag{external}",
+                    "note": "solved manually outside the swarm",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload == {
+        "ok": True,
+        "result": 'USER REPORTED EXTERNAL SOLVE — "flag{external}" marked solved from operator input. Note: solved manually outside the swarm',
+    }
+    assert swarm.external_solved == ["operator_external:flag{external}:solved manually outside the swarm"]
+
+
+def test_mark_solved_endpoint_persists_result_without_active_swarm(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-external"
+    challenge_dir.mkdir()
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+        no_submit=False,
+        local_mode=False,
+    )
+    deps.challenge_dirs["Operator Solved"] = str(challenge_dir)
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/mark-solved",
+                {
+                    "challenge_name": "Operator Solved",
+                    "flag": "flag{external}",
+                    "note": "solved on another box",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload["result"].startswith('USER REPORTED EXTERNAL SOLVE — "flag{external}" marked solved from operator input.')
+    result_json = json.loads((challenge_dir / "solve" / "result.json").read_text(encoding="utf-8"))
+    assert result_json["status"] == "flag_found"
+    assert result_json["flag"] == "flag{external}"
+    assert result_json["confirmation_source"] == "operator_external"
+    assert result_json["submit"] == "reported solved by operator"
+    assert result_json["external_note"] == "solved on another box"
+    assert (challenge_dir / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{external}"
 
 
 def test_ui_endpoint_serves_browser_console() -> None:
@@ -229,7 +728,7 @@ def test_ui_endpoint_serves_browser_console() -> None:
     assert "<title>CTF Operator Console</title>" in body
 
 
-def test_status_stream_endpoint_emits_sse_payload() -> None:
+def test_runtime_stream_endpoint_emits_sse_payload() -> None:
     deps = CoordinatorDeps(
         ctfd=cast(Any, object()),
         cost_tracker=CostTracker(),
@@ -241,7 +740,7 @@ def test_status_stream_endpoint_emits_sse_payload() -> None:
         assert server is not None
         port = server.sockets[0].getsockname()[1]
         try:
-            return await _get_stream_prefix(port, "/status/stream")
+            return await _get_stream_prefix(port, "/api/runtime/stream")
         finally:
             server.close()
             await server.wait_closed()
@@ -249,8 +748,52 @@ def test_status_stream_endpoint_emits_sse_payload() -> None:
     status_line, body = asyncio.run(_exercise())
 
     assert status_line.startswith("HTTP/1.1 200")
-    assert "event: status" in body
-    assert '"active_swarm_count": 0' in body
+    assert "event: snapshot" in body
+    assert '"challenge_summary"' in body
+
+
+def test_runtime_challenge_bump_fans_out_to_non_final_lanes() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    busy = _FakeSolver()
+    won = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", busy)
+    swarm.solvers["gemini/gemini-2.5-flash"] = won
+    swarm.get_status = lambda: {
+        "agents": {
+            "codex/gpt-5.4": {"lifecycle": "busy"},
+            "gemini/gemini-2.5-flash": {"lifecycle": "won"},
+        }
+    }
+    deps.swarms["Midnight Roulette"] = swarm
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/challenge-bump",
+                {
+                    "challenge_name": "Midnight Roulette",
+                    "insights": "Focus on the authenticated API route first.",
+                },
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload["challenge_name"] == "Midnight Roulette"
+    assert payload["results"] == [{"lane_id": "codex/gpt-5.4", "result": "Bumped codex/gpt-5.4 on Midnight Roulette"}]
+    assert busy.operator_bumped == ["Focus on the authenticated API route first."]
+    assert won.operator_bumped == []
 
 
 def test_trace_endpoints_list_and_read_matching_lane_files(tmp_path, monkeypatch) -> None:
@@ -293,13 +836,13 @@ def test_trace_endpoints_list_and_read_matching_lane_files(tmp_path, monkeypatch
         try:
             files = await _get_json(
                 port,
-                "/trace-files?challenge_name=Midnight%20Roulette&model_spec=codex/gpt-5.4-mini",
+                "/api/runtime/traces?challenge_name=Midnight%20Roulette&lane_id=codex/gpt-5.4-mini",
             )
             latest = await _get_json(
                 port,
                 (
-                    "/trace?challenge_name=Midnight%20Roulette"
-                    "&model_spec=codex/gpt-5.4-mini"
+                    "/api/runtime/trace-window?challenge_name=Midnight%20Roulette"
+                    "&lane_id=codex/gpt-5.4-mini"
                     "&trace_name=trace-Midnight_Roulette-gpt-5.4-mini-20260418-200100.jsonl"
                     "&limit=2"
                 ),
@@ -307,8 +850,8 @@ def test_trace_endpoints_list_and_read_matching_lane_files(tmp_path, monkeypatch
             older_window = await _get_json(
                 port,
                 (
-                    "/trace?challenge_name=Midnight%20Roulette"
-                    "&model_spec=codex/gpt-5.4-mini"
+                    "/api/runtime/trace-window?challenge_name=Midnight%20Roulette"
+                    "&lane_id=codex/gpt-5.4-mini"
                     "&trace_name=trace-Midnight_Roulette-gpt-5.4-mini-20260418-200100.jsonl"
                     "&cursor=0&limit=2"
                 ),
@@ -324,6 +867,8 @@ def test_trace_endpoints_list_and_read_matching_lane_files(tmp_path, monkeypatch
     older_status, older_payload = older_resp
 
     assert files_status.startswith("HTTP/1.1 200")
+    assert files_payload["challenge_name"] == "Midnight Roulette"
+    assert files_payload["lane_id"] == "codex/gpt-5.4-mini"
     assert files_payload["trace_files"] == [newer.name, older.name]
 
     assert latest_status.startswith("HTTP/1.1 200")
@@ -359,11 +904,11 @@ def test_trace_files_do_not_mix_codex_and_codex_spark(tmp_path, monkeypatch) -> 
         try:
             codex_files = await _get_json(
                 port,
-                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.3-codex",
+                "/api/runtime/traces?challenge_name=aeBPF&lane_id=codex/gpt-5.3-codex",
             )
             spark_files = await _get_json(
                 port,
-                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.3-codex-spark",
+                "/api/runtime/traces?challenge_name=aeBPF&lane_id=codex/gpt-5.3-codex-spark",
             )
             return codex_files, spark_files
         finally:
@@ -401,11 +946,11 @@ def test_trace_files_do_not_mix_codex_and_codex_mini(tmp_path, monkeypatch) -> N
         try:
             regular_files = await _get_json(
                 port,
-                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.4",
+                "/api/runtime/traces?challenge_name=aeBPF&lane_id=codex/gpt-5.4",
             )
             mini_files = await _get_json(
                 port,
-                "/trace-files?challenge_name=aeBPF&model_spec=codex/gpt-5.4-mini",
+                "/api/runtime/traces?challenge_name=aeBPF&lane_id=codex/gpt-5.4-mini",
             )
             return regular_files, mini_files
         finally:
@@ -477,7 +1022,7 @@ def test_advisories_endpoint_returns_recent_unique_lane_notes(tmp_path, monkeypa
         assert server is not None
         port = server.sockets[0].getsockname()[1]
         try:
-            return await _get_json(port, "/advisories?challenge_name=Midnight%20Roulette&limit=5")
+            return await _get_json(port, "/api/runtime/advisories?challenge_name=Midnight%20Roulette&limit=5")
         finally:
             server.close()
             await server.wait_closed()
@@ -487,3 +1032,40 @@ def test_advisories_endpoint_returns_recent_unique_lane_notes(tmp_path, monkeypa
     assert status_line.startswith("HTTP/1.1 200")
     assert [entry["text"] for entry in payload["entries"]] == ["Second idea", "First idea"]
     assert payload["entries"][0]["model_id"] == "gpt-5.4-mini"
+
+
+def test_legacy_operator_endpoints_are_rejected() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+
+    async def _exercise() -> tuple[tuple[str, dict], tuple[str, dict], tuple[str, dict]]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            status_resp = await _get_json(port, "/status")
+            traces_resp = await _get_json(
+                port,
+                "/trace-files?challenge_name=Midnight%20Roulette&model_spec=codex/gpt-5.4-mini",
+            )
+            bump_resp = await _post_json(
+                port,
+                "/bump",
+                {
+                    "challenge_name": "Midnight Roulette",
+                    "model_spec": "codex/gpt-5.4-mini",
+                    "insights": "legacy path should fail",
+                },
+            )
+            return status_resp, traces_resp, bump_resp
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_resp, traces_resp, bump_resp = asyncio.run(_exercise())
+    for status_line, payload in (status_resp, traces_resp, bump_resp):
+        assert status_line.startswith("HTTP/1.1 400")
+        assert payload["error"] == "Unsupported request"

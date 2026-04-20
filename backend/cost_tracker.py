@@ -225,6 +225,20 @@ class CostTracker:
             by_model[model]["output"] += agent.usage.output_tokens
         return by_model
 
+    def get_usage_by_agent(self) -> dict[str, dict[str, Any]]:
+        usage_by_agent: dict[str, dict[str, Any]] = {}
+        for agent_name, agent in self.by_agent.items():
+            usage_by_agent[agent_name] = {
+                "model": agent.model_name,
+                "provider": agent.provider_spec,
+                "cost": agent.cost_usd,
+                "input": agent.usage.input_tokens,
+                "cached": agent.usage.cache_read_tokens,
+                "output": agent.usage.output_tokens,
+                "duration_seconds": agent.duration_seconds,
+            }
+        return usage_by_agent
+
     def log_summary(self) -> None:
         """Log summary grouped by model with cache hit rates."""
         by_model = self.get_usage_by_model()

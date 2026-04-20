@@ -149,6 +149,7 @@ async def run_claude_coordinator(
     model_specs: list[str] | None = None,
     challenges_root: str = "challenges",
     no_submit: bool = False,
+    local_mode: bool = False,
     coordinator_model: str | None = None,
     msg_port: int = 0,
     *,
@@ -160,7 +161,7 @@ async def run_claude_coordinator(
     """Run the Claude Agent SDK coordinator with the shared event loop."""
     if ctfd is None or cost_tracker is None or deps is None:
         ctfd, cost_tracker, deps = build_deps(
-            settings, model_specs, challenges_root, no_submit,
+            settings, model_specs, challenges_root, no_submit, local_mode,
         )
     deps.msg_port = msg_port
 

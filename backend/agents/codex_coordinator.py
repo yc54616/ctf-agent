@@ -6,8 +6,11 @@ import asyncio
 import itertools
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
+from backend.agents.codex_rpc_io import read_jsonrpc_line
 from backend.agents.coordinator_core import (
     COORDINATOR_PROMPT,
     do_broadcast,
@@ -127,6 +130,7 @@ class CodexCoordinator:
         self._reader_task: asyncio.Task | None = None
         self._turn_done: asyncio.Event = asyncio.Event()
         self._turn_error: str | None = None
+        self._thread_state_path = self._resolve_thread_state_path()
 
     async def start(self) -> None:
         self._proc = await asyncio.create_subprocess_exec(
@@ -142,6 +146,16 @@ class CodexCoordinator:
             "capabilities": {"experimentalApi": True},
         })
         await self._send_notification("initialized", {})
+        resume_thread_id = self._load_thread_id()
+        if resume_thread_id:
+            try:
+                resp = await self._rpc("thread/resume", {"threadId": resume_thread_id})
+                self._thread_id = resp.get("result", {}).get("thread", {}).get("id", "") or resume_thread_id
+                self._persist_thread_id(self._thread_id)
+                logger.info("Codex coordinator resumed thread=%s model=%s", self._thread_id, self.model)
+                return
+            except Exception as exc:
+                logger.warning("Codex coordinator thread resume failed for %s: %s", resume_thread_id, exc)
 
         resp = await self._rpc("thread/start", {
             "model": self.model,
@@ -153,6 +167,7 @@ class CodexCoordinator:
             "dynamicTools": COORDINATOR_TOOLS,
         })
         self._thread_id = resp.get("result", {}).get("thread", {}).get("id", "")
+        self._persist_thread_id(self._thread_id)
         logger.info(f"Codex coordinator started (thread={self._thread_id}, model={self.model})")
 
     async def turn(self, message: str) -> None:
@@ -186,6 +201,35 @@ class CodexCoordinator:
             except Exception:
                 self._proc.kill()
             self._proc = None
+
+    def _resolve_thread_state_path(self) -> Path:
+        explicit = os.environ.get("CTF_AGENT_CODEX_COORDINATOR_THREAD_PATH", "").strip()
+        if explicit:
+            return Path(explicit).expanduser().resolve()
+        return (Path.cwd() / ".omx" / "state" / "codex-coordinator-thread.json").resolve()
+
+    def _load_thread_id(self) -> str | None:
+        path = self._thread_state_path
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        thread_id = str(payload.get("thread_id") or "").strip()
+        return thread_id or None
+
+    def _persist_thread_id(self, thread_id: str | None) -> None:
+        if not thread_id:
+            return
+        path = self._thread_state_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"thread_id": thread_id, "model": self.model}, indent=2),
+            encoding="utf-8",
+        )
 
     # --- JSON-RPC transport ---
 
@@ -223,7 +267,7 @@ class CodexCoordinator:
     async def _read_loop(self) -> None:
         assert self._proc and self._proc.stdout
         while True:
-            line = await self._proc.stdout.readline()
+            line = await read_jsonrpc_line(self._proc.stdout)
             if not line:
                 self._turn_done.set()
                 break
@@ -308,6 +352,7 @@ async def run_codex_coordinator(
     model_specs: list[str] | None = None,
     challenges_root: str = "challenges",
     no_submit: bool = False,
+    local_mode: bool = False,
     coordinator_model: str | None = None,
     msg_port: int = 0,
     *,
@@ -319,7 +364,7 @@ async def run_codex_coordinator(
     """Run the Codex coordinator with the shared event loop."""
     if ctfd is None or cost_tracker is None or deps is None:
         ctfd, cost_tracker, deps = build_deps(
-            settings, model_specs, challenges_root, no_submit,
+            settings, model_specs, challenges_root, no_submit, local_mode,
         )
     deps.msg_port = msg_port
 

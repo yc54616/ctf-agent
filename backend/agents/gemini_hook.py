@@ -20,9 +20,6 @@ NOTIFY_COORDINATOR_RE = re.compile(
     r"""^notify_coordinator\s+['"]?(.+?)['"]?\s*$""",
     re.DOTALL,
 )
-PSEUDO_TOOL_NAMES = {"fs_query"}
-
-
 def handle_hook(payload: dict[str, Any]) -> dict[str, Any]:
     """Handle a Gemini CLI hook invocation."""
     event_name = str(payload.get("hook_event_name", ""))
@@ -73,24 +70,18 @@ def handle_hook(payload: dict[str, Any]) -> dict[str, Any]:
         )
         return _reply_command(response["message"])
 
-    try:
-        pseudo = _parse_pseudo_command(command)
-    except ValueError as exc:
-        return _reply_command(f"Tool command error: {exc}")
-    if pseudo is not None:
-        action, payload = pseudo
-        response = _ipc_request(action, payload)
+    if command.strip().startswith("fs_query "):
         return _reply_command(
-            str(
-                response.get("output")
-                or response.get("message")
-                or response.get("findings")
-                or ""
-            )
+            "Tool command error: fs_query is removed. Use bash with short previews or saved artifacts instead."
         )
 
-    container_id = os.environ["CTF_AGENT_GEMINI_CONTAINER_ID"]
-    rewritten = _rewrite_shell_command(command, container_id=container_id)
+    local_mode = os.environ.get("CTF_AGENT_GEMINI_LOCAL_MODE", "").strip() == "1"
+    container_id = os.environ.get("CTF_AGENT_GEMINI_CONTAINER_ID", "")
+    rewritten = _rewrite_shell_command(
+        command,
+        container_id=container_id,
+        local_mode=local_mode,
+    )
     return _rewrite_tool_input(rewritten)
 
 
@@ -111,79 +102,12 @@ def _rewrite_shell_command(
     command: str,
     *,
     container_id: str,
+    local_mode: bool = False,
 ) -> str:
+    if local_mode:
+        return command
     return f"docker exec -i {shlex.quote(container_id)} bash -lc {shlex.quote(command)}"
 
-
-def _parse_bool(token: str) -> bool:
-    lowered = token.lower()
-    if lowered in {"1", "true", "yes", "on"}:
-        return True
-    if lowered in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"invalid boolean value: {token}")
-
-
-def _parse_int(token: str, option: str) -> int:
-    try:
-        return int(token)
-    except ValueError as exc:
-        raise ValueError(f"{option} expects an integer") from exc
-
-
-def _parse_pseudo_command(command: str) -> tuple[str, dict[str, Any]] | None:
-    tokens = shlex.split(command)
-    if not tokens or tokens[0] not in PSEUDO_TOOL_NAMES:
-        return None
-
-    if len(tokens) < 3:
-        raise ValueError("fs_query requires ACTION and PATH arguments")
-    payload: dict[str, Any] = {
-        "query_action": tokens[1],
-        "path": tokens[2],
-    }
-    idx = 3
-
-    while idx < len(tokens):
-        option = tokens[idx]
-        idx += 1
-        if idx >= len(tokens):
-            raise ValueError(f"missing value for {option}")
-        value = tokens[idx]
-        idx += 1
-
-        if option == "--maxdepth":
-            payload["maxdepth"] = _parse_int(value, option)
-        elif option == "--kind":
-            payload["kind"] = value
-        elif option == "--pattern":
-            payload["pattern"] = value
-        elif option == "--limit":
-            payload["limit"] = _parse_int(value, option)
-        elif option == "--mode":
-            payload["mode"] = value
-        elif option == "--start-line":
-            payload["start_line"] = _parse_int(value, option)
-        elif option == "--line-count":
-            payload["line_count"] = _parse_int(value, option)
-        elif option == "--byte-offset":
-            payload["byte_offset"] = _parse_int(value, option)
-        elif option == "--byte-count":
-            payload["byte_count"] = _parse_int(value, option)
-        elif option == "--query":
-            payload["query"] = value
-        elif option == "--glob":
-            payload["glob"] = value
-        elif option == "--ignore-case":
-            payload["ignore_case"] = _parse_bool(value)
-        elif option == "--context-lines":
-            payload["context_lines"] = _parse_int(value, option)
-        else:
-            raise ValueError(f"unknown option for fs_query: {option}")
-
-    if payload.get("query_action") == "search" and not payload.get("query"):
-        raise ValueError("fs_query search requires --query TEXT")
-    return "fs_query", payload
 
 def _ipc_request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
     ipc_root = Path(os.environ["CTF_AGENT_GEMINI_IPC_DIR"])

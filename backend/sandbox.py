@@ -30,6 +30,12 @@ _count_lock = asyncio.Lock()
 _WARN_THRESHOLDS = {100, 200, 500}
 SHARED_ARTIFACTS_HOST_DIRNAME = ".shared-artifacts"
 SHARED_ARTIFACTS_CONTAINER_ROOT = "/challenge/shared-artifacts"
+CONTROL_CONTAINER_ROOT = "/challenge/control"
+PROVIDER_HOME_CONTAINER_ROOT = "/challenge/provider-home"
+CHALLENGE_SRC_CONTAINER_ROOT = "/challenge/challenge-src"
+REPO_CONTAINER_ROOT = "/challenge/agent-repo"
+TRACE_CONTAINER_ROOT = "/challenge/host-logs"
+AUTH_SEED_CONTAINER_ROOT = "/challenge/auth-seeds"
 DEFAULT_EXEC_OUTPUT_SPILL_THRESHOLD_BYTES = 64 * 1024
 DEFAULT_READ_FILE_SPILL_THRESHOLD_BYTES = 256 * 1024
 DEFAULT_ARTIFACT_PREVIEW_BYTES = 8 * 1024
@@ -113,6 +119,8 @@ class ExecResult:
     stderr: str
     stdout_bytes: int = 0
     stderr_bytes: int = 0
+    stdout_lines: int = 0
+    stderr_lines: int = 0
     stdout_pointer: FilePointer | None = None
     stderr_pointer: FilePointer | None = None
 
@@ -139,17 +147,24 @@ class _OutputSpooler:
         self.preview_bytes = preview_bytes
         self.pointer_factory = pointer_factory
         self.total_bytes = 0
+        self.total_newlines = 0
         self._preview = bytearray()
         self._buffer = bytearray()
         self._fp = None
         self._pointer: FilePointer | None = None
         self._finalized = False
+        self._saw_bytes = False
+        self._ended_with_newline = False
 
     def feed(self, chunk: bytes) -> None:
         if self._finalized:
             raise RuntimeError("Cannot feed finalized spooler")
 
+        if chunk:
+            self._saw_bytes = True
+            self._ended_with_newline = chunk.endswith(b"\n")
         self.total_bytes += len(chunk)
+        self.total_newlines += chunk.count(b"\n")
         remaining_preview = self.preview_bytes - len(self._preview)
         if remaining_preview > 0:
             self._preview.extend(chunk[:remaining_preview])
@@ -169,10 +184,16 @@ class _OutputSpooler:
             self._fp.write(self._buffer)
             self._buffer.clear()
 
-    def finalize(self) -> tuple[str, FilePointer | None, int]:
+    def _line_count(self) -> int:
+        if not self._saw_bytes:
+            return 0
+        return self.total_newlines if self._ended_with_newline else self.total_newlines + 1
+
+    def finalize(self) -> tuple[str, FilePointer | None, int, int]:
+        line_count = self._line_count()
         if self._finalized:
             preview = self._preview.decode("utf-8", errors="replace")
-            return preview, self._pointer, self.total_bytes
+            return preview, self._pointer, self.total_bytes, line_count
 
         self._finalized = True
         if self._fp is not None:
@@ -183,11 +204,11 @@ class _OutputSpooler:
             self._pointer.size_bytes = self.total_bytes
             preview = self._preview.decode("utf-8", errors="replace")
             self._buffer.clear()
-            return preview, self._pointer, self.total_bytes
+            return preview, self._pointer, self.total_bytes, line_count
 
         text = self._buffer.decode("utf-8", errors="replace")
         self._buffer.clear()
-        return text, None, self.total_bytes
+        return text, None, self.total_bytes, line_count
 
 
 @dataclass
@@ -196,12 +217,19 @@ class DockerSandbox:
 
     image: str
     challenge_dir: str
-    memory_limit: str = "16g"
+    memory_limit: str = "4g"
     exec_output_spill_threshold_bytes: int = DEFAULT_EXEC_OUTPUT_SPILL_THRESHOLD_BYTES
     read_file_spill_threshold_bytes: int = DEFAULT_READ_FILE_SPILL_THRESHOLD_BYTES
     artifact_preview_bytes: int = DEFAULT_ARTIFACT_PREVIEW_BYTES
     shared_artifacts_dir: str = ""
     workspace_dir: str = ""
+    control_dir: str = ""
+    provider_home_dir: str = ""
+    trace_dir: str = ""
+    repo_root_dir: str = ""
+    challenge_src_dir: str = ""
+    auth_seed_mounts: dict[str, str] = field(default_factory=dict)
+    owns_workspace_dir: bool = False
     _container: Any = field(default=None, repr=False)
     _docker: Any = field(default=None, repr=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -271,7 +299,12 @@ class DockerSandbox:
         async with sem:
             self._docker = aiodocker.Docker()
 
-            self.workspace_dir = tempfile.mkdtemp(prefix="ctf-workspace-")
+            if self.workspace_dir:
+                Path(self.workspace_dir).mkdir(parents=True, exist_ok=True)
+                self.owns_workspace_dir = False
+            else:
+                self.workspace_dir = tempfile.mkdtemp(prefix="ctf-workspace-")
+                self.owns_workspace_dir = True
 
             challenge_root = Path(self.challenge_dir).resolve()
             distfiles = str(challenge_root / "distfiles")
@@ -280,6 +313,39 @@ class DockerSandbox:
 
             binds: list[str] = [f"{self.workspace_dir}:/challenge/workspace:rw"]
             binds.append(f"{self.shared_artifacts_dir}:{SHARED_ARTIFACTS_CONTAINER_ROOT}:rw")
+            challenge_src_host = self.challenge_src_dir or str(challenge_root)
+            if Path(challenge_src_host).exists():
+                binds.append(f"{challenge_src_host}:{CHALLENGE_SRC_CONTAINER_ROOT}:ro")
+            if self.control_dir:
+                Path(self.control_dir).mkdir(parents=True, exist_ok=True)
+                binds.append(f"{self.control_dir}:{CONTROL_CONTAINER_ROOT}:rw")
+            if self.provider_home_dir:
+                provider_home = Path(self.provider_home_dir)
+                provider_home.mkdir(parents=True, exist_ok=True)
+                (provider_home / ".codex").mkdir(parents=True, exist_ok=True)
+                (provider_home / ".gemini").mkdir(parents=True, exist_ok=True)
+                binds.append(f"{self.provider_home_dir}:{PROVIDER_HOME_CONTAINER_ROOT}:rw")
+            if self.repo_root_dir and Path(self.repo_root_dir).exists():
+                binds.append(f"{self.repo_root_dir}:{REPO_CONTAINER_ROOT}:ro")
+            if self.trace_dir:
+                Path(self.trace_dir).mkdir(parents=True, exist_ok=True)
+                binds.append(f"{self.trace_dir}:{TRACE_CONTAINER_ROOT}:rw")
+            if self.auth_seed_mounts:
+                for name, source in sorted(self.auth_seed_mounts.items()):
+                    src_path = Path(source).expanduser()
+                    if not src_path.exists():
+                        continue
+                    if self.provider_home_dir and name == "codex-auth.json":
+                        binds.append(
+                            f"{src_path}:{PROVIDER_HOME_CONTAINER_ROOT}/.codex/auth.json:rw"
+                        )
+                        continue
+                    if self.provider_home_dir and name == "gemini-oauth.json":
+                        binds.append(
+                            f"{src_path}:{PROVIDER_HOME_CONTAINER_ROOT}/.gemini/oauth_creds.json:rw"
+                        )
+                        continue
+                    binds.append(f"{src_path}:{AUTH_SEED_CONTAINER_ROOT}/{name}:ro")
             if Path(distfiles).exists():
                 binds.append(f"{distfiles}:/challenge/distfiles:ro")
             if Path(meta_yml).exists():
@@ -309,6 +375,32 @@ class DockerSandbox:
             info = await self._container.show()
             short_id = info["Id"][:12]
             logger.info("Sandbox started: %s", short_id)
+
+    async def exec_detached(
+        self,
+        command: str,
+        *,
+        cwd: str = "/challenge",
+        env: dict[str, str] | None = None,
+    ) -> None:
+        if not self._container:
+            raise RuntimeError("Sandbox not started")
+
+        args = ["docker", "exec", "-d", "-w", cwd]
+        for key, value in sorted((env or {}).items()):
+            args.extend(["-e", f"{key}={value}"])
+        args.extend([self.container_id, "bash", "-lc", command])
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            detail = stderr.decode("utf-8", errors="replace").strip() or stdout.decode(
+                "utf-8", errors="replace"
+            ).strip()
+            raise RuntimeError(detail or f"docker exec -d failed for {self.container_id}")
 
     async def exec(self, command: str, timeout_s: int = 300) -> ExecResult:
         if not self._container:
@@ -364,8 +456,8 @@ class DockerSandbox:
                 await stream.close()
             except Exception:
                 pass
-            stdout_text, stdout_pointer, stdout_bytes = stdout_spool.finalize()
-            stderr_text, stderr_pointer, stderr_bytes = stderr_spool.finalize()
+            stdout_text, stdout_pointer, stdout_bytes, stdout_lines = stdout_spool.finalize()
+            stderr_text, stderr_pointer, stderr_bytes, stderr_lines = stderr_spool.finalize()
             timeout_stderr = "Command timed out"
             if stderr_text:
                 timeout_stderr = f"{stderr_text}\n{timeout_stderr}"
@@ -375,14 +467,16 @@ class DockerSandbox:
                 stderr=timeout_stderr,
                 stdout_bytes=stdout_bytes,
                 stderr_bytes=stderr_bytes,
+                stdout_lines=stdout_lines,
+                stderr_lines=stderr_lines,
                 stdout_pointer=stdout_pointer,
                 stderr_pointer=stderr_pointer,
             )
 
         inspect = await exec_instance.inspect()
         exit_code = inspect.get("ExitCode", 0)
-        stdout_text, stdout_pointer, stdout_bytes = stdout_spool.finalize()
-        stderr_text, stderr_pointer, stderr_bytes = stderr_spool.finalize()
+        stdout_text, stdout_pointer, stdout_bytes, stdout_lines = stdout_spool.finalize()
+        stderr_text, stderr_pointer, stderr_bytes, stderr_lines = stderr_spool.finalize()
 
         return ExecResult(
             exit_code=exit_code,
@@ -390,6 +484,8 @@ class DockerSandbox:
             stderr=stderr_text,
             stdout_bytes=stdout_bytes,
             stderr_bytes=stderr_bytes,
+            stdout_lines=stdout_lines,
+            stderr_lines=stderr_lines,
             stdout_pointer=stdout_pointer,
             stderr_pointer=stderr_pointer,
         )
@@ -527,11 +623,12 @@ class DockerSandbox:
                 pass
             self._docker = None
 
-        if self.workspace_dir:
+        if self.workspace_dir and self.owns_workspace_dir:
             import shutil
             try:
                 shutil.rmtree(self.workspace_dir, ignore_errors=True)
             except Exception:
                 pass
-            self.workspace_dir = ""
+        self.workspace_dir = ""
+        self.owns_workspace_dir = False
         logger.info("Sandbox stopped")

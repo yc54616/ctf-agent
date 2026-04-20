@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import deque
+from datetime import UTC, datetime
 from pathlib import Path
 
 from backend.deps import CoordinatorDeps
 from backend.prompts import ChallengeMeta
+from backend.sandbox import resolve_shared_artifacts_dir
 from backend.solver_base import FLAG_FOUND
 
 logger = logging.getLogger(__name__)
@@ -22,13 +25,12 @@ Priorities:
 - Spawn swarms for unsolved challenges, prioritizing by solve count (easy first).
 - Use read_solver_trace before bumping a stuck lane.
 - Use broadcast only for genuinely shared insights across lanes.
-- When you receive `FLAG CANDIDATE:` messages, review the evidence and advisor verdict before deciding whether to use `submit_flag`.
 - When you receive `ADVISOR MESSAGE:` or `Artifact path: /challenge/shared-artifacts/...`, treat it as evidence to inspect before deciding what to do.
 - Read `/challenge/shared-artifacts/manifest.md` or the referenced digest/artifact first, then decide whether to broadcast, bump a specific lane, or ignore it.
 
 Critical rules:
 - NEVER kill a swarm unless the flag is confirmed correct.
-- Solvers never submit flags directly. Only you may call `submit_flag`.
+- Solvers may auto-submit guarded flag candidates to CTFd. Use `submit_flag` yourself only for explicit coordinator-driven retries.
 - Do not rebroadcast advisor or artifact messages blindly. Inspect the evidence first and only rebroadcast what is broadly useful.
 - When a solver seems stuck, send a specific next-step bump: exact files, routes, tools, checks, or validation criteria.
 - Cost is not the bottleneck. Keep swarms running.
@@ -124,6 +126,10 @@ def _enqueue_swarm(deps: CoordinatorDeps, challenge_name: str) -> bool:
 async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
     restored_solved = _restored_solved_names(deps)
     local_records = _local_challenge_records(deps, restored_solved)
+    if deps.local_mode:
+        result = local_records
+        result.sort(key=_challenge_sort_key)
+        return json.dumps(result, indent=2)
     try:
         challenges = await deps.ctfd.fetch_all_challenges()
         solved = await deps.ctfd.fetch_solved_names()
@@ -153,8 +159,9 @@ async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
 
 
 async def do_get_solve_status(deps: CoordinatorDeps) -> str:
-    solved = await deps.ctfd.fetch_solved_names()
-    solved |= _restored_solved_names(deps)
+    solved = _restored_solved_names(deps)
+    if not deps.local_mode:
+        solved |= await deps.ctfd.fetch_solved_names()
     swarm_status = {name: swarm.get_status() for name, swarm in deps.swarms.items()}
     return json.dumps(
         {
@@ -172,12 +179,30 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
 
     # Auto-pull challenge if needed
     if challenge_name not in deps.challenge_dirs:
-        challenges = await deps.ctfd.fetch_all_challenges()
+        if deps.local_mode:
+            return f"Challenge '{challenge_name}' not found under local challenges dir"
+        try:
+            challenges = await deps.ctfd.fetch_all_challenges()
+        except Exception as exc:
+            logger.warning(
+                "Could not refresh challenge %r from CTFd before spawn: %s",
+                challenge_name,
+                exc,
+            )
+            return f"Could not refresh challenge '{challenge_name}' from CTFd: {exc}"
         ch_data = next((c for c in challenges if c.get("name") == challenge_name), None)
         if not ch_data:
             return f"Challenge '{challenge_name}' not found on CTFd"
         output_dir = str(Path(deps.challenges_root))
-        ch_dir = await deps.ctfd.pull_challenge(ch_data, output_dir)
+        try:
+            ch_dir = await deps.ctfd.pull_challenge(ch_data, output_dir)
+        except Exception as exc:
+            logger.warning(
+                "Could not pull challenge %r from CTFd: %s",
+                challenge_name,
+                exc,
+            )
+            return f"Could not pull challenge '{challenge_name}' from CTFd: {exc}"
         deps.challenge_dirs[challenge_name] = ch_dir
         deps.challenge_metas[challenge_name] = ChallengeMeta.from_yaml(Path(ch_dir) / "metadata.yml")
 
@@ -192,6 +217,7 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
         result_store=deps.results,
         model_specs=deps.model_specs,
         no_submit=deps.no_submit,
+        local_mode=deps.local_mode,
         coordinator_inbox=deps.coordinator_inbox,
     )
     deps.swarms[challenge_name] = swarm
@@ -224,7 +250,14 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
                 }
             )
             if result.status == FLAG_FOUND:
-                record["submit"] = "DRY RUN" if deps.no_submit else "confirmed by solver"
+                if swarm.winner_confirmation_source == "operator_local":
+                    record["submit"] = "approved in local mode"
+                elif swarm.winner_confirmation_source == "operator_manual":
+                    record["submit"] = "approved manually by operator"
+                elif swarm.winner_confirmation_source == "operator_external":
+                    record["submit"] = "reported solved by operator"
+                else:
+                    record["submit"] = "confirmed by solver"
             if swarm.saved_solve_artifacts:
                 record.update(swarm.saved_solve_artifacts)
             deps.results[challenge_name] = record
@@ -283,7 +316,15 @@ async def do_check_swarm_status(deps: CoordinatorDeps, challenge_name: str) -> s
 
 async def do_submit_flag(deps: CoordinatorDeps, challenge_name: str, flag: str) -> str:
     if deps.no_submit:
-        return f'DRY RUN — would submit "{flag.strip()}" for {challenge_name}'
+        if deps.local_mode:
+            return (
+                f'LOCAL MODE — not submitting "{flag.strip()}" for {challenge_name}. '
+                "Use operator approval for local solves."
+            )
+        return (
+            f'SUBMISSION DISABLED — not submitting "{flag.strip()}" for {challenge_name} '
+            "because --no-submit is set. Use operator approval if you want to confirm it manually."
+        )
     try:
         result = await deps.ctfd.submit_flag(challenge_name, flag)
         swarm = deps.swarms.get(challenge_name)
@@ -314,11 +355,276 @@ async def do_submit_flag(deps: CoordinatorDeps, challenge_name: str, flag: str) 
         return f"submit_flag error: {e}"
 
 
+def _known_challenge(deps: CoordinatorDeps, challenge_name: str) -> bool:
+    return challenge_name in (
+        set(deps.challenge_dirs)
+        | set(deps.challenge_metas)
+        | set(deps.results)
+        | set(deps.swarms)
+        | set(deps.pending_swarm_set)
+    )
+
+
+def _manual_confirmation_source(deps: CoordinatorDeps) -> str:
+    return "operator_local" if deps.local_mode else "operator_manual"
+
+
+def _manual_confirmation_display(deps: CoordinatorDeps, flag: str) -> str:
+    if deps.local_mode:
+        return f'USER CONFIRMED LOCALLY — "{flag}" marked solved in local mode.'
+    return f'USER CONFIRMED MANUALLY — "{flag}" marked solved without CTFd confirmation.'
+
+
+def _manual_rejection_display(deps: CoordinatorDeps, flag: str) -> str:
+    if deps.local_mode:
+        return f'USER REJECTED — "{flag}" dismissed in local mode.'
+    return f'USER REJECTED — "{flag}" dismissed by operator review.'
+
+
+def _persist_result_snapshot(
+    deps: CoordinatorDeps,
+    challenge_name: str,
+    payload: dict[str, object],
+    *,
+    write_flag: bool,
+) -> None:
+    challenge_dir = deps.challenge_dirs.get(challenge_name)
+    if not challenge_dir:
+        return
+    solve_dir = Path(challenge_dir) / "solve"
+    solve_dir.mkdir(parents=True, exist_ok=True)
+    payload["shared_artifacts_path"] = str(resolve_shared_artifacts_dir(challenge_dir).resolve())
+    if write_flag and payload.get("flag"):
+        flag_path = solve_dir / "flag.txt"
+        flag_path.write_text(str(payload.get("flag") or "") + "\n", encoding="utf-8")
+        payload["flag_path"] = str(flag_path)
+    result_path = solve_dir / "result.json"
+    payload["result_path"] = str(result_path)
+    result_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+async def do_mark_challenge_solved(
+    deps: CoordinatorDeps,
+    challenge_name: str,
+    flag: str,
+    *,
+    note: str = "",
+) -> str:
+    normalized_flag = flag.strip()
+    if not normalized_flag:
+        return "External solve rejected: empty flag."
+
+    note_text = " ".join(str(note or "").split()).strip()[:500]
+    existing_before = deps.results.get(challenge_name, {})
+    if isinstance(existing_before, dict) and existing_before.get("status") == FLAG_FOUND:
+        existing_flag = str(existing_before.get("flag") or "").strip()
+        if existing_flag == normalized_flag:
+            return f'Already solved with "{normalized_flag}".'
+        if existing_flag:
+            return (
+                f'Cannot mark "{normalized_flag}" solved because '
+                f'"{existing_flag}" is already confirmed.'
+            )
+
+    swarm = deps.swarms.get(challenge_name)
+    if swarm is not None:
+        result = await swarm.mark_solved_externally(
+            normalized_flag,
+            note=note_text,
+            approved_by="operator_external",
+        )
+        if result.startswith("USER REPORTED EXTERNAL SOLVE"):
+            existing = deps.results.get(challenge_name, {})
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            payload_fn = getattr(swarm, "_runtime_result_payload", None)
+            if callable(payload_fn):
+                merged.update(payload_fn())
+            else:
+                merged.update(
+                    {
+                        "challenge_name": challenge_name,
+                        "status": FLAG_FOUND,
+                        "flag": normalized_flag,
+                        "confirmation_source": "operator_external",
+                        "findings_summary": result,
+                    }
+                )
+            if note_text:
+                merged["external_note"] = note_text
+            merged["submit"] = "reported solved by operator"
+            _persist_result_snapshot(deps, challenge_name, merged, write_flag=True)
+            deps.results[challenge_name] = merged
+        return result
+
+    if not _known_challenge(deps, challenge_name):
+        return f'Unknown challenge "{challenge_name}".'
+
+    _drop_pending_swarm(deps, challenge_name)
+    saved_at = datetime.now(UTC).isoformat()
+    display = (
+        f'USER REPORTED EXTERNAL SOLVE — "{normalized_flag}" marked solved from operator input.'
+    )
+    if note_text:
+        display = f"{display} Note: {note_text[:200]}"
+
+    merged = dict(existing_before) if isinstance(existing_before, dict) else {}
+    merged.update(
+        {
+            "challenge_name": challenge_name,
+            "status": FLAG_FOUND,
+            "flag": normalized_flag,
+            "confirmation_source": "operator_external",
+            "submit": "reported solved by operator",
+            "findings_summary": display,
+            "saved_at": saved_at,
+        }
+    )
+    if note_text:
+        merged["external_note"] = note_text
+
+    _persist_result_snapshot(deps, challenge_name, merged, write_flag=True)
+
+    deps.results[challenge_name] = merged
+    return display
+
+
+async def do_approve_flag_candidate(deps: CoordinatorDeps, challenge_name: str, flag: str) -> str:
+    swarm = deps.swarms.get(challenge_name)
+    approved_by = _manual_confirmation_source(deps)
+    normalized_flag = flag.strip()
+    if not swarm:
+        existing = deps.results.get(challenge_name, {})
+        if not isinstance(existing, dict):
+            return f"No swarm running for {challenge_name}"
+        if existing.get("status") == FLAG_FOUND:
+            existing_flag = str(existing.get("flag") or "").strip()
+            if existing_flag == normalized_flag:
+                return f'Already solved with "{normalized_flag}".'
+            if existing_flag:
+                return (
+                    f'Cannot approve "{normalized_flag}" because '
+                    f'"{existing_flag}" is already confirmed.'
+                )
+        raw_candidates = existing.get("flag_candidates", {})
+        if not isinstance(raw_candidates, dict):
+            return f'No candidate "{normalized_flag}" is queued for {challenge_name}.'
+        candidate = raw_candidates.get(normalized_flag)
+        if not isinstance(candidate, dict):
+            return f'No candidate "{normalized_flag}" is queued for {challenge_name}.'
+        display = _manual_confirmation_display(deps, normalized_flag)
+        candidate_payload = dict(candidate)
+        candidate_payload.update(
+            {
+                "status": "confirmed",
+                "confirmation_source": approved_by,
+                "submit_display": display,
+                "last_seen_at": time.time(),
+            }
+        )
+        flag_candidates = dict(raw_candidates)
+        flag_candidates[normalized_flag] = candidate_payload
+        merged = dict(existing)
+        merged.update(
+            {
+                "challenge_name": challenge_name,
+                "status": FLAG_FOUND,
+                "flag": normalized_flag,
+                "confirmation_source": approved_by,
+                "findings_summary": display,
+                "flag_candidates": flag_candidates,
+                "submit": "approved in local mode" if approved_by == "operator_local" else "approved manually by operator",
+            }
+        )
+        _persist_result_snapshot(deps, challenge_name, merged, write_flag=True)
+        deps.results[challenge_name] = merged
+        return display
+
+    result = await swarm.approve_flag_candidate(flag, approved_by=approved_by)
+    if result.startswith("USER CONFIRMED "):
+        existing = deps.results.get(challenge_name, {})
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        payload_fn = getattr(swarm, "_runtime_result_payload", None)
+        if callable(payload_fn):
+            merged.update(payload_fn())
+        else:
+            merged.update(
+                {
+                    "challenge_name": challenge_name,
+                    "status": FLAG_FOUND,
+                    "flag": flag.strip(),
+                    "confirmation_source": approved_by,
+                }
+            )
+        deps.results[challenge_name] = merged
+    return result
+
+
+async def do_reject_flag_candidate(deps: CoordinatorDeps, challenge_name: str, flag: str) -> str:
+    swarm = deps.swarms.get(challenge_name)
+    rejected_by = _manual_confirmation_source(deps)
+    normalized_flag = flag.strip()
+    if not swarm:
+        existing = deps.results.get(challenge_name, {})
+        if not isinstance(existing, dict):
+            return f"No swarm running for {challenge_name}"
+        if existing.get("status") == FLAG_FOUND:
+            existing_flag = str(existing.get("flag") or "").strip()
+            if existing_flag == normalized_flag:
+                return f'Cannot reject "{normalized_flag}" because it is already confirmed.'
+            if existing_flag:
+                return (
+                    f'Cannot reject "{normalized_flag}" because '
+                    f'"{existing_flag}" is already confirmed.'
+                )
+        raw_candidates = existing.get("flag_candidates", {})
+        if not isinstance(raw_candidates, dict):
+            return f'No candidate "{normalized_flag}" is queued for {challenge_name}.'
+        candidate = raw_candidates.get(normalized_flag)
+        if not isinstance(candidate, dict):
+            return f'No candidate "{normalized_flag}" is queued for {challenge_name}.'
+        display = _manual_rejection_display(deps, normalized_flag)
+        candidate_payload = dict(candidate)
+        candidate_payload.update(
+            {
+                "status": "rejected",
+                "confirmation_source": rejected_by,
+                "submit_display": display,
+                "last_seen_at": time.time(),
+            }
+        )
+        flag_candidates = dict(raw_candidates)
+        flag_candidates[normalized_flag] = candidate_payload
+        merged = dict(existing)
+        merged["flag_candidates"] = flag_candidates
+        merged["status"] = (
+            "candidate_pending"
+            if any(
+                str(payload.get("status") or "").strip().lower() not in {"confirmed", "rejected"}
+                for payload in flag_candidates.values()
+                if isinstance(payload, dict)
+            )
+            else "pending"
+        )
+        _persist_result_snapshot(deps, challenge_name, merged, write_flag=False)
+        deps.results[challenge_name] = merged
+        return display
+
+    result = await swarm.reject_flag_candidate(flag, rejected_by=rejected_by)
+    if result.startswith("USER REJECTED"):
+        existing = deps.results.get(challenge_name, {})
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        payload_fn = getattr(swarm, "_runtime_result_payload", None)
+        if callable(payload_fn):
+            merged.update(payload_fn())
+            deps.results[challenge_name] = merged
+    return result
+
+
 async def do_kill_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
     swarm = deps.swarms.get(challenge_name)
     if not swarm:
         return f"No swarm running for {challenge_name}"
-    swarm.kill()
+    swarm.kill(reason=f"operator kill: {challenge_name}")
     return f"Swarm for {challenge_name} cancelled"
 
 

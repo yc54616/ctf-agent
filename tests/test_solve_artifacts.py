@@ -7,12 +7,10 @@ from typing import Any, cast
 
 import pytest
 
-from backend.agents.advisor_base import CandidateReview
 from backend.agents.coordinator_loop import build_deps
-from backend.agents.swarm import ChallengeSwarm
+from backend.agents.swarm import ChallengeSwarm, FlagCandidateRecord
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
-from backend.message_bus import CandidateRef
 from backend.prompts import ChallengeMeta
 from backend.solver_base import FLAG_FOUND, SolverResult
 
@@ -25,6 +23,10 @@ class _FakeSandbox:
 class _FakeSolver:
     def __init__(self, workspace_dir: Path) -> None:
         self.sandbox = _FakeSandbox(workspace_dir)
+        self.process_stopped = 0
+
+    async def stop_process(self) -> None:
+        self.process_stopped += 1
 
 
 def test_persist_solved_artifacts_writes_workspace_trace_and_writeup(tmp_path: Path) -> None:
@@ -150,25 +152,10 @@ def test_build_deps_restores_saved_results(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_candidate_snapshot_persists_and_restores_after_restart(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     challenge_dir = tmp_path / "challenge-a"
     challenge_dir.mkdir()
     result_store: dict[str, dict[str, object]] = {}
-    inbox: asyncio.Queue[object] = asyncio.Queue()
-
-    class _Advisor:
-        async def annotate_finding(self, **_: object) -> str:
-            return ""
-
-        async def annotate_coordinator_message(self, **_: object) -> str:
-            return ""
-
-        async def suggest_lane_hint(self, **_: object) -> str:
-            return ""
-
-        async def review_flag_candidate(self, **_: object) -> CandidateReview:
-            return CandidateReview("likely", "evidence looks strong")
 
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
@@ -178,9 +165,8 @@ async def test_candidate_snapshot_persists_and_restores_after_restart(
         settings=cast(Any, object()),
         result_store=result_store,
         model_specs=["codex/gpt-5.4"],
-        coordinator_inbox=inbox,
+        no_submit=True,
     )
-    monkeypatch.setattr(swarm, "_get_advisor", lambda _model_spec: _Advisor())
 
     await swarm.report_flag_candidate(
         "flag{candidate}",
@@ -190,13 +176,11 @@ async def test_candidate_snapshot_persists_and_restores_after_restart(
         step_count=12,
         trace_path="/tmp/trace.jsonl",
     )
-    for task in list(swarm._background_tasks):
-        await task
 
     result_path = challenge_dir / "solve" / "result.json"
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     assert payload["status"] == "candidate_pending"
-    assert payload["flag_candidates"]["flag{candidate}"]["status"] == "pending_coordinator"
+    assert payload["flag_candidates"]["flag{candidate}"]["status"] == "pending"
     assert payload["flag_candidates"]["flag{candidate}"]["evidence_digest_paths"]["codex/gpt-5.4"].startswith(
         "/challenge/shared-artifacts/.advisor/"
     )
@@ -212,21 +196,233 @@ async def test_candidate_snapshot_persists_and_restores_after_restart(
         settings=cast(Any, object()),
         result_store=result_store,
         model_specs=["codex/gpt-5.4"],
-        coordinator_inbox=inbox,
+        no_submit=True,
     )
-    monkeypatch.setattr(restored, "_get_advisor", lambda _model_spec: _Advisor())
 
-    assert restored.flag_candidates["flag{candidate}"].status == "pending_coordinator"
+    assert restored.flag_candidates["flag{candidate}"].status == "pending"
 
     await restored._resume_pending_candidate_reviews()
-    for task in list(restored._background_tasks):
-        await task
+    assert restored.flag_candidates["flag{candidate}"].status == "pending"
 
-    queued = await inbox.get()
-    assert isinstance(queued, CandidateRef)
-    assert queued.flag == "flag{candidate}"
-    assert queued.advisor_decision == "likely"
-    assert queued.evidence_digest_paths["codex/gpt-5.4"].startswith("/challenge/shared-artifacts/.advisor/")
+
+@pytest.mark.asyncio
+async def test_manual_candidate_approval_persists_solved_artifacts(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-local"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    (workspace_dir / "exploit.sh").write_text("#!/bin/sh\necho win\n", encoding="utf-8")
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(
+        json.dumps({"type": "tool_call", "tool": "bash", "step": 3, "args": "./exploit.sh"}) + "\n",
+        encoding="utf-8",
+    )
+
+    result_store: dict[str, dict[str, object]] = {}
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-local", category="pwn", value=300),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store=result_store,
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+    )
+    swarm.solvers["codex/gpt-5.4"] = cast(Any, _FakeSolver(workspace_dir))
+    swarm.flag_candidates["flag{local}"] = FlagCandidateRecord(
+        normalized_flag="flag{local}",
+        raw_flag="flag{local}",
+        status="pending",
+        source_models={"codex/gpt-5.4"},
+        step_counts={"codex/gpt-5.4": 13},
+        trace_paths={"codex/gpt-5.4": str(trace_path)},
+        evidence_snippets=["matched local exploit chain"],
+    )
+
+    display = await swarm.approve_flag_candidate("flag{local}", approved_by="operator_manual")
+
+    assert display.startswith('USER CONFIRMED MANUALLY — "flag{local}" marked solved without CTFd confirmation.')
+    assert swarm.confirmed_flag == "flag{local}"
+    assert swarm.winner_confirmation_source == "operator_manual"
+    assert swarm.flag_candidates["flag{local}"].confirmation_source == "operator_manual"
+
+    result_payload = json.loads((challenge_dir / "solve" / "result.json").read_text(encoding="utf-8"))
+    assert result_payload["status"] == "flag_found"
+    assert result_payload["flag"] == "flag{local}"
+    assert result_payload["confirmation_source"] == "operator_manual"
+    assert result_payload["flag_candidates"]["flag{local}"]["status"] == "confirmed"
+    assert result_payload["flag_candidates"]["flag{local}"]["confirmation_source"] == "operator_manual"
+    assert (challenge_dir / "solve" / "workspace" / "exploit.sh").exists()
+    assert (challenge_dir / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{local}"
+    assert cast(_FakeSolver, swarm.solvers["codex/gpt-5.4"]).process_stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_external_solve_persists_solved_artifacts(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-external"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    (workspace_dir / "manual.sh").write_text("#!/bin/sh\necho external\n", encoding="utf-8")
+
+    result_store: dict[str, dict[str, object]] = {}
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-external", category="misc", value=150),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store=result_store,
+        model_specs=["codex/gpt-5.4"],
+        no_submit=False,
+    )
+    swarm.solvers["codex/gpt-5.4"] = cast(Any, _FakeSolver(workspace_dir))
+
+    display = await swarm.mark_solved_externally(
+        "flag{external}",
+        note="Solved manually outside the lane runtime",
+    )
+
+    assert display.startswith('USER REPORTED EXTERNAL SOLVE — "flag{external}" marked solved from operator input.')
+    assert swarm.confirmed_flag == "flag{external}"
+    assert swarm.winner_confirmation_source == "operator_external"
+    assert swarm.flag_candidates["flag{external}"].confirmation_source == "operator_external"
+    assert swarm.flag_candidates["flag{external}"].status == "confirmed"
+    assert "Solved manually outside the lane runtime" in swarm.flag_candidates["flag{external}"].evidence_snippets
+
+    result_payload = json.loads((challenge_dir / "solve" / "result.json").read_text(encoding="utf-8"))
+    assert result_payload["status"] == "flag_found"
+    assert result_payload["flag"] == "flag{external}"
+    assert result_payload["confirmation_source"] == "operator_external"
+    assert (challenge_dir / "solve" / "workspace" / "manual.sh").exists()
+    assert (challenge_dir / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{external}"
+    assert cast(_FakeSolver, swarm.solvers["codex/gpt-5.4"]).process_stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_local_candidate_rejection_marks_candidate_rejected(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-local"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    result_store: dict[str, dict[str, object]] = {}
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-local", category="pwn", value=300),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store=result_store,
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+        local_mode=True,
+    )
+    swarm.solvers["codex/gpt-5.4"] = cast(Any, _FakeSolver(workspace_dir))
+    swarm.flag_candidates["flag{local}"] = FlagCandidateRecord(
+        normalized_flag="flag{local}",
+        raw_flag="flag{local}",
+        status="pending",
+        source_models={"codex/gpt-5.4"},
+        step_counts={"codex/gpt-5.4": 13},
+        evidence_snippets=["matched local exploit chain"],
+    )
+
+    display = await swarm.reject_flag_candidate("flag{local}")
+
+    assert display.startswith('USER REJECTED — "flag{local}" dismissed in local mode.')
+    assert swarm.confirmed_flag is None
+    assert swarm.flag_candidates["flag{local}"].status == "rejected"
+    assert swarm.flag_candidates["flag{local}"].confirmation_source == "operator_local"
+
+
+@pytest.mark.asyncio
+async def test_candidate_placeholder_is_rejected_before_queueing(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-local"
+    challenge_dir.mkdir()
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-local", category="pwn", value=300),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+        local_mode=True,
+    )
+
+    display = await swarm.report_flag_candidate("DH{fake_flag}", "codex/gpt-5.4")
+
+    assert display == "Flag candidate rejected: placeholder sentinel."
+    assert swarm.flag_candidates == {}
+
+
+@pytest.mark.asyncio
+async def test_candidate_reflect_sentinel_is_rejected_before_queueing(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-local"
+    challenge_dir.mkdir()
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-local", category="pwn", value=300),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+        local_mode=True,
+    )
+
+    display = await swarm.report_flag_candidate("REFLECT", "codex/gpt-5.4")
+
+    assert display == "Flag candidate rejected: placeholder sentinel."
+    assert swarm.flag_candidates == {}
+
+
+@pytest.mark.asyncio
+async def test_candidate_ctf_placeholder_body_is_rejected_before_queueing(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-local"
+    challenge_dir.mkdir()
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-local", category="pwn", value=300),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+        local_mode=True,
+    )
+
+    display = await swarm.report_flag_candidate("CTF{flag}", "codex/gpt-5.4")
+
+    assert display == "Flag candidate rejected: placeholder sentinel."
+    assert swarm.flag_candidates == {}
+
+
+@pytest.mark.asyncio
+async def test_candidate_realistic_flag_with_placeholder_token_is_not_rejected(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-local"
+    challenge_dir.mkdir()
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-local", category="pwn", value=300),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+        local_mode=True,
+    )
+
+    display = await swarm.report_flag_candidate("flag{dummy_driver_bug}", "codex/gpt-5.4")
+
+    assert 'Queued flag candidate "flag{dummy_driver_bug}"' in display
+    assert "flag{dummy_driver_bug}" in swarm.flag_candidates
 
 
 @pytest.mark.asyncio

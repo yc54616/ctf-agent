@@ -7,6 +7,7 @@ Protocol shapes verified against codex-cli 0.116.0 schema:
   {tool, arguments, callId, threadId, turnId}
 - Client responds with DynamicToolCallResponse {contentItems: [{type, text}], success}
 - Token usage via thread/tokenUsage/updated notification
+- Commentary/reasoning stream via item/agentMessage/delta and item/reasoning/summaryTextDelta
 - Turn completion via turn/completed notification with {threadId, turn: Turn}
 """
 
@@ -17,9 +18,12 @@ import base64
 import itertools
 import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Any
 
+from backend.agents.codex_rpc_io import read_jsonrpc_line
 from backend.cost_tracker import CostTracker
 from backend.ctfd import CTFdClient
 from backend.loop_detect import LoopDetector
@@ -42,14 +46,12 @@ from backend.solver_base import (
     QUOTA_ERROR,
     LaneRuntimeStatus,
     SolverResult,
-    is_read_only_tool,
     lifecycle_for_result,
     summarize_tool_input,
     summarize_tool_result,
 )
 from backend.tools.core import (
     do_bash,
-    do_fs_query,
     do_view_image,
 )
 from backend.tracing import SolverTracer
@@ -59,16 +61,16 @@ logger = logging.getLogger(__name__)
 _rpc_counter = itertools.count(1)
 WATCHDOG_SAMPLE_SECONDS = 5
 WATCHDOG_TURN_START_SECONDS = 120.0
+WATCHDOG_TURN_ACTIVITY_SECONDS = 300.0
 WATCHDOG_SHORT_TOOL_SECONDS = 60.0
 WATCHDOG_DEFAULT_TOOL_SECONDS = 120.0
-WATCHDOG_POST_TOOL_SECONDS = 30.0
 WATCHDOG_TOOL_TIMEOUT_PADDING_SECONDS = 30.0
 WATCHDOG_MAX_BASH_TOOL_SECONDS = 600.0
 PROACTIVE_COMPACT_CONTEXT_FRACTION = 0.7
 PROACTIVE_COMPACT_ABSOLUTE_TOKENS = 250_000
+THREAD_STATE_VERSION = 2
 
 WATCHDOG_SHORT_TOOLS = {
-    "fs_query",
     "report_flag_candidate",
     "notify_coordinator",
 }
@@ -95,34 +97,6 @@ BASE_SANDBOX_TOOLS = [
                 "timeout_seconds": {"type": "integer", "default": 60},
             },
             "required": ["command"],
-        },
-    },
-    {
-        "name": "fs_query",
-        "description": "Bounded read-only filesystem inspection. Use action=find|peek|search|inspect|archive_list to get narrow previews and artifact pointers instead of long shell pipelines.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["find", "peek", "search", "inspect", "archive_list"],
-                },
-                "path": {"type": "string"},
-                "maxdepth": {"type": "integer", "default": 3},
-                "kind": {"type": "string", "default": "files"},
-                "pattern": {"type": "string", "default": ""},
-                "limit": {"type": "integer", "default": 200},
-                "mode": {"type": "string", "default": "text"},
-                "start_line": {"type": "integer", "default": 1},
-                "line_count": {"type": "integer", "default": 120},
-                "byte_offset": {"type": "integer", "default": 0},
-                "byte_count": {"type": "integer", "default": 256},
-                "query": {"type": "string"},
-                "glob": {"type": "string", "default": ""},
-                "ignore_case": {"type": "boolean", "default": True},
-                "context_lines": {"type": "integer", "default": 2},
-            },
-            "required": ["action", "path"],
         },
     },
     {
@@ -224,6 +198,7 @@ class CodexSolver:
         self._structured_output: dict | None = None
         self._turn_error: str | None = None
         self._compact_requested = False
+        self._compact_task: asyncio.Task | None = None
         self._pending_responses: dict[int, asyncio.Future] = {}
         self._reader_task: asyncio.Task | None = None
         self._turn_done: asyncio.Event = asyncio.Event()
@@ -233,8 +208,11 @@ class CodexSolver:
         self._watchdog_started_monotonic = 0.0
         self._watchdog_started_at: float | None = None
         self._watchdog_deadline_seconds = 0.0
-        self._read_only_streak = 0
-        self._last_progress_kind = "turn_start"
+        self._agent_message_buffers: dict[str, str] = {}
+        self._reasoning_summary_buffers: dict[tuple[str, int], str] = {}
+        self._turn_commentary_events = 0
+        thread_state = os.environ.get("CTF_AGENT_CODEX_THREAD_PATH", "").strip()
+        self._thread_state_path = Path(thread_state) if thread_state else None
 
     def _build_thread_params(self, system_prompt: str) -> dict[str, Any]:
         tools = _sandbox_tools(self.use_vision)
@@ -284,13 +262,54 @@ class CodexSolver:
 
         # thread/start — personality is enum, system prompt in baseInstructions
         thread_params = self._build_thread_params(system_prompt)
-        resp = await self._rpc("thread/start", thread_params)
-        # ThreadStartResponse: result.thread.id
-        self._thread_id = resp.get("result", {}).get("thread", {}).get("id", "")
+        resume_thread_id = self._load_thread_id()
+        resp: dict[str, Any]
+        if resume_thread_id:
+            try:
+                resp = await self._rpc("thread/resume", {"threadId": resume_thread_id})
+                self._thread_id = resp.get("result", {}).get("thread", {}).get("id", "") or resume_thread_id
+                self.tracer.event("thread_resumed", thread_id=self._thread_id)
+            except Exception as exc:
+                logger.warning(
+                    "[%s] Codex thread resume failed for %s: %s",
+                    self.agent_name,
+                    resume_thread_id,
+                    exc,
+                )
+                resp = await self._rpc("thread/start", thread_params)
+                self._thread_id = resp.get("result", {}).get("thread", {}).get("id", "")
+                self.tracer.event("thread_started_fresh", previous_thread_id=resume_thread_id)
+        else:
+            resp = await self._rpc("thread/start", thread_params)
+            self._thread_id = resp.get("result", {}).get("thread", {}).get("id", "")
+            self.tracer.event("thread_started")
+        self._persist_thread_id()
 
         self._runtime.mark_ready()
         self.tracer.event("start", challenge=self.meta.name, model=self.model_id)
         logger.info(f"[{self.agent_name}] Codex solver started (thread={self._thread_id})")
+
+    def _load_thread_id(self) -> str:
+        if not self._thread_state_path or not self._thread_state_path.exists():
+            return ""
+        try:
+            payload = json.loads(self._thread_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ""
+        if isinstance(payload, dict):
+            if int(payload.get("version", 0) or 0) != THREAD_STATE_VERSION:
+                return ""
+            return str(payload.get("thread_id") or "").strip()
+        return ""
+
+    def _persist_thread_id(self) -> None:
+        if not self._thread_state_path or not self._thread_id:
+            return
+        self._thread_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._thread_state_path.write_text(
+            json.dumps({"thread_id": self._thread_id, "version": THREAD_STATE_VERSION}, indent=2),
+            encoding="utf-8",
+        )
 
     @staticmethod
     def _should_request_compaction(context_window: int | None, total_tokens: int) -> bool:
@@ -310,6 +329,7 @@ class CodexSolver:
         future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
         self._pending_responses[msg_id] = future
 
+        self.tracer.rpc_message("out", msg)
         self._proc.stdin.write((json.dumps(msg) + "\n").encode())
         await self._proc.stdin.drain()
         try:
@@ -321,6 +341,7 @@ class CodexSolver:
         """Send a JSON-RPC response to a server request (e.g. item/tool/call)."""
         assert self._proc and self._proc.stdin
         resp = {"id": request_id, "result": result}
+        self.tracer.rpc_message("out", resp)
         self._proc.stdin.write((json.dumps(resp) + "\n").encode())
         await self._proc.stdin.drain()
 
@@ -330,6 +351,7 @@ class CodexSolver:
         msg: dict[str, Any] = {"method": method}
         if params:
             msg["params"] = params
+        self.tracer.rpc_message("out", msg)
         self._proc.stdin.write((json.dumps(msg) + "\n").encode())
         await self._proc.stdin.drain()
 
@@ -337,7 +359,7 @@ class CodexSolver:
         """Read JSON-RPC messages: responses, notifications, and server requests."""
         assert self._proc and self._proc.stdout
         while True:
-            line = await self._proc.stdout.readline()
+            line = await read_jsonrpc_line(self._proc.stdout)
             if not line:
                 self._turn_done.set()
                 break
@@ -345,6 +367,7 @@ class CodexSolver:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            self.tracer.rpc_message("in", msg)
 
             msg_id = msg.get("id")
             if msg_id is not None and ("result" in msg or "error" in msg):
@@ -361,91 +384,210 @@ class CodexSolver:
             method = msg.get("method", "")
             params = msg.get("params", {})
 
-            # Server request: dynamic tool call
-            if method == "item/tool/call" and msg_id is not None:
-                await self._handle_tool_call(msg_id, params)
+            # Server requests that require an explicit client response.
+            if msg_id is not None:
+                if method == "item/tool/call":
+                    await self._handle_tool_call(msg_id, params)
+                    continue
+                if method in {
+                    "item/commandExecution/requestApproval",
+                    "item/fileChange/requestApproval",
+                }:
+                    await self._handle_approval_request(msg_id, method, params)
+                    continue
 
-            # Notification: item completed — assistant text arrives here
-            elif method == "item/completed":
-                item = params.get("item", params)
-                if item.get("type") == "agentMessage":
-                    text = item.get("text", "")
-                    phase = item.get("phase")  # "commentary" | "final_answer" | null
-                    if text:
-                        self._touch_watchdog()
-                        self._set_progress_kind("assistant_message")
-                        self._findings = text[:2000]
-                        if phase != "commentary" and text.lstrip()[:1] == "{":
-                            try:
-                                parsed = json.loads(text)
-                                if isinstance(parsed, dict) and "type" in parsed:
-                                    self._structured_output = parsed
-                            except (json.JSONDecodeError, ValueError):
-                                pass
+            await self._handle_notification(method, params)
 
-            # Notification: turn completed — signals the turn is done
-            elif method == "turn/completed":
-                turn = params.get("turn", {})
-                status = turn.get("status", "")
-                if status == "failed":
-                    error = turn.get("error", {})
-                    if isinstance(error, dict):
-                        # Include all error fields for robust quota classification
-                        parts = [error.get("message", "unknown error")]
-                        codex_info = error.get("codexErrorInfo", {})
-                        if isinstance(codex_info, dict):
-                            parts.append(str(codex_info))
-                        additional = error.get("additionalDetails")
-                        if additional:
-                            parts.append(str(additional))
-                        error_msg = " | ".join(parts)
-                    else:
-                        error_msg = str(error)
-                    self._turn_error = error_msg
-                    logger.error(f"[{self.agent_name}] Turn failed: {error_msg}")
-                    self.tracer.event("turn_failed", error=error_msg, step=self._step_count)
-                    self._findings = f"Turn failed: {error_msg}"
-                    self._structured_output = None
+    async def _handle_notification(self, method: str, params: dict[str, Any]) -> None:
+        if method == "item/started":
+            item = params.get("item")
+            if not isinstance(item, dict):
+                item = {}
+            self.tracer.event(
+                "rpc_item_started",
+                item_type=str(item.get("type") or ""),
+                item_id=str(item.get("id") or ""),
+                step=self._step_count,
+            )
+            return
+
+        if method == "item/agentMessage/delta":
+            item_id = str(params.get("itemId") or "")
+            delta = str(params.get("delta") or "")
+            if item_id and delta:
+                self._turn_commentary_events += 1
+                current = self._agent_message_buffers.get(item_id, "")
+                current = f"{current}{delta}"
+                self._agent_message_buffers[item_id] = current
+                self._touch_watchdog()
+                self._runtime.append_commentary(delta)
+            return
+
+        if method == "item/reasoning/summaryPartAdded":
+            item_id = str(params.get("itemId") or "")
+            try:
+                summary_index = int(params.get("summaryIndex", 0) or 0)
+            except Exception:
+                summary_index = 0
+            if item_id:
+                self._reasoning_summary_buffers.setdefault((item_id, summary_index), "")
+            return
+
+        if method == "item/reasoning/summaryTextDelta":
+            item_id = str(params.get("itemId") or "")
+            try:
+                summary_index = int(params.get("summaryIndex", 0) or 0)
+            except Exception:
+                summary_index = 0
+            delta = str(params.get("delta") or "")
+            if item_id and delta:
+                self._turn_commentary_events += 1
+                key = (item_id, summary_index)
+                current = self._reasoning_summary_buffers.get(key, "")
+                current = f"{current}{delta}"
+                self._reasoning_summary_buffers[key] = current
+                self._touch_watchdog()
+                self._runtime.append_commentary(delta)
+            return
+
+        if method == "item/reasoning/textDelta":
+            # Do not surface raw reasoning text. If this path appears, the app-server is
+            # emitting a lower-level stream than the summary/commentary channels we show.
+            self.tracer.event("reasoning_text_delta_seen", step=self._step_count)
+            return
+
+        # Notification: item completed — assistant text arrives here
+        if method == "item/completed":
+            item = params.get("item", params)
+            item_type = str(item.get("type") or "")
+            self.tracer.event(
+                "rpc_item_completed",
+                item_type=item_type,
+                item_id=str(item.get("id") or ""),
+                step=self._step_count,
+            )
+            if item_type == "agentMessage":
+                item_id = str(item.get("id") or "")
+                text = str(item.get("text") or "")
+                phase = item.get("phase")  # "commentary" | "final_answer" | null
+                if not text and item_id:
+                    text = self._agent_message_buffers.get(item_id, "")
+                if item_id:
+                    self._agent_message_buffers.pop(item_id, None)
+                if text:
+                    self._touch_watchdog()
+                    self._runtime.note_commentary(text)
+                    if phase == "commentary":
+                        self.tracer.model_response(text, self._step_count)
+                    self._findings = text[:2000]
+                    if phase != "commentary" and text.lstrip()[:1] == "{":
+                        try:
+                            parsed = json.loads(text)
+                            if isinstance(parsed, dict) and "type" in parsed:
+                                self._structured_output = parsed
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                return
+            if item_type == "reasoning":
+                text = self._extract_reasoning_summary_text(item)
+                if text:
+                    self._touch_watchdog()
+                    self._runtime.note_commentary(text)
+                return
+            return
+
+        # Notification: turn completed — signals the turn is done
+        if method == "turn/completed":
+            turn = params.get("turn", {})
+            status = turn.get("status", "")
+            if status == "failed":
+                error = turn.get("error", {})
+                if isinstance(error, dict):
+                    # Include all error fields for robust quota classification
+                    parts = [error.get("message", "unknown error")]
+                    codex_info = error.get("codexErrorInfo", {})
+                    if isinstance(codex_info, dict):
+                        parts.append(str(codex_info))
+                    additional = error.get("additionalDetails")
+                    if additional:
+                        parts.append(str(additional))
+                    error_msg = " | ".join(parts)
                 else:
-                    self._turn_error = None
-                self._turn_done.set()
+                    error_msg = str(error)
+                self._turn_error = error_msg
+                logger.error(f"[{self.agent_name}] Turn failed: {error_msg}")
+                self.tracer.event("turn_failed", error=error_msg, step=self._step_count)
+                self._findings = f"Turn failed: {error_msg}"
+                self._structured_output = None
+            else:
+                self._turn_error = None
+            self._turn_done.set()
+            return
 
-            # Notification: token usage updated
-            # params: {threadId, turnId, tokenUsage: {last: TokenUsageBreakdown, total: TokenUsageBreakdown}}
-            elif method == "thread/tokenUsage/updated":
-                token_usage = params.get("tokenUsage", {})
-                last = token_usage.get("last", {})
-                total = token_usage.get("total", {})
+        # Notification: token usage updated
+        # params: {threadId, turnId, tokenUsage: {last: TokenUsageBreakdown, total: TokenUsageBreakdown}}
+        if method == "thread/tokenUsage/updated":
+            token_usage = params.get("tokenUsage", {})
+            last = token_usage.get("last", {})
+            total = token_usage.get("total", {})
 
-                context_window = token_usage.get("modelContextWindow")
-                total_tokens = total.get("totalTokens", 0)
-                if (
-                    self._should_request_compaction(context_window, total_tokens)
-                    and not self._compact_requested
-                ):
-                    self._compact_requested = True
-                    logger.info(f"[{self.agent_name}] Requesting compaction ({total_tokens}/{context_window} tokens)")
-                    try:
-                        await self._rpc("thread/compact/start", {"threadId": self._thread_id})
-                        self.tracer.event("compact_requested", tokens=total_tokens, window=context_window)
-                    except Exception as e:
-                        logger.warning(f"[{self.agent_name}] Compaction request failed: {e}")
-
-                self.cost_tracker.record_tokens(
-                    self.agent_name, self.model_id,
-                    input_tokens=last.get("inputTokens", 0),
-                    output_tokens=last.get("outputTokens", 0),
-                    cache_read_tokens=last.get("cachedInputTokens", 0),
-                    provider_spec="codex",
+            context_window = token_usage.get("modelContextWindow")
+            total_tokens = total.get("totalTokens", 0)
+            if (
+                self._should_request_compaction(context_window, total_tokens)
+                and not self._compact_requested
+            ):
+                self._compact_requested = True
+                logger.info(f"[{self.agent_name}] Requesting compaction ({total_tokens}/{context_window} tokens)")
+                self._compact_task = asyncio.create_task(
+                    self._request_compaction(total_tokens=total_tokens, context_window=context_window),
+                    name=f"compact-{self.agent_name}",
                 )
-                agent_usage = self.cost_tracker.by_agent.get(self.agent_name)
-                self._cost_usd = agent_usage.cost_usd if agent_usage else 0.0
-                self.tracer.usage(
-                    total.get("inputTokens", 0),
-                    total.get("outputTokens", 0),
-                    total.get("cachedInputTokens", 0),
-                    self._cost_usd,
-                )
+
+            self.cost_tracker.record_tokens(
+                self.agent_name, self.model_id,
+                input_tokens=last.get("inputTokens", 0),
+                output_tokens=last.get("outputTokens", 0),
+                cache_read_tokens=last.get("cachedInputTokens", 0),
+                provider_spec="codex",
+            )
+            agent_usage = self.cost_tracker.by_agent.get(self.agent_name)
+            self._cost_usd = agent_usage.cost_usd if agent_usage else 0.0
+            self.tracer.usage(
+                total.get("inputTokens", 0),
+                total.get("outputTokens", 0),
+                total.get("cachedInputTokens", 0),
+                self._cost_usd,
+            )
+            return
+
+        if method.startswith("item/"):
+            self.tracer.event("rpc_notification_ignored", method=method, step=self._step_count)
+
+    async def _request_compaction(self, *, total_tokens: int, context_window: int | None) -> None:
+        try:
+            await self._rpc("thread/compact/start", {"threadId": self._thread_id})
+            self.tracer.event("compact_requested", tokens=total_tokens, window=context_window)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"[{self.agent_name}] Compaction request failed: {e}")
+            self._compact_requested = False
+        finally:
+            self._compact_task = None
+
+    def _extract_reasoning_summary_text(self, item: dict[str, Any]) -> str:
+        summary = item.get("summary")
+        if not isinstance(summary, list):
+            return ""
+        parts: list[str] = []
+        for part in summary:
+            if not isinstance(part, dict):
+                continue
+            text = str(part.get("text") or "").strip()
+            if text:
+                parts.append(text)
+        return " ".join(parts).strip()
 
     def _clear_watchdog(self) -> None:
         self._watchdog_phase = ""
@@ -471,26 +613,9 @@ class CodexSolver:
         self._watchdog_deadline_seconds = float(deadline_seconds)
 
     def _touch_watchdog(self) -> None:
-        if self._watchdog_phase in {"turn_start", "post_tool"}:
+        if self._watchdog_phase in {"turn_start", "turn_active"}:
             self._watchdog_started_monotonic = time.monotonic()
             self._watchdog_started_at = time.time()
-
-    def _reset_turn_progress_tracking(self) -> None:
-        self._read_only_streak = 0
-        self._set_progress_kind("turn_start")
-
-    def _set_progress_kind(self, kind: str) -> None:
-        self._last_progress_kind = kind
-        self._runtime.last_progress_kind = kind
-        self._runtime.read_only_streak = self._read_only_streak
-
-    def _record_tool_progress(self, tool_name: str) -> None:
-        if is_read_only_tool(tool_name):
-            self._read_only_streak += 1
-            self._set_progress_kind("read_only_tool")
-            return
-        self._read_only_streak = 0
-        self._set_progress_kind("exec_tool")
 
     @staticmethod
     def _tool_call_watchdog_seconds(tool_name: str, args: dict[str, Any]) -> float:
@@ -513,8 +638,8 @@ class CodexSolver:
         return WATCHDOG_DEFAULT_TOOL_SECONDS
 
     @staticmethod
-    def _post_tool_watchdog_seconds(tool_name: str, args: dict[str, Any]) -> float:
-        return WATCHDOG_POST_TOOL_SECONDS
+    def _turn_activity_watchdog_seconds() -> float:
+        return WATCHDOG_TURN_ACTIVITY_SECONDS
 
     def _watchdog_expired(self) -> bool:
         if not self._watchdog_phase:
@@ -528,10 +653,7 @@ class CodexSolver:
         if self._watchdog_phase == "tool_call":
             tool_suffix = f" ({self._watchdog_tool})" if self._watchdog_tool else ""
             return f"stalled: tool_call_timeout after {deadline}s{tool_suffix}", "tool_call_timeout"
-        tool_suffix = f" ({self._watchdog_tool})" if self._watchdog_tool else ""
-        if self._watchdog_tool and is_read_only_tool(self._watchdog_tool):
-            tool_suffix = f" ({self._watchdog_tool}, read_only_streak={self._read_only_streak})"
-        return f"stalled: post_tool_inactivity after {deadline}s{tool_suffix}", "post_tool_inactivity"
+        return f"stalled: turn_inactivity after {deadline}s", "turn_inactivity"
 
     async def _watch_turn_progress(self) -> None:
         while not self._turn_done.is_set():
@@ -554,8 +676,6 @@ class CodexSolver:
                 watchdog_kind=kind,
                 deadline_seconds=int(self._watchdog_deadline_seconds),
                 tool=self._watchdog_tool or None,
-                read_only_streak=self._read_only_streak,
-                last_progress_kind=self._last_progress_kind,
             )
             self._turn_done.set()
             return
@@ -606,10 +726,38 @@ class CodexSolver:
             "success": True,
         })
         self._arm_watchdog(
-            phase="post_tool",
+            phase="turn_active",
             step=self._step_count,
-            deadline_seconds=self._post_tool_watchdog_seconds(tool_name, args),
+            deadline_seconds=self._turn_activity_watchdog_seconds(),
             tool=tool_name,
+        )
+
+    async def _handle_approval_request(self, request_id: int, method: str, params: dict[str, Any]) -> None:
+        """Decline built-in approval requests so Codex falls back to our sandbox tools."""
+        item_id = str(params.get("itemId") or "")
+        reason = str(params.get("reason") or "").strip()
+        command = str(params.get("command") or "").strip()
+        self._touch_watchdog()
+        self.tracer.event(
+            "approval_request_declined",
+            method=method,
+            item_id=item_id or None,
+            step=self._step_count,
+            reason=reason or None,
+            command=command[:200] or None,
+        )
+        logger.info(
+            "[%s] Declining Codex approval request (%s)%s%s",
+            self.agent_name,
+            method,
+            f" reason={reason!r}" if reason else "",
+            f" command={command[:120]!r}" if command else "",
+        )
+        await self._respond_to_request(request_id, {"decision": "decline"})
+        self._arm_watchdog(
+            phase="turn_active",
+            step=self._step_count,
+            deadline_seconds=self._turn_activity_watchdog_seconds(),
         )
 
     async def _exec_tool(self, name: str, args: dict) -> str | tuple[bytes, str]:
@@ -620,25 +768,6 @@ class CodexSolver:
                     self.sandbox,
                     args.get("command", ""),
                     args.get("timeout_seconds", 60),
-                )
-            elif name == "fs_query":
-                result = await do_fs_query(
-                    self.sandbox,
-                    action=str(args.get("action", "")),
-                    path=str(args.get("path", "")),
-                    maxdepth=int(args.get("maxdepth", 3)),
-                    kind=str(args.get("kind", "files")),
-                    pattern=str(args.get("pattern", "")),
-                    limit=int(args.get("limit", 200)),
-                    mode=str(args.get("mode", "text")),
-                    start_line=int(args.get("start_line", 1)),
-                    line_count=int(args.get("line_count", 120)),
-                    byte_offset=int(args.get("byte_offset", 0)),
-                    byte_count=int(args.get("byte_count", 256)),
-                    query=str(args.get("query", "")),
-                    glob=str(args.get("glob", "")),
-                    ignore_case=bool(args.get("ignore_case", True)),
-                    context_lines=int(args.get("context_lines", 2)),
                 )
             elif name == "report_flag_candidate":
                 result = await self._report_flag_candidate(
@@ -662,12 +791,9 @@ class CodexSolver:
 
         if isinstance(result, tuple):
             image_bytes, mime_type = result
-            self._read_only_streak = 0
-            self._set_progress_kind("exec_tool")
             self._runtime.mark_idle(f"image:{mime_type}:{len(image_bytes)}b")
             return result
 
-        self._record_tool_progress(name)
         self._runtime.mark_idle(summarize_tool_result(result))
         return result
 
@@ -699,8 +825,6 @@ class CodexSolver:
         snapshot["watchdog_phase"] = self._watchdog_phase
         snapshot["watchdog_tool"] = self._watchdog_tool
         snapshot["watchdog_started_at"] = self._watchdog_started_at
-        snapshot["read_only_streak"] = self._read_only_streak
-        snapshot["last_progress_kind"] = self._last_progress_kind
         return snapshot
 
     def mark_terminal_status(self, status: str) -> None:
@@ -741,8 +865,8 @@ class CodexSolver:
             self._turn_done.clear()
             self._structured_output = None
             self._turn_error = None
+            self._turn_commentary_events = 0
             self._clear_watchdog()
-            self._reset_turn_progress_tracking()
             await self._rpc("turn/start", {
                 "threadId": self._thread_id,
                 "input": [{"type": "text", "text": prompt_text}],
@@ -762,6 +886,11 @@ class CodexSolver:
 
             duration = time.monotonic() - t0
             self.tracer.event("turn_complete", duration=round(duration, 1), steps=self._step_count)
+            self.tracer.event(
+                "turn_commentary_summary",
+                commentary_events=self._turn_commentary_events,
+                step=self._step_count,
+            )
             if not (self._turn_error or "").startswith("stalled:"):
                 self._clear_watchdog()
 
@@ -844,6 +973,13 @@ class CodexSolver:
 
     async def stop_process(self) -> None:
         self.tracer.close()
+        if self._compact_task:
+            self._compact_task.cancel()
+            try:
+                await self._compact_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._compact_task = None
         if self._reader_task:
             self._reader_task.cancel()
             try:

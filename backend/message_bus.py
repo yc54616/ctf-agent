@@ -20,6 +20,7 @@ class SharedFindingRef:
     content: str = ""
     kind: str = "message"
     summary: str = ""
+    artifact_path: str = ""
     pointer_path: str = ""
     digest_path: str = ""
     revision: str = ""
@@ -29,16 +30,22 @@ class SharedFindingRef:
     def rendered_text(self) -> str:
         if self.kind == "artifact_ref":
             lines: list[str] = []
-            if self.content:
+            artifact_path = self.artifact_path.strip()
+            pointer_path = self.pointer_path.strip()
+            if artifact_path:
+                lines.append(f"Artifact path: {artifact_path}")
+            elif self.content:
                 lines.append(self.content)
-            elif self.pointer_path:
-                lines.append(f"Artifact path: {self.pointer_path}")
+            elif pointer_path:
+                lines.append(f"Pointer: {pointer_path}")
             if self.summary:
                 summary_line = f"Summary: {self.summary}"
                 if summary_line not in lines:
                     lines.append(summary_line)
             if self.digest_path:
                 lines.append(f"Digest: {self.digest_path}")
+            if pointer_path and f"Pointer: {pointer_path}" not in lines:
+                lines.append(f"Pointer: {pointer_path}")
             return "\n".join(lines).strip()
 
         if self.kind in {"finding_ref", "candidate_ref", "coordinator_note"}:
@@ -55,12 +62,44 @@ class SharedFindingRef:
 
         return (self.content or self.summary).strip()
 
+    def prompt_text(self) -> str:
+        if self.kind == "artifact_ref":
+            lines: list[str] = []
+            if self.digest_path:
+                lines.append(f"Digest: {self.digest_path}")
+            if self.pointer_path:
+                lines.append(f"Pointer: {self.pointer_path}")
+            elif self.artifact_path:
+                lines.append(f"Artifact: {self.artifact_path}")
+            elif self.content:
+                lines.append(self.content)
+            if self.summary and not lines:
+                lines.append(self.summary)
+            elif self.summary and not self.digest_path:
+                lines.append(f"Hint: {self.summary}")
+            return "\n".join(lines).strip()
+
+        if self.kind in {"finding_ref", "candidate_ref", "coordinator_note"}:
+            lines: list[str] = []
+            if self.digest_path:
+                lines.append(f"Digest: {self.digest_path}")
+            if self.pointer_path:
+                lines.append(f"Pointer: {self.pointer_path}")
+            if self.summary:
+                lines.append(f"Hint: {self.summary}")
+            elif self.content:
+                lines.append(self.content)
+            return "\n".join(lines).strip()
+
+        return (self.content or self.summary).strip()
+
     def snapshot(self) -> dict[str, Any]:
         return {
             "model": self.model,
             "content": self.content,
             "kind": self.kind,
             "summary": self.summary,
+            "artifact_path": self.artifact_path,
             "pointer_path": self.pointer_path,
             "digest_path": self.digest_path,
             "revision": self.revision,
@@ -79,14 +118,24 @@ class SharedFindingRef:
             if isinstance(raw_metadata, dict)
             else {}
         )
+        kind = str(raw_payload.get("kind") or "message")
+        artifact_path = str(raw_payload.get("artifact_path") or "")
+        pointer_path = str(raw_payload.get("pointer_path") or "")
+        if kind == "artifact_ref" and not artifact_path:
+            if pointer_path.startswith("/challenge/shared-artifacts/"):
+                artifact_path = pointer_path
+                pointer_path = ""
+            elif str(raw_payload.get("content") or "").startswith("Artifact path: "):
+                artifact_path = str(raw_payload.get("content") or "").removeprefix("Artifact path: ").strip()
         raw_timestamp = raw_payload.get("timestamp")
         timestamp = float(raw_timestamp) if isinstance(raw_timestamp, (int, float)) else time.time()
         return cls(
             model=str(raw_payload.get("model") or ""),
             content=str(raw_payload.get("content") or ""),
-            kind=str(raw_payload.get("kind") or "message"),
+            kind=kind,
             summary=str(raw_payload.get("summary") or ""),
-            pointer_path=str(raw_payload.get("pointer_path") or ""),
+            artifact_path=artifact_path,
+            pointer_path=pointer_path,
             digest_path=str(raw_payload.get("digest_path") or ""),
             revision=str(raw_payload.get("revision") or ""),
             metadata=metadata,
@@ -339,7 +388,7 @@ class ChallengeMessageBus:
         """Format findings for injection into a solver prompt."""
         if not findings:
             return ""
-        parts = [f"[{f.model}] {f.rendered_text()}" for f in findings]
+        parts = [f"[{f.model}] {f.prompt_text()}" for f in findings]
         return "**Findings from other agents:**\n\n" + "\n\n".join(parts)
 
     def stats_snapshot(self) -> dict[str, object]:

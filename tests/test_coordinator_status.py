@@ -205,6 +205,20 @@ def test_format_agent_activity_uses_last_command_for_finished_lane() -> None:
     assert formatted == "quota_error | last/bash: ffuf -u http://host/FUZZ -w /wordlists/common.txt"
 
 
+def test_format_agent_activity_shows_thinking_commentary() -> None:
+    formatted = _format_agent_activity(
+        {
+            "lifecycle": "busy",
+            "activity_state": "thinking",
+            "commentary_preview": "I found an ELF header; now checking whether the archive footer is fake.",
+        }
+    )
+
+    assert formatted == (
+        "busy | state: thinking | thinking: I found an ELF header; now checking whether the archive footer is fake."
+    )
+
+
 def test_render_status_lines_builds_dashboard_sections() -> None:
     lines = _render_status_lines(
         {

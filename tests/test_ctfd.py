@@ -38,3 +38,32 @@ async def test_fetch_solved_names_logs_single_line_on_connect_error(caplog) -> N
     assert solved == set()
     assert "Could not fetch solved challenges: All connection attempts failed" in caplog.text
     assert "Traceback" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_challenges_skips_missing_detail_404(caplog) -> None:
+    client = CTFdClient(base_url="https://ctfd.example", token="token")
+
+    async def _fake_get(path: str):  # type: ignore[no-untyped-def]
+        if path == "/challenges?per_page=500":
+            return {
+                "data": [
+                    {"id": 44, "name": "kept", "type": "standard"},
+                    {"id": 45, "name": "missing", "type": "standard"},
+                ]
+            }
+        if path == "/challenges/44":
+            return {"data": {"id": 44, "name": "kept", "solves": 3}}
+        if path == "/challenges/45":
+            request = httpx.Request("GET", "https://ctfd.example/api/v1/challenges/45")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("404 NOT FOUND", request=request, response=response)
+        raise AssertionError(f"unexpected path: {path}")
+
+    client._get = cast(Any, _fake_get)
+
+    with caplog.at_level(logging.WARNING):
+        challenges = await client.fetch_all_challenges()
+
+    assert challenges == [{"id": 44, "name": "kept", "solves": 3}]
+    assert "Skipping missing CTFd challenge detail for id=45 name='missing'" in caplog.text

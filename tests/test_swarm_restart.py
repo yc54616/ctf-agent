@@ -60,6 +60,24 @@ class _FakeSolver:
         self.stopped += 1
 
 
+class _QueuedSolver(_FakeSolver):
+    def __init__(
+        self,
+        *,
+        model_spec: str,
+        sandbox: object,
+        runtime_status: Mapping[str, object],
+        results: list[SolverResult],
+    ) -> None:
+        super().__init__(model_spec=model_spec, sandbox=sandbox, runtime_status=runtime_status)
+        self._results = list(results)
+
+    async def run_until_done_or_gave_up(self) -> SolverResult:
+        if not self._results:
+            raise AssertionError("No queued result left for solver")
+        return self._results.pop(0)
+
+
 def _make_result(trace_path: Path) -> SolverResult:
     return SolverResult(
         flag=None,
@@ -88,24 +106,24 @@ def test_build_prompt_pushes_noisy_output_to_shared_artifacts() -> None:
         ["index.html"],
     )
 
-    assert "/challenge/shared-artifacts/manifest.md" in prompt
-    assert "/challenge/shared-artifacts/.advisor/" in prompt
+    assert "Treat `/challenge/shared-artifacts/` as shared evidence." in prompt
     assert "Artifact path: /challenge/shared-artifacts/..." in prompt
     assert "/challenge/shared-artifacts/<name>.txt" in prompt
     assert "grep -R" in prompt
     assert "ffuf" in prompt
     assert "you may run build or compose commands early" in prompt
+    assert "Never reread `/challenge/agent-repo`, `/challenge/host-logs`, prior `solve/` output" in prompt
+    assert "Large saved output may come back with only a path, not a preview." in prompt
     assert "`docker compose`" in prompt
     assert "`docker-compose`" in prompt
     assert "`podman-compose`" in prompt
     assert "`timeout_seconds` (for example 300 or 600)" in prompt
     assert "/challenge/shared-artifacts/<name>.log" in prompt
     assert "verify artifacts or service state first" in prompt
-    assert "`fs_query`" in prompt
+    assert "fs_query" not in prompt
     assert "/opt/wordlists/seclists" in prompt
     assert "`httpx`" in prompt
     assert "`katana`" in prompt
-    assert prompt.count("/challenge/shared-artifacts/manifest.md") == 1
     assert prompt.count("Artifact path: /challenge/shared-artifacts/...") == 1
     assert len(prompt) < 5200
 
@@ -222,13 +240,14 @@ def test_stalled_lane_restart_reuses_same_sandbox_and_writes_handoff(tmp_path: P
     assert lines[0]["restart_reason"] == ""
     assert "stalled after repeated dead-end" in lines[1]["restart_reason"]
     assert lines[1]["step_count"] == 12
-    assert lines[1]["recent_trace_tail"]
+    assert "recent_trace_tail" not in lines[1]
 
     resume_path = challenge_dir / ".shared-artifacts" / "lane-resume-codex-gpt-5.4.md"
     resume_text = resume_path.read_text(encoding="utf-8")
     assert "Lane Resume: Midnight Roulette / codex/gpt-5.4" in resume_text
     assert "Recent Commands To Avoid Repeating Blindly" in resume_text
     assert "grep -nE 'script|k8s'" in resume_text
+    assert "Recent Trace Tail" not in resume_text
     assert "/challenge/shared-artifacts/<name>.txt" in resume_text
 
 
@@ -384,7 +403,6 @@ def test_restart_budget_resets_only_after_ten_new_steps(tmp_path: Path) -> None:
             "last_command": "python3 analyze.py",
             "last_exit_hint": "still analyzing",
             "findings_summary": "need more reversing",
-            "recent_trace_tail": [],
         },
     )
     assert small_progress_reason == ""
@@ -398,7 +416,6 @@ def test_restart_budget_resets_only_after_ten_new_steps(tmp_path: Path) -> None:
             "last_command": "python3 analyze.py",
             "last_exit_hint": "still analyzing",
             "findings_summary": "need more reversing",
-            "recent_trace_tail": [],
         },
     )
     assert reset_reason == ""
@@ -457,6 +474,74 @@ def test_in_turn_stall_resets_restart_budget_after_ten_new_steps(tmp_path: Path)
 
     assert replacement is replacement_solver
     assert swarm._lane_restart_state[model_spec].restart_count == 0
+
+
+def test_run_solver_loop_restarts_error_lane_and_continues_with_replacement(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge"
+    challenge_dir.mkdir()
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text("", encoding="utf-8")
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="Midnight Roulette", category="web"),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    model_spec = "codex/gpt-5.4"
+    original_solver = _QueuedSolver(
+        model_spec=model_spec,
+        sandbox=_FakeSandbox(),
+        runtime_status={"lifecycle": "error", "step_count": 16},
+        results=[
+            SolverResult(
+                flag=None,
+                status=ERROR,
+                findings_summary="stalled: turn_inactivity after 300s",
+                step_count=16,
+                cost_usd=0.4,
+                log_path=str(trace_path),
+            )
+        ],
+    )
+    replacement_solver = _QueuedSolver(
+        model_spec=model_spec,
+        sandbox=original_solver.sandbox,
+        runtime_status={"lifecycle": "finished", "step_count": 17},
+        results=[
+            SolverResult(
+                flag=None,
+                status=GAVE_UP,
+                findings_summary="",
+                step_count=17,
+                cost_usd=0.45,
+                log_path=str(trace_path),
+            )
+        ],
+    )
+
+    calls: list[str] = []
+
+    async def _fake_restart(spec: str, solver: _FakeSolver, result: SolverResult) -> _FakeSolver | None:
+        calls.append(f"{spec}:{result.status}:{result.step_count}")
+        if len(calls) == 1:
+            swarm.solvers[spec] = replacement_solver
+            return replacement_solver
+        return None
+
+    swarm._maybe_restart_stalled_lane = cast(Any, _fake_restart)
+
+    result, final_solver = asyncio.run(swarm._run_solver_loop(original_solver, model_spec))
+
+    assert calls == [
+        "codex/gpt-5.4:error:16",
+        "codex/gpt-5.4:gave_up:17",
+    ]
+    assert result.status == GAVE_UP
+    assert result.step_count == 17
+    assert final_solver is replacement_solver
 
 
 def test_artifact_finding_posts_fact_only_summary_and_manifest(tmp_path: Path) -> None:
