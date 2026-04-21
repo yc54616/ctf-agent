@@ -21,6 +21,14 @@ _PYTHON_FILE_READ_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _TRACE_JSONL_RE = re.compile(r"(?:^|[\s'\"/=])(?:[^/\s'\"=]+/)*trace-[^/\s'\"=]+\.jsonl\b")
+_TARGETED_SHARED_ARTIFACT_READ_RE = re.compile(
+    r"\b(?:sed|tail|head|rg|grep)\b.*?/challenge/shared-artifacts/",
+    re.IGNORECASE | re.DOTALL,
+)
+_GENERATED_EXEC_ARTIFACT_RE = re.compile(
+    r"/challenge/shared-artifacts/(?:stdout|stderr)(?:-[^/\s'\"=]+)?\.log\b",
+    re.IGNORECASE,
+)
 _FORBIDDEN_REREAD_MARKERS = (
     "/challenge/agent-repo",
     "agent-repo/",
@@ -37,6 +45,12 @@ _BASH_REREAD_BLOCK_MESSAGE = (
     "(excluding solve/ and .shared-artifacts/), /challenge/workspace, "
     "/challenge/shared-artifacts, /challenge/metadata.yml"
 )
+_GENERATED_ARTIFACT_REREAD_BLOCK_MESSAGE = (
+    "Blocked whole-file reread of generated stdout/stderr artifacts. "
+    "Inspect specific ranges with sed/head/tail/rg, or rerun the original command more narrowly."
+)
+TARGETED_SHARED_ARTIFACT_INLINE_LIMIT = 8_000
+TARGETED_SHARED_ARTIFACT_INLINE_LINE_LIMIT = 120
 
 
 def _truncate(text: str, limit: int = MAX_OUTPUT) -> str:
@@ -103,6 +117,19 @@ def _should_block_reread_command(command: str) -> bool:
     if not has_forbidden_path:
         return False
     return bool(_READLIKE_COMMAND_RE.search(lowered) or _PYTHON_FILE_READ_RE.search(normalized))
+
+
+def _should_block_generated_artifact_wholefile_reread(command: str) -> bool:
+    normalized = _normalize_command_text(command)
+    lowered = normalized.lower()
+    if not _GENERATED_EXEC_ARTIFACT_RE.search(lowered):
+        return False
+    return bool(re.search(r"\bcat\b", lowered) or _PYTHON_FILE_READ_RE.search(normalized))
+
+
+def _is_targeted_shared_artifact_read(command: str) -> bool:
+    normalized = _normalize_command_text(command)
+    return bool(_TARGETED_SHARED_ARTIFACT_READ_RE.search(normalized))
 
 
 def _saved_exec_result(label: str, pointer, *, line_count: int) -> str:
@@ -177,22 +204,57 @@ async def do_bash(
 ) -> str:
     if _should_block_reread_command(command):
         return _BASH_REREAD_BLOCK_MESSAGE
+    if _should_block_generated_artifact_wholefile_reread(command):
+        return _GENERATED_ARTIFACT_REREAD_BLOCK_MESSAGE
 
     result = await sandbox.exec(command, timeout_s=timeout_seconds)
     stdout_line_count = int(getattr(result, "stdout_lines", 0) or 0) or _count_text_lines(result.stdout)
     stderr_line_count = int(getattr(result, "stderr_lines", 0) or 0) or _count_text_lines(result.stderr)
-    stdout_text, stdout_pointer = await _materialize_exec_output(
-        sandbox,
-        "stdout",
-        result.stdout,
-        result.stdout_pointer,
-    )
-    stderr_text, stderr_pointer = await _materialize_exec_output(
-        sandbox,
-        "stderr",
-        result.stderr,
-        result.stderr_pointer,
-    )
+    targeted_shared_artifact_read = _is_targeted_shared_artifact_read(command)
+    if (
+        targeted_shared_artifact_read
+        and result.stdout
+        and not result.stdout_pointer
+        and len(result.stdout) <= TARGETED_SHARED_ARTIFACT_INLINE_LIMIT
+        and stdout_line_count <= TARGETED_SHARED_ARTIFACT_INLINE_LINE_LIMIT
+    ):
+        stdout_text, stdout_pointer = (
+            _trim_preview_text(
+                result.stdout,
+                max_chars=TARGETED_SHARED_ARTIFACT_INLINE_LIMIT,
+                max_lines=TARGETED_SHARED_ARTIFACT_INLINE_LINE_LIMIT,
+            ),
+            None,
+        )
+    else:
+        stdout_text, stdout_pointer = await _materialize_exec_output(
+            sandbox,
+            "stdout",
+            result.stdout,
+            result.stdout_pointer,
+        )
+    if (
+        targeted_shared_artifact_read
+        and result.stderr
+        and not result.stderr_pointer
+        and len(result.stderr) <= TARGETED_SHARED_ARTIFACT_INLINE_LIMIT
+        and stderr_line_count <= TARGETED_SHARED_ARTIFACT_INLINE_LINE_LIMIT
+    ):
+        stderr_text, stderr_pointer = (
+            _trim_preview_text(
+                result.stderr,
+                max_chars=TARGETED_SHARED_ARTIFACT_INLINE_LIMIT,
+                max_lines=TARGETED_SHARED_ARTIFACT_INLINE_LINE_LIMIT,
+            ),
+            None,
+        )
+    else:
+        stderr_text, stderr_pointer = await _materialize_exec_output(
+            sandbox,
+            "stderr",
+            result.stderr,
+            result.stderr_pointer,
+        )
     parts: list[str] = []
     if stdout_text and not stdout_pointer:
         parts.append(stdout_text)

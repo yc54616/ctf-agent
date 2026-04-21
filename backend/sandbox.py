@@ -229,6 +229,8 @@ class DockerSandbox:
     repo_root_dir: str = ""
     challenge_src_dir: str = ""
     auth_seed_mounts: dict[str, str] = field(default_factory=dict)
+    existing_container_id: str = ""
+    preserve_stopped_container: bool = False
     owns_workspace_dir: bool = False
     _container: Any = field(default=None, repr=False)
     _docker: Any = field(default=None, repr=False)
@@ -244,6 +246,12 @@ class DockerSandbox:
     @property
     def is_started(self) -> bool:
         return self._container is not None
+
+    @property
+    def resume_container_id(self) -> str:
+        if self._container is not None:
+            return str(self._container.id)
+        return str(self.existing_container_id or "")
 
     def _parse_memory_limit(self) -> int:
         s = self.memory_limit.strip().lower()
@@ -298,6 +306,7 @@ class DockerSandbox:
         sem = _start_semaphore or asyncio.Semaphore(50)
         async with sem:
             self._docker = aiodocker.Docker()
+            self.shared_artifacts_dir = str(self._artifact_root_host())
 
             if self.workspace_dir:
                 Path(self.workspace_dir).mkdir(parents=True, exist_ok=True)
@@ -306,10 +315,30 @@ class DockerSandbox:
                 self.workspace_dir = tempfile.mkdtemp(prefix="ctf-workspace-")
                 self.owns_workspace_dir = True
 
+            existing_container_id = str(self.existing_container_id or "").strip()
+            if existing_container_id:
+                container = self._docker.containers.container(existing_container_id)
+                try:
+                    info = await container.show()
+                except Exception:
+                    logger.warning(
+                        "Preserved sandbox %s is unavailable; creating a fresh container",
+                        existing_container_id[:12],
+                    )
+                    self.existing_container_id = ""
+                else:
+                    state = info.get("State", {}) if isinstance(info, dict) else {}
+                    status = str(state.get("Status") or "").strip().lower()
+                    self._container = container
+                    if status != "running":
+                        await self._container.start()
+                    await _track_start()
+                    logger.info("Sandbox resumed: %s", existing_container_id[:12])
+                    return
+
             challenge_root = Path(self.challenge_dir).resolve()
             distfiles = str(challenge_root / "distfiles")
             meta_yml = str(challenge_root / "metadata.yml")
-            self.shared_artifacts_dir = str(self._artifact_root_host())
 
             binds: list[str] = [f"{self.workspace_dir}:/challenge/workspace:rw"]
             binds.append(f"{self.shared_artifacts_dir}:{SHARED_ARTIFACTS_CONTAINER_ROOT}:rw")
@@ -374,6 +403,7 @@ class DockerSandbox:
 
             info = await self._container.show()
             short_id = info["Id"][:12]
+            self.existing_container_id = str(info["Id"])
             logger.info("Sandbox started: %s", short_id)
 
     async def exec_detached(
@@ -607,10 +637,17 @@ class DockerSandbox:
             ).strip()
             raise RuntimeError(detail or f"docker cp failed for {container_path}")
 
-    async def stop(self) -> None:
+    async def stop(self, *, delete: bool | None = None) -> None:
+        remove_container = not self.preserve_stopped_container if delete is None else bool(delete)
         if self._container:
+            container_id = str(self._container.id)
             try:
-                await self._container.delete(force=True)
+                if remove_container:
+                    await self._container.delete(force=True)
+                    self.existing_container_id = ""
+                else:
+                    await self._container.stop(t=5)
+                    self.existing_container_id = container_id
             except Exception:
                 pass
             self._container = None
@@ -623,12 +660,13 @@ class DockerSandbox:
                 pass
             self._docker = None
 
-        if self.workspace_dir and self.owns_workspace_dir:
+        if remove_container and self.workspace_dir and self.owns_workspace_dir:
             import shutil
             try:
                 shutil.rmtree(self.workspace_dir, ignore_errors=True)
             except Exception:
                 pass
-        self.workspace_dir = ""
-        self.owns_workspace_dir = False
+        if remove_container:
+            self.workspace_dir = ""
+            self.owns_workspace_dir = False
         logger.info("Sandbox stopped")

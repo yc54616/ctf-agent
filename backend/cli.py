@@ -23,6 +23,10 @@ from rich.console import Console
 from rich.table import Table
 
 from backend.agents.codex_coordinator import run_codex_coordinator
+from backend.agents.coordinator_core import (
+    PENDING_REASON_PRIORITY_WAITING,
+    restore_pending_swarms_from_results,
+)
 from backend.agents.coordinator_loop import build_deps, cleanup_coordinator_runtime
 from backend.auth import AuthValidationError, validate_claude_auth, validate_required_auth
 from backend.config import Settings
@@ -564,7 +568,7 @@ def _render_swarm_section(
         swarm = _object_dict(swarms[challenge])
         agents = _agent_dict(swarm.get("agents", {}))
         counts = _summarize_swarm_agents(agents)
-        step_count = _swarm_step_count(agents)
+        step_count = max(_swarm_step_count(agents), _int_from_object(swarm.get("step_count", 0)))
         winner = _clean_status_text(swarm.get("winner") or "-", limit=12) or "-"
         lines.append(
             "  "
@@ -632,13 +636,23 @@ def _render_status_lines(
     )
     _render_swarm_section(
         lines,
+        "Pending Challenges",
+        data.get("pending_swarms", {}),
+        verbose=verbose,
+    )
+    _render_swarm_section(
+        lines,
         "Finished Challenges",
         data.get("finished_swarms", {}),
         verbose=verbose,
     )
 
     advisor_rows: list[tuple[str, str, str]] = []
-    for swarms in (_object_dict(data.get("active_swarms", {})), _object_dict(data.get("finished_swarms", {}))):
+    for swarms in (
+        _object_dict(data.get("active_swarms", {})),
+        _object_dict(data.get("pending_swarms", {})),
+        _object_dict(data.get("finished_swarms", {})),
+    ):
         for challenge in sorted(swarms):
             swarm = _object_dict(swarms[challenge])
             agents = _agent_dict(swarm.get("agents", {}))
@@ -657,7 +671,11 @@ def _render_status_lines(
         lines.append("  (none yet)            -                                 -")
 
     finding_rows: list[tuple[str, str, str]] = []
-    for swarms in (_object_dict(data.get("active_swarms", {})), _object_dict(data.get("finished_swarms", {}))):
+    for swarms in (
+        _object_dict(data.get("active_swarms", {})),
+        _object_dict(data.get("pending_swarms", {})),
+        _object_dict(data.get("finished_swarms", {})),
+    ):
         for challenge in sorted(swarms):
             swarm = _object_dict(swarms[challenge])
             for spec, payload in _shared_finding_entries(swarm):
@@ -676,7 +694,11 @@ def _render_status_lines(
         lines.append("  (none yet)            -                                 -")
 
     signal_rows: list[tuple[str, dict[str, object]]] = []
-    for swarms in (_object_dict(data.get("active_swarms", {})), _object_dict(data.get("finished_swarms", {}))):
+    for swarms in (
+        _object_dict(data.get("active_swarms", {})),
+        _object_dict(data.get("pending_swarms", {})),
+        _object_dict(data.get("finished_swarms", {})),
+    ):
         for challenge in sorted(swarms):
             swarm = _object_dict(swarms[challenge])
             signals = _object_dict(swarm.get("signals", {}))
@@ -735,7 +757,7 @@ def _build_summary_table(title: str, swarms: dict[str, object]) -> Table | None:
         swarm = _object_dict(swarms[challenge])
         agents = _agent_dict(swarm.get("agents", {}))
         counts = _summarize_swarm_agents(agents)
-        step_count = _swarm_step_count(agents)
+        step_count = max(_swarm_step_count(agents), _int_from_object(swarm.get("step_count", 0)))
         winner = _clean_status_text(swarm.get("winner") or "-", limit=32) or "-"
         table.add_row(
             challenge,
@@ -844,9 +866,13 @@ def _build_flags_table(results: dict[str, object]) -> Table | None:
     return table
 
 
-def _build_latest_advisory_table(active: dict[str, object], finished: dict[str, object]) -> Table | None:
+def _build_latest_advisory_table(
+    active: dict[str, object],
+    pending: dict[str, object],
+    finished: dict[str, object],
+) -> Table | None:
     rows: list[tuple[str, str, str]] = []
-    for swarms in (active, finished):
+    for swarms in (active, pending, finished):
         for challenge in sorted(swarms):
             swarm = _object_dict(swarms[challenge])
             agents = _agent_dict(swarm.get("agents", {}))
@@ -869,9 +895,13 @@ def _build_latest_advisory_table(active: dict[str, object], finished: dict[str, 
     return table
 
 
-def _build_latest_shared_finding_table(active: dict[str, object], finished: dict[str, object]) -> Table | None:
+def _build_latest_shared_finding_table(
+    active: dict[str, object],
+    pending: dict[str, object],
+    finished: dict[str, object],
+) -> Table | None:
     rows: list[tuple[str, str, str]] = []
-    for swarms in (active, finished):
+    for swarms in (active, pending, finished):
         for challenge in sorted(swarms):
             swarm = _object_dict(swarms[challenge])
             for spec, payload in _shared_finding_entries(swarm):
@@ -891,9 +921,13 @@ def _build_latest_shared_finding_table(active: dict[str, object], finished: dict
     return table
 
 
-def _build_signals_table(active: dict[str, object], finished: dict[str, object]) -> Table | None:
+def _build_signals_table(
+    active: dict[str, object],
+    pending: dict[str, object],
+    finished: dict[str, object],
+) -> Table | None:
     rows: list[tuple[str, dict[str, object]]] = []
-    for swarms in (active, finished):
+    for swarms in (active, pending, finished):
         for challenge in sorted(swarms):
             swarm = _object_dict(swarms[challenge])
             signals = swarm.get("signals")
@@ -980,6 +1014,7 @@ def _print_status_snapshot(
         renderables.extend(_build_compact_lane_renderables("Active Lanes", data.get("active_swarms", {}), verbose=verbose))
     else:
         renderables.append(_build_lane_table("Active Lanes", data.get("active_swarms", {}), verbose=verbose))
+    renderables.append(_build_summary_table("Pending Challenges", data.get("pending_swarms", {})))
     renderables.append(_build_summary_table("Finished Challenges", data.get("finished_swarms", {})))
     if compact:
         renderables.extend(_build_compact_lane_renderables("Finished Lanes", data.get("finished_swarms", {}), verbose=verbose))
@@ -988,18 +1023,21 @@ def _print_status_snapshot(
     renderables.append(
         _build_latest_advisory_table(
             data.get("active_swarms", {}),
+            data.get("pending_swarms", {}),
             data.get("finished_swarms", {}),
         )
     )
     renderables.append(
         _build_latest_shared_finding_table(
             data.get("active_swarms", {}),
+            data.get("pending_swarms", {}),
             data.get("finished_swarms", {}),
         )
     )
     renderables.append(
         _build_signals_table(
             data.get("active_swarms", {}),
+            data.get("pending_swarms", {}),
             data.get("finished_swarms", {}),
         )
     )
@@ -1109,6 +1147,12 @@ def _validate_runtime_auth(
 @click.option("--coordinator-model", default=None, help="Model for coordinator (default: backend-specific)")
 @click.option("--coordinator", default="codex", type=click.Choice(["codex"]), help="Coordinator backend")
 @click.option("--max-challenges", default=10, type=int, help="Max challenges solved concurrently")
+@click.option(
+    "--resume",
+    "resume_mode",
+    is_flag=True,
+    help="Resume paused/requeueable challenge work from saved runtime state instead of clearing it first",
+)
 @click.option("--msg-port", default=9400, type=int, help="Operator message port (use 0 for auto)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging")
 def main(
@@ -1122,6 +1166,7 @@ def main(
     coordinator_model: str | None,
     coordinator: str,
     max_challenges: int,
+    resume_mode: bool,
     msg_port: int,
     verbose: bool,
 ) -> None:
@@ -1159,6 +1204,7 @@ def main(
     console.print(f"  Challenges dir: {Path(challenges_dir).resolve()}")
     console.print(f"  Image: {settings.sandbox_image}")
     console.print(f"  Max challenges: {max_challenges}")
+    console.print(f"  Startup: {'resume previous work' if resume_mode else 'fresh runtime reset'}")
     if run_log_path is not None:
         console.print(f"  Run log: {run_log_path}")
     memory_budget = _memory_budget_summary(
@@ -1196,6 +1242,7 @@ def main(
                 coordinator_model,
                 coordinator,
                 max_challenges,
+                resume_mode,
                 msg_port,
             )
         )
@@ -1212,6 +1259,7 @@ async def _run_coordinator(
     coordinator_model: str | None,
     coordinator_backend: str,
     max_challenges: int,
+    resume_mode: bool = False,
     msg_port: int = 0,
 ) -> None:
     """Run the full coordinator (continuous until Ctrl+C)."""
@@ -1219,17 +1267,23 @@ async def _run_coordinator(
 
     max_containers = max_challenges * len(model_specs)
     configure_semaphore(max_containers)
-    await cleanup_orphan_containers()
-    reset_summary = _reset_runtime_state_dirs(_discover_challenge_dirs(challenges_dir))
-    if reset_summary.touched:
+    if resume_mode:
         logging.getLogger(__name__).info(
-            "Cleared runtime state under %s (lane-state=%d, shared-artifacts=%d, solve-lanes=%d, traces=%d)",
+            "Resume mode enabled; preserving runtime state and warm sandboxes under %s",
             Path(challenges_dir).resolve(),
-            reset_summary.lane_state_dirs,
-            reset_summary.shared_artifact_dirs,
-            reset_summary.solve_lane_dirs,
-            reset_summary.trace_files,
         )
+    else:
+        await cleanup_orphan_containers()
+        reset_summary = _reset_runtime_state_dirs(_discover_challenge_dirs(challenges_dir))
+        if reset_summary.touched:
+            logging.getLogger(__name__).info(
+                "Cleared runtime state under %s (lane-state=%d, shared-artifacts=%d, solve-lanes=%d, traces=%d)",
+                Path(challenges_dir).resolve(),
+                reset_summary.lane_state_dirs,
+                reset_summary.shared_artifact_dirs,
+                reset_summary.solve_lane_dirs,
+                reset_summary.trace_files,
+            )
     resolved_backend = "codex"
     console.print(f"[bold]Starting coordinator ({resolved_backend}, Ctrl+C to stop)...[/bold]\n")
     ctfd, cost_tracker, deps = build_deps(
@@ -1239,6 +1293,22 @@ async def _run_coordinator(
         no_submit,
         local_mode,
     )
+    if resume_mode:
+        restored = restore_pending_swarms_from_results(deps)
+        if restored:
+            held = sum(
+                1
+                for challenge_name in restored
+                if str(deps.pending_swarm_meta.get(challenge_name, {}).get("reason") or "")
+                == PENDING_REASON_PRIORITY_WAITING
+            )
+            logging.getLogger(__name__).info(
+                "Restored %d queued challenge(s) from saved runtime state (%d held in priority waiting)",
+                len(restored),
+                held,
+            )
+        else:
+            logging.getLogger(__name__).info("Resume mode found no queued challenge state to restore")
     results: dict[str, object] = {}
     installed_signals = _install_shutdown_signal_handlers(deps)
 

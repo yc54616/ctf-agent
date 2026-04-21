@@ -35,6 +35,7 @@ from backend.solver_base import (
     QUOTA_ERROR,
     LaneRuntimeStatus,
     SolverResult,
+    candidate_report_was_accepted,
     lifecycle_for_result,
     summarize_tool_input,
     summarize_tool_result,
@@ -681,18 +682,23 @@ class GeminiSolver:
         cleaned_flag = flag.strip()
         if not cleaned_flag:
             return "Flag candidate rejected: empty flag."
-        self._candidate_flag = cleaned_flag
-        self._candidate_evidence = evidence.strip()
-        self._candidate_confidence = confidence.strip() or "medium"
         if not self.report_flag_candidate_fn:
+            self._candidate_flag = cleaned_flag
+            self._candidate_evidence = evidence.strip()
+            self._candidate_confidence = confidence.strip() or "medium"
             return f"Flag candidate noted locally: {cleaned_flag}"
-        return await self.report_flag_candidate_fn(
+        ack = await self.report_flag_candidate_fn(
             cleaned_flag,
-            self._candidate_evidence,
-            self._candidate_confidence,
+            evidence.strip(),
+            confidence.strip() or "medium",
             self._step_count,
             self.tracer.path,
         )
+        if candidate_report_was_accepted(ack):
+            self._candidate_flag = cleaned_flag
+            self._candidate_evidence = evidence.strip()
+            self._candidate_confidence = confidence.strip() or "medium"
+        return ack
 
     async def _terminate_proc(self) -> None:
         if not self._proc:

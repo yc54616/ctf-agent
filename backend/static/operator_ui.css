@@ -722,6 +722,57 @@ button:disabled {
   padding: 0 14px 14px;
 }
 
+.compact-form {
+  gap: 8px;
+  padding: 0;
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.scheduler-card {
+  padding: 12px;
+}
+
+.scheduler-card h3 {
+  margin-bottom: 6px;
+}
+
+.scheduler-limit-form,
+.scheduler-queue-form {
+  gap: 6px;
+}
+
+.scheduler-limit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.scheduler-card input,
+.scheduler-card button {
+  padding: 9px 11px;
+}
+
+.scheduler-meta {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.scheduler-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scheduler-actions button {
+  width: 100%;
+}
+
 .activity-log ul {
   list-style: none;
   margin: 0;
@@ -822,5 +873,12 @@ button:disabled {
   .summary-header {
     align-items: start;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .scheduler-limit-row,
+  .scheduler-actions {
+    grid-template-columns: 1fr;
   }
 }

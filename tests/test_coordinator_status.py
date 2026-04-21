@@ -5,7 +5,7 @@ from typing import Any, cast
 from click.testing import CliRunner
 
 import backend.cli as cli_module
-from backend.agents.coordinator_loop import _status_snapshot
+from backend.agents.coordinator_loop import _runtime_snapshot, _status_snapshot
 from backend.cli import (
     _build_compact_lane_renderables,
     _format_agent_activity,
@@ -49,6 +49,14 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
         input_tokens=100,
         output_tokens=50,
         provider_spec="codex",
+    )
+    deps.cost_tracker.record_tokens(
+        "challenge-b/gemini-2.5-flash",
+        "gemini-2.5-flash",
+        input_tokens=80,
+        output_tokens=20,
+        cache_read_tokens=10,
+        provider_spec="gemini",
     )
     deps.swarms["challenge-a"] = _FakeSwarm(
         {
@@ -109,6 +117,11 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
     deps.swarm_tasks["challenge-b"] = cast(Any, _FakeTask(True))
     deps.pending_swarm_queue.append("challenge-c")
     deps.pending_swarm_set.add("challenge-c")
+    deps.pending_swarm_meta["challenge-c"] = {
+        "priority": False,
+        "reason": "candidate_pending",
+        "enqueued_at": 123.0,
+    }
     deps.known_challenge_count = 10
     deps.known_solved_count = 6
     deps.results["challenge-b"] = {
@@ -124,6 +137,16 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
         "step_count": 11,
         "findings_summary": "restored solved result",
     }
+    deps.results["challenge-c"] = {
+        "status": "candidate_pending",
+        "step_count": 9,
+        "flag_candidates": {
+            "flag{maybe}": {
+                "flag": "flag{maybe}",
+                "status": "pending",
+            }
+        },
+    }
 
     snapshot = _status_snapshot(deps)
 
@@ -135,8 +158,28 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
     assert snapshot["known_challenge_count"] == 10
     assert snapshot["known_solved_count"] == 6
     assert snapshot["pending_challenges"] == ["challenge-c"]
+    assert snapshot["pending_challenge_entries"] == [
+        {
+            "challenge_name": "challenge-c",
+            "priority": False,
+            "reason": "candidate_pending",
+            "local_preloaded": False,
+            "enqueued_at": snapshot["pending_challenge_entries"][0]["enqueued_at"],
+        }
+    ]
+    assert snapshot["pending_swarms"]["challenge-c"]["step_count"] == 9
+    assert snapshot["pending_swarms"]["challenge-c"]["pending_reason"] == "candidate_pending"
+    assert "flag{maybe}" in snapshot["pending_swarms"]["challenge-c"]["flag_candidates"]
     assert "challenge-a" in snapshot["active_swarms"]
+    assert snapshot["active_swarms"]["challenge-a"]["usage"]["input_tokens"] == 100
+    assert snapshot["active_swarms"]["challenge-a"]["usage"]["output_tokens"] == 50
+    assert snapshot["active_swarms"]["challenge-a"]["usage"]["total_tokens"] == 150
     assert snapshot["finished_swarms"]["challenge-b"]["winner"] == "flag{done}"
+    assert snapshot["finished_swarms"]["challenge-b"]["usage"]["input_tokens"] == 80
+    assert snapshot["finished_swarms"]["challenge-b"]["usage"]["cached_tokens"] == 10
+    assert snapshot["finished_swarms"]["challenge-b"]["usage"]["output_tokens"] == 20
+    assert snapshot["finished_swarms"]["challenge-b"]["usage"]["total_tokens"] == 100
+    assert snapshot["pending_swarms"]["challenge-c"]["usage"]["total_tokens"] == 0
     assert (
         snapshot["finished_swarms"]["challenge-b"]["coordinator_advisor_note"]
         == "Check whether the login bypass requires CSRF."
@@ -151,8 +194,66 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
     assert snapshot["finished_swarms"]["challenge-b"]["agents"]["codex/gpt-5.4"]["findings"] == "found flag via login bypass"
     assert snapshot["results"]["challenge-b"]["flag"] == "flag{done}"
     assert snapshot["results"]["challenge-b"]["findings_summary"] == "found flag via login bypass"
-    assert snapshot["total_tokens"] == 150
-    assert snapshot["total_step_count"] == 18
+    assert snapshot["total_tokens"] == 250
+    assert snapshot["total_step_count"] == 27
+
+
+def test_runtime_snapshot_dedupes_pending_candidate_count() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    deps.pending_swarm_queue.append("challenge-a")
+    deps.pending_swarm_set.add("challenge-a")
+    deps.pending_swarm_meta["challenge-a"] = {
+        "priority": False,
+        "reason": "candidate_pending",
+        "enqueued_at": 1.0,
+    }
+    deps.results["challenge-a"] = {
+        "status": "candidate_pending",
+        "flag_candidates": {
+            "flag{same}": {"flag": "flag{same}", "status": "pending"},
+        },
+    }
+
+    snapshot = _runtime_snapshot(deps)
+
+    assert snapshot["challenge_summary"]["pending_candidate_count"] == 1
+
+
+def test_runtime_snapshot_includes_per_challenge_usage() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    deps.cost_tracker.record_tokens(
+        "challenge-a/gpt-5.4",
+        "gpt-5.4",
+        input_tokens=1_200,
+        output_tokens=300,
+        cache_read_tokens=500,
+        provider_spec="codex",
+    )
+    deps.swarms["challenge-a"] = _FakeSwarm(
+        {
+            "challenge": "challenge-a",
+            "signals": {},
+            "agents": {},
+        }
+    )
+    deps.swarm_tasks["challenge-a"] = cast(Any, _FakeTask(False))
+
+    snapshot = _runtime_snapshot(deps)
+
+    usage = snapshot["active_swarms"]["challenge-a"]["usage"]
+    assert usage["input_tokens"] == 1_200
+    assert usage["cached_tokens"] == 500
+    assert usage["output_tokens"] == 300
+    assert usage["total_tokens"] == 1_500
+    assert usage["cost_usd"] >= 0.0
 
 
 def test_preview_line_handles_empty_and_multiline_text() -> None:
@@ -272,6 +373,19 @@ def test_render_status_lines_builds_dashboard_sections() -> None:
                     },
                 }
             },
+            "pending_swarms": {
+                "challenge-p": {
+                    "challenge": "challenge-p",
+                    "step_count": 14,
+                    "winner": "",
+                    "agents": {},
+                    "flag_candidates": {
+                        "flag{p}": {"flag": "flag{p}", "status": "pending"},
+                    },
+                    "pending_reason": "candidate_pending",
+                    "signals": {},
+                }
+            },
             "finished_swarms": {
                 "challenge-b": {
                     "winner": "flag{done}",
@@ -329,6 +443,7 @@ def test_render_status_lines_builds_dashboard_sections() -> None:
     assert "Challenges: 10 | Solved: 6 | Active: 1 | Limit: 3 | Pending: 2 | Finished: 1 | Steps: 20" in rendered
     assert "Pending: 2" in rendered
     assert "Active Challenges" in rendered
+    assert "Pending Challenges" in rendered
     assert "Finished Challenges" in rendered
     assert "Latest Advisory" in rendered
     assert "Latest Shared Finding" in rendered
@@ -337,7 +452,9 @@ def test_render_status_lines_builds_dashboard_sections() -> None:
     assert "Challenge             Steps  Busy  Idle  Won  Quota  Error  Cancel  Winner" in rendered
     assert "challenge-a" in rendered
     assert "challenge-b" in rendered
+    assert "challenge-p" in rendered
     assert "challenge-a              8" in rendered
+    assert "challenge-p             14" in rendered
     assert "challenge-b             12" in rendered
     assert "gemini/gemini-2.5-flash" in rendered
     assert "busy" in rendered
@@ -371,6 +488,7 @@ def test_render_status_lines_shows_empty_advisory_section_when_no_notes() -> Non
             "coordinator_queue_depth": 0,
             "operator_queue_depth": 0,
             "active_swarms": {},
+            "pending_swarms": {},
             "finished_swarms": {},
             "results": {},
         }

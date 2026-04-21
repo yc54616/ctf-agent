@@ -3,6 +3,7 @@ const FINAL_STATES = new Set(["won", "flag_found", "cancelled"]);
 const TERMINAL_CANDIDATE_STATUSES = new Set(["confirmed", "rejected"]);
 const state = {
   snapshot: null,
+  snapshotReceived: false,
   selectedChallenge: null,
   selectedLane: null,
   selectedTrace: null,
@@ -12,7 +13,7 @@ const state = {
   traceWindow: null,
   traceTypeFilter: "",
   traceTextFilter: "",
-  hideErrorLanes: true,
+  hideErrorLanes: false,
   loadingTraceFilesFor: "",
   usingRealtime: false,
   statusPollHandle: null,
@@ -36,9 +37,9 @@ const els = {
   flagCandidatesList: document.getElementById("flagCandidatesList"),
   advisoryHistory: document.getElementById("advisoryHistory"),
   laneStrip: document.getElementById("laneStrip"),
-  hideErrorLanesToggle: document.getElementById("hideErrorLanesToggle"),
   traceSelect: document.getElementById("traceSelect"),
   loadOlderBtn: document.getElementById("loadOlderBtn"),
+  hideErrorLanes: document.getElementById("hideErrorLanes"),
   traceTableBody: document.getElementById("traceTableBody"),
   traceTypeFilter: document.getElementById("traceTypeFilter"),
   traceTextFilter: document.getElementById("traceTextFilter"),
@@ -49,32 +50,72 @@ const els = {
   laneBumpInput: document.getElementById("laneBumpInput"),
   challengeBumpForm: document.getElementById("challengeBumpForm"),
   challengeBumpInput: document.getElementById("challengeBumpInput"),
+  maxChallengesForm: document.getElementById("maxChallengesForm"),
+  maxChallengesInput: document.getElementById("maxChallengesInput"),
+  queuePriorityForm: document.getElementById("queuePriorityForm"),
+  selectedChallengeQueueMeta: document.getElementById("selectedChallengeQueueMeta"),
+  priorityWaitBtn: document.getElementById("priorityWaitBtn"),
+  normalQueueBtn: document.getElementById("normalQueueBtn"),
+  restartChallengeBtn: document.getElementById("restartChallengeBtn"),
   externalSolveForm: document.getElementById("externalSolveForm"),
   externalSolveFlagInput: document.getElementById("externalSolveFlagInput"),
   externalSolveNoteInput: document.getElementById("externalSolveNoteInput"),
 };
 
+function pendingChallengeEntries(snapshot) {
+  const entries = Array.isArray(snapshot?.pending_challenge_entries)
+    ? snapshot.pending_challenge_entries
+    : (snapshot?.pending_challenges ?? []).map((challengeName) => ({
+        challenge_name: challengeName,
+        priority: false,
+        reason: "queued",
+        local_preloaded: false,
+      }));
+  return entries
+    .map((entry) => ({
+      challenge_name: String(entry?.challenge_name || "").trim(),
+      priority: Boolean(entry?.priority),
+      reason: String(entry?.reason || "queued").trim(),
+      local_preloaded: Boolean(entry?.local_preloaded),
+    }))
+    .filter((entry) => entry.challenge_name);
+}
+
 function challengeBuckets(snapshot) {
   const active = snapshot?.active_swarms ?? {};
+  const pending = { ...(snapshot?.pending_swarms ?? {}) };
   const finished = { ...(snapshot?.finished_swarms ?? {}) };
-  const pending = [...(snapshot?.pending_challenges ?? [])];
+  const pendingEntries = pendingChallengeEntries(snapshot);
+  const pendingNames = pendingEntries.map((entry) => entry.challenge_name);
+  const pendingByName = Object.fromEntries(
+    pendingEntries.map((entry) => [entry.challenge_name, entry])
+  );
   const results = snapshot?.results ?? {};
   for (const [name, result] of Object.entries(results)) {
     const solved = result?.status === "flag_found";
     if (!active[name] && !finished[name] && solved) {
       finished[name] = {
         challenge: name,
+        started_at: result.started_at || null,
         winner: result.flag || result.status || "done",
+        winner_model: result.winner_model || "",
         restored: true,
         agents: {},
         step_count: Number(result.step_count || 0),
-        flag_candidates: result.flag_candidates || {},
+        flag_candidates: mergeObjectMap(result.flag_candidates, {}),
         coordinator_advisor_note: result.coordinator_advisor_note || "",
         shared_finding: result.shared_finding || "",
-        shared_findings: result.shared_findings || {},
+        shared_findings: mergeObjectMap(result.shared_findings, {}),
       };
-    } else if (!active[name] && !finished[name] && !pending.includes(name)) {
-      pending.push(name);
+    } else if (!active[name] && !finished[name] && !pendingNames.includes(name)) {
+      pendingNames.push(name);
+      const resultStatus = String(result?.status || "").trim().toLowerCase();
+      pendingByName[name] = {
+        challenge_name: name,
+        priority: false,
+        reason: resultStatus === "candidate_pending" ? "candidate_pending" : "queued",
+        local_preloaded: false,
+      };
     } else if (finished[name] && result && typeof result === "object") {
       finished[name] = {
         ...finished[name],
@@ -82,16 +123,77 @@ function challengeBuckets(snapshot) {
           Number(finished[name].step_count || 0),
           Number(result.step_count || 0)
         ),
-        flag_candidates: result.flag_candidates || finished[name].flag_candidates || {},
-        shared_findings: result.shared_findings || finished[name].shared_findings || {},
+        flag_candidates: mergeObjectMap(result.flag_candidates, finished[name].flag_candidates),
+        shared_findings: mergeObjectMap(result.shared_findings, finished[name].shared_findings),
       };
     }
   }
-  return { active, finished, pending, results };
+  for (const name of pendingNames) {
+    const result = results?.[name] ?? {};
+    const existing = pending?.[name] ?? {};
+    const pendingEntry = pendingByName?.[name] ?? {};
+      pending[name] = {
+        challenge: name,
+        started_at: result.started_at || existing.started_at || null,
+        agents: {},
+        step_count: Number(result.step_count || existing.step_count || 0),
+      flag_candidates: mergeObjectMap(result.flag_candidates, existing.flag_candidates),
+      coordinator_advisor_note:
+        result.coordinator_advisor_note || existing.coordinator_advisor_note || "",
+      shared_finding: result.shared_finding || existing.shared_finding || "",
+      shared_findings: mergeObjectMap(result.shared_findings, existing.shared_findings),
+      pending_reason: pendingEntry.reason || existing.pending_reason || "queued",
+      pending_priority: Boolean(
+        pendingEntry.priority ?? existing.pending_priority ?? false
+      ),
+      pending_local_preloaded: Boolean(
+        pendingEntry.local_preloaded ?? existing.pending_local_preloaded ?? false
+      ),
+      status: String(result.status || existing.status || "pending"),
+      winner: String(existing.winner || ""),
+      winner_model: String(existing.winner_model || ""),
+    };
+  }
+  return { active, finished, pending, pendingNames, pendingByName, results };
+}
+
+function mergeObjectMap(primary, fallback) {
+  const primaryIsObject = primary && typeof primary === "object" && !Array.isArray(primary);
+  const fallbackIsObject = fallback && typeof fallback === "object" && !Array.isArray(fallback);
+  if (!primaryIsObject && !fallbackIsObject) {
+    return {};
+  }
+  if (!fallbackIsObject) {
+    return { ...primary };
+  }
+  if (!primaryIsObject) {
+    return { ...fallback };
+  }
+  return {
+    ...fallback,
+    ...primary,
+  };
+}
+
+function challengeWinnerLabel(challenge) {
+  const winnerModel = String(challenge?.winner_model || "").trim();
+  if (winnerModel) {
+    return shortModelName(winnerModel);
+  }
+  const winner = String(challenge?.winner || "").trim();
+  if (winner) {
+    return "solved";
+  }
+  return "";
 }
 
 function laneEntries(challenge) {
   return Object.entries(challenge?.agents ?? {});
+}
+
+function isErrorLane(agent) {
+  const lifecycle = String(agent?.lifecycle || "").trim().toLowerCase();
+  return lifecycle === "error" || lifecycle === "quota_error";
 }
 
 function visibleLaneEntries(challenge) {
@@ -136,19 +238,10 @@ function getSelectedChallengeData() {
   if (state.selectedChallenge && buckets.finished[state.selectedChallenge]) {
     return { bucket: "finished", data: buckets.finished[state.selectedChallenge] };
   }
-  if (state.selectedChallenge && buckets.pending.includes(state.selectedChallenge)) {
-    const result = buckets.results?.[state.selectedChallenge] || {};
+  if (state.selectedChallenge && buckets.pending[state.selectedChallenge]) {
     return {
       bucket: "pending",
-      data: {
-        challenge: state.selectedChallenge,
-        agents: {},
-        step_count: Number(result.step_count || 0),
-        flag_candidates: result.flag_candidates || {},
-        coordinator_advisor_note: result.coordinator_advisor_note || "",
-        shared_finding: result.shared_finding || "",
-        shared_findings: result.shared_findings || {},
-      },
+      data: buckets.pending[state.selectedChallenge],
     };
   }
   return { bucket: "", data: null };
@@ -183,33 +276,6 @@ function laneDetail(agent) {
     .map((value) => String(value || "").trim())
     .find(Boolean);
   return detail || "no detail";
-}
-
-function isErrorLane(agent) {
-  const lifecycle = String(agent?.lifecycle || "").toLowerCase();
-  const status = String(agent?.status || "").toLowerCase();
-  if (["error", "quota_error"].includes(lifecycle) || ["error", "quota_error"].includes(status)) {
-    return true;
-  }
-
-  const hintText = [
-    agent?.last_exit_hint,
-    agent?.findings,
-    agent?.activity,
-    agent?.commentary_preview,
-  ]
-    .map((value) => String(value || "").toLowerCase())
-    .join("\n");
-
-  return [
-    "usage limit",
-    "quota",
-    "rate limit",
-    "turn failed:",
-    "error:",
-    "unauthorized",
-    "forbidden",
-  ].some((needle) => hintText.includes(needle));
 }
 
 function shortModelName(spec) {
@@ -270,6 +336,32 @@ function formatElapsed(secondsTotal) {
   return `${hours}시 ${minutes}분 ${seconds}초`;
 }
 
+function formatTokenCount(value) {
+  const total = Number(value ?? 0);
+  if (!Number.isFinite(total) || total <= 0) {
+    return "0";
+  }
+  if (total >= 1_000_000) {
+    return `${(total / 1_000_000).toFixed(1)}M`;
+  }
+  if (total >= 1_000) {
+    return `${(total / 1_000).toFixed(1)}k`;
+  }
+  return `${Math.round(total)}`;
+}
+
+function challengeElapsedSeconds(challenge, bucket = "") {
+  const startedAt = Number(challenge?.started_at || 0);
+  if (!startedAt || bucket === "finished") {
+    return null;
+  }
+  const elapsed = (Date.now() / 1000) - startedAt;
+  if (!Number.isFinite(elapsed) || elapsed < 0) {
+    return null;
+  }
+  return elapsed;
+}
+
 function currentRunStartedAtMs() {
   const sessionStartedAt = state.snapshot?.session_started_at;
   if (sessionStartedAt) {
@@ -302,7 +394,7 @@ function renderRunningFor() {
   els.runningFor.textContent = formatElapsed((Date.now() - startedAtMs) / 1000);
 }
 
-function challengeSummary(name, challenge) {
+function challengeSummary(name, challenge, bucket = "") {
   const lanes = laneEntries(challenge);
   const busy = lanes.filter(([, lane]) => lane.lifecycle === "busy").length;
   const laneSteps = lanes.reduce((sum, [, lane]) => sum + Number(lane.step_count || 0), 0);
@@ -311,15 +403,44 @@ function challengeSummary(name, challenge) {
   const pendingCandidates = candidateEntries.filter((candidate) =>
     !TERMINAL_CANDIDATE_STATUSES.has(String(candidate.status || "").trim().toLowerCase())
   ).length;
-  const lead = challenge.winner ? `winner ${challenge.winner}` : `${lanes.length} lanes`;
+  const winnerLabel = challengeWinnerLabel(challenge);
+  const lead = winnerLabel ? `winner ${winnerLabel}` : `${lanes.length} lanes`;
   const details = [lead];
+  const pendingReason = String(challenge?.pending_reason || "").trim();
+  if (pendingReason === "priority_waiting") {
+    details.push("priority waiting");
+  } else if (pendingReason === "resume_requested") {
+    details.push("resume queued");
+  } else if (pendingReason === "candidate_retry") {
+    details.push("candidate retry");
+  } else if (pendingReason === "candidate_pending") {
+    details.push("candidate paused");
+  } else if (pendingReason === "ctfd_retry") {
+    details.push("ctfd retry");
+  }
   if (lanes.length) {
     details.push(`busy ${busy}`);
+  }
+  if (challenge?.pending_local_preloaded && pendingReason) {
+    details.push("local");
   }
   if (pendingCandidates) {
     details.push(`candidates ${pendingCandidates}`);
   }
   details.push(`steps ${stepCount}`);
+  const elapsed = challengeElapsedSeconds(challenge, bucket);
+  if (elapsed !== null) {
+    details.push(`elapsed ${formatElapsed(elapsed)}`);
+  }
+  const usage = challenge?.usage && typeof challenge.usage === "object" ? challenge.usage : {};
+  const totalTokens = Number(usage.total_tokens ?? 0);
+  const costUsd = Number(usage.cost_usd ?? 0);
+  if (totalTokens > 0) {
+    details.push(`tokens ${formatTokenCount(totalTokens)}`);
+  }
+  if (costUsd > 0) {
+    details.push(`$${costUsd.toFixed(costUsd < 0.01 ? 4 : 2)}`);
+  }
   return details.join(" · ");
 }
 
@@ -457,6 +578,44 @@ function canRejectLocalCandidate(candidate) {
   return canActOnCandidate(candidate);
 }
 
+function selectedChallengePendingEntry() {
+  const buckets = challengeBuckets(state.snapshot || {});
+  return state.selectedChallenge ? buckets.pendingByName?.[state.selectedChallenge] || null : null;
+}
+
+function renderSchedulerControls(selected, challenge) {
+  if (els.maxChallengesInput) {
+    els.maxChallengesInput.value = String(Number(state.snapshot?.max_concurrent_challenges ?? 0));
+  }
+
+  if (!els.selectedChallengeQueueMeta || !els.priorityWaitBtn || !els.normalQueueBtn || !els.restartChallengeBtn) {
+    return;
+  }
+
+  const pendingEntry = selected.bucket === "pending" ? selectedChallengePendingEntry() : null;
+  const isSolved = challenge?.flag || challenge?.winner;
+  const isPendingPriority = Boolean(pendingEntry?.priority);
+  const bucketLabel = selected.bucket || "challenge";
+  const challengeName = String(challenge?.challenge || state.selectedChallenge || "").trim();
+
+  els.selectedChallengeQueueMeta.textContent = challengeName
+    ? `${bucketLabel} · ${challengeSummary(challengeName, challenge)}`
+    : "Select a challenge to change queue priority.";
+  els.priorityWaitBtn.disabled = !challengeName || Boolean(isSolved);
+  els.normalQueueBtn.disabled = !challengeName || !pendingEntry || !isPendingPriority;
+  els.restartChallengeBtn.disabled = !challengeName || Boolean(isSolved);
+  els.priorityWaitBtn.textContent =
+    selected.bucket === "active" ? "Pause to priority waiting" : "Move to priority waiting";
+  els.normalQueueBtn.textContent = selected.bucket === "pending" ? "Restore waiting" : "Restore normal waiting";
+  if (selected.bucket === "active") {
+    els.restartChallengeBtn.textContent = "Resume after stop";
+  } else if (isPendingPriority) {
+    els.restartChallengeBtn.textContent = "Restore and resume";
+  } else {
+    els.restartChallengeBtn.textContent = "Resume previous work";
+  }
+}
+
 function sharedFindingEntries(challenge) {
   const raw = challenge?.shared_findings;
   const entries = [];
@@ -551,9 +710,47 @@ function pushActivity(message, tone = "") {
   }
 }
 
+function pushCoordinatorActivity(message, tone = "") {
+  pushActivity(`coordinator: ${message}`, tone);
+}
+
+function pushSchedulerActivity(message, tone = "") {
+  pushActivity(`scheduler: ${message}`, tone);
+}
+
+function pushChallengeActivity(challengeName, message, tone = "") {
+  const prefix = challengeName ? `challenge ${challengeName}: ` : "challenge: ";
+  pushActivity(`${prefix}${message}`, tone);
+}
+
+function pushLaneActivity(challengeName, laneId, message, tone = "") {
+  const laneLabel = laneId ? `lane ${laneId}` : "lane";
+  if (challengeName) {
+    pushActivity(`challenge ${challengeName}: ${laneLabel} ${message}`, tone);
+    return;
+  }
+  pushActivity(`${laneLabel}: ${message}`, tone);
+}
+
+function pushServerActivity(result, tone = "ok") {
+  const text = String(result || "").trim();
+  if (!text) {
+    return;
+  }
+  pushActivity(`server: ${text}`, tone);
+}
+
 function setSyncMode(label) {
   if (els.syncMode) {
     els.syncMode.textContent = label;
+  }
+}
+
+function markDisconnected(reason = "disconnected") {
+  state.usingRealtime = false;
+  setSyncMode(reason);
+  if (!state.snapshot && els.updatedAt) {
+    els.updatedAt.textContent = "-";
   }
 }
 
@@ -561,7 +758,9 @@ function syncSelections() {
   const buckets = challengeBuckets(state.snapshot || {});
   const activeNames = Object.keys(buckets.active);
   const finishedNames = Object.keys(buckets.finished);
-  const pendingNames = buckets.pending;
+  const pendingNames = Array.isArray(buckets.pendingNames)
+    ? buckets.pendingNames
+    : Object.keys(buckets.pending || {});
   const known = new Set([...activeNames, ...finishedNames, ...pendingNames]);
 
   if (!state.selectedChallenge || !known.has(state.selectedChallenge)) {
@@ -582,7 +781,7 @@ function syncSelections() {
   const hasVisibleSelection =
     !!state.selectedLane &&
     visibleLanes.some(([modelSpec]) => modelSpec === state.selectedLane);
-  if (!state.selectedLane || !selected.agents[state.selectedLane] || (state.hideErrorLanes && !hasVisibleSelection)) {
+  if (!state.selectedLane || !selected.agents[state.selectedLane] || !hasVisibleSelection) {
     state.selectedLane = preferredLane(selected, visibleLanes);
     state.selectedTrace = null;
     state.traceFiles = [];
@@ -633,18 +832,18 @@ function renderChallenges() {
   const groups = [
     ["Active", Object.entries(buckets.active)],
     ["Finished", Object.entries(buckets.finished)],
-    ["Pending", buckets.pending.map((name) => [name, { challenge: name, agents: {} }])],
+    ["Pending", Object.entries(buckets.pending)],
   ];
   els.challengeCount.textContent =
-    `${Object.keys(buckets.active).length + Object.keys(buckets.finished).length + buckets.pending.length} total`;
+    `${Object.keys(buckets.active).length + Object.keys(buckets.finished).length + Object.keys(buckets.pending).length} total`;
   els.challengeGroups.innerHTML = groups
     .map(([label, entries]) => {
       const body = entries.length
         ? entries
             .map(([name, challenge]) => {
               const selected = state.selectedChallenge === name ? "selected" : "";
-              const status = challenge.winner || label.toLowerCase();
-              const summary = challengeSummary(name, challenge);
+              const status = label.toLowerCase();
+              const summary = challengeSummary(name, challenge, status);
               return `
                 <button
                   class="challenge-card ${selected}"
@@ -692,6 +891,7 @@ function renderSelectedChallenge() {
     els.selectedChallengeTitle.textContent = "Select a challenge";
     els.selectedChallengeMeta.textContent = "No active challenge selected.";
     els.selectedLaneMeta.textContent = "Select a lane to inspect it.";
+    renderSchedulerControls({ bucket: "", data: null }, null);
     els.coordinatorAdvisoryText.textContent = "-";
     els.laneAdvisoryText.textContent = "-";
     els.sharedFindingList.innerHTML = '<li class="empty">No shared findings yet.</li>';
@@ -705,12 +905,13 @@ function renderSelectedChallenge() {
 
   const lanes = laneEntries(challenge);
   const visibleLanes = visibleLaneEntries(challenge);
-  if (state.hideErrorLanes && state.selectedLane && !visibleLanes.some(([modelSpec]) => modelSpec === state.selectedLane)) {
+  if (state.selectedLane && !visibleLanes.some(([modelSpec]) => modelSpec === state.selectedLane)) {
     state.selectedLane = preferredLane(challenge, visibleLanes);
   }
   els.selectedChallengeTitle.textContent = challenge.challenge || state.selectedChallenge;
   els.selectedChallengeMeta.textContent =
-    `${selected.bucket || "challenge"} · ${challengeSummary(state.selectedChallenge, challenge)}`;
+    `${selected.bucket || "challenge"} · ${challengeSummary(state.selectedChallenge, challenge, selected.bucket)}`;
+  renderSchedulerControls(selected, challenge);
   els.coordinatorAdvisoryText.textContent = challenge.coordinator_advisor_note || "-";
   els.sharedFindingList.innerHTML = renderSharedFindings(challenge);
   els.flagCandidatesList.innerHTML = renderFlagCandidates(challenge);
@@ -750,10 +951,7 @@ function renderSelectedChallenge() {
   });
 
   const lane =
-    state.selectedLane &&
-    (!state.hideErrorLanes || !isErrorLane(challenge.agents?.[state.selectedLane]))
-      ? challenge.agents?.[state.selectedLane]
-      : null;
+    state.selectedLane ? challenge.agents?.[state.selectedLane] : null;
   if (lane) {
     const meta = [
       state.selectedLane,
@@ -770,6 +968,8 @@ function renderSelectedChallenge() {
       meta.push(`heartbeat ${Number(lane.heartbeat_age_sec).toFixed(1)}s`);
     }
     els.selectedLaneMeta.textContent = meta.join(" · ");
+  } else if (visibleLanes.length === 0 && lanes.length > 0 && state.hideErrorLanes) {
+    els.selectedLaneMeta.textContent = "All lanes are hidden by the error filter.";
   } else {
     els.selectedLaneMeta.textContent = "Select a lane to inspect it.";
   }
@@ -810,7 +1010,9 @@ function renderSelectedChallenge() {
         }
         <div class="lane-focus-subtle">${escapeHtml(lane.findings || lane.last_exit_hint || "No additional lane note.")}</div>
       `
-    : '<div class="empty">Select a lane to inspect current activity.</div>';
+    : visibleLanes.length === 0 && lanes.length > 0 && state.hideErrorLanes
+      ? '<div class="empty">All lanes are hidden by the error filter.</div>'
+      : '<div class="empty">Select a lane to inspect current activity.</div>';
   els.advisoryHistory.innerHTML = state.advisoryHistory.length
     ? state.advisoryHistory
         .map((entry) => {
@@ -916,6 +1118,7 @@ async function fetchJson(url, options = {}) {
 
 async function applyStatusSnapshot(snapshot) {
   state.snapshot = snapshot;
+  state.snapshotReceived = true;
   syncSelections();
   render();
   els.updatedAt.textContent = new Date().toLocaleTimeString("ko-KR", {
@@ -932,6 +1135,9 @@ async function fetchStatus() {
     const snapshot = await fetchJson("/api/runtime/snapshot");
     await applyStatusSnapshot(snapshot);
   } catch (error) {
+    if (!state.snapshotReceived) {
+      markDisconnected("disconnected");
+    }
     pushActivity(`status fetch failed: ${error.message}`, "error");
   }
 }
@@ -955,7 +1161,7 @@ async function fetchAdvisoryHistory() {
 
 async function fetchTraceFiles({ preserveSelection = false, refreshTrace = true } = {}) {
   const selected = getSelectedChallengeData().data;
-  if (!selected || !state.selectedLane) {
+  if (!selected || !state.selectedChallenge) {
     state.traceFiles = [];
     state.selectedTrace = null;
     state.traceEvents = [];
@@ -963,12 +1169,13 @@ async function fetchTraceFiles({ preserveSelection = false, refreshTrace = true 
     render();
     return;
   }
-  const key = `${state.selectedChallenge}:${state.selectedLane}`;
+  const laneId = state.selectedLane || "";
+  const key = `${state.selectedChallenge}:${laneId || "__challenge__"}`;
   state.loadingTraceFilesFor = key;
-  const params = new URLSearchParams({
-    challenge_name: state.selectedChallenge,
-    lane_id: state.selectedLane,
-  });
+  const params = new URLSearchParams({ challenge_name: state.selectedChallenge });
+  if (laneId) {
+    params.set("lane_id", laneId);
+  }
   try {
     const payload = await fetchJson(`/api/runtime/traces?${params}`);
     if (state.loadingTraceFilesFor !== key) {
@@ -1022,6 +1229,7 @@ function startStatusStream() {
     return false;
   }
   try {
+    setSyncMode("connecting...");
     const source = new EventSource("/api/runtime/stream");
     state.statusStream = source;
     source.addEventListener("open", () => {
@@ -1030,8 +1238,13 @@ function startStatusStream() {
       setSyncMode("realtime");
     });
     source.addEventListener("snapshot", async (event) => {
-      const snapshot = JSON.parse(event.data);
-      await applyStatusSnapshot(snapshot);
+      try {
+        const snapshot = JSON.parse(event.data);
+        await applyStatusSnapshot(snapshot);
+      } catch (error) {
+        markDisconnected("snapshot error");
+        pushActivity(`snapshot apply failed: ${error.message}`, "error");
+      }
     });
     source.onerror = () => {
       const wasRealtime = state.usingRealtime;
@@ -1044,21 +1257,24 @@ function startStatusStream() {
     };
     return true;
   } catch (error) {
+    markDisconnected("stream failed");
     pushActivity(`realtime stream failed: ${error.message}`, "warn");
     return false;
   }
 }
 
 async function fetchTrace(cursor = null, { appendOlder = false } = {}) {
-  if (!state.selectedChallenge || !state.selectedLane || !state.selectedTrace) {
+  if (!state.selectedChallenge || !state.selectedTrace) {
     return;
   }
   const params = new URLSearchParams({
     challenge_name: state.selectedChallenge,
-    lane_id: state.selectedLane,
     trace_name: state.selectedTrace,
     limit: "200",
   });
+  if (state.selectedLane) {
+    params.set("lane_id", state.selectedLane);
+  }
   if (cursor !== null && cursor !== undefined) {
     params.set("cursor", String(cursor));
   }
@@ -1090,10 +1306,10 @@ async function handleCoordinatorMessage(event) {
   }
   try {
     await postOperator("/api/runtime/coordinator-message", { message });
-    pushActivity(`coordinator message sent`, "ok");
+    pushCoordinatorActivity("message sent", "ok");
     els.msgInput.value = "";
   } catch (error) {
-    pushActivity(`message failed: ${error.message}`, "error");
+    pushCoordinatorActivity(`message failed: ${error.message}`, "error");
   }
 }
 
@@ -1109,10 +1325,10 @@ async function handleLaneBump(event) {
       lane_id: state.selectedLane,
       insights,
     });
-    pushActivity(`lane bumped: ${state.selectedLane}`, "ok");
+    pushLaneActivity(state.selectedChallenge, state.selectedLane, "bumped", "ok");
     els.laneBumpInput.value = "";
   } catch (error) {
-    pushActivity(`lane bump failed: ${error.message}`, "error");
+    pushLaneActivity(state.selectedChallenge, state.selectedLane, `bump failed: ${error.message}`, "error");
   }
 }
 
@@ -1131,10 +1347,10 @@ async function handleChallengeBump(event) {
     const results = Array.isArray(payload.results)
       ? payload.results.map((entry) => `${entry.lane_id}: ${entry.result}`).join(" | ")
       : "ok";
-    pushActivity(`challenge bump ${state.selectedChallenge} -> ${results}`, "ok");
+    pushChallengeActivity(state.selectedChallenge, `bumped (${results})`, "ok");
     els.challengeBumpInput.value = "";
   } catch (error) {
-    pushActivity(`challenge bump failed: ${error.message}`, "error");
+    pushChallengeActivity(state.selectedChallenge, `bump failed: ${error.message}`, "error");
   }
 }
 
@@ -1152,14 +1368,12 @@ async function handleCandidateAction(event) {
         flag,
       });
       const actionLabel = candidateApprovalMode() === "local" ? "confirmed locally" : "confirmed manually";
-      pushActivity(`candidate ${actionLabel}: ${flag}`, "ok");
+      pushChallengeActivity(state.selectedChallenge, `candidate ${actionLabel} (${flag})`, "ok");
       await fetchStatus();
       render();
-      if (payload?.result) {
-        pushActivity(String(payload.result), "ok");
-      }
+      pushServerActivity(payload?.result, "ok");
     } catch (error) {
-      pushActivity(`candidate approval failed: ${error.message}`, "error");
+      pushChallengeActivity(state.selectedChallenge, `candidate approval failed: ${error.message}`, "error");
     } finally {
       approveButton.disabled = false;
     }
@@ -1180,14 +1394,12 @@ async function handleCandidateAction(event) {
       challenge_name: state.selectedChallenge,
       flag,
     });
-    pushActivity(`candidate rejected: ${flag}`, "ok");
+    pushChallengeActivity(state.selectedChallenge, `candidate rejected (${flag})`, "ok");
     await fetchStatus();
     render();
-    if (payload?.result) {
-      pushActivity(String(payload.result), "ok");
-    }
+    pushServerActivity(payload?.result, "ok");
   } catch (error) {
-    pushActivity(`candidate rejection failed: ${error.message}`, "error");
+    pushChallengeActivity(state.selectedChallenge, `candidate rejection failed: ${error.message}`, "error");
   } finally {
     rejectButton.disabled = false;
   }
@@ -1199,11 +1411,11 @@ async function handleExternalSolve(event) {
   const flag = String(els.externalSolveFlagInput?.value || "").trim();
   const note = String(els.externalSolveNoteInput?.value || "").trim();
   if (!challengeName) {
-    pushActivity("external solve failed: select a challenge first", "error");
+    pushChallengeActivity("", "external solve failed: select a challenge first", "error");
     return;
   }
   if (!flag) {
-    pushActivity("external solve failed: flag is required", "error");
+    pushChallengeActivity(challengeName, "external solve failed: flag is required", "error");
     return;
   }
 
@@ -1217,7 +1429,7 @@ async function handleExternalSolve(event) {
       flag,
       note,
     });
-    pushActivity(`challenge marked solved: ${challengeName} -> ${flag}`, "ok");
+    pushChallengeActivity(challengeName, `marked solved externally (${flag})`, "ok");
     if (els.externalSolveFlagInput) {
       els.externalSolveFlagInput.value = "";
     }
@@ -1226,15 +1438,93 @@ async function handleExternalSolve(event) {
     }
     await fetchStatus();
     render();
-    if (payload?.result) {
-      pushActivity(String(payload.result), "ok");
-    }
+    pushServerActivity(payload?.result, "ok");
   } catch (error) {
-    pushActivity(`external solve failed: ${error.message}`, "error");
+    pushChallengeActivity(challengeName, `external solve failed: ${error.message}`, "error");
   } finally {
     if (submitButton) {
       submitButton.disabled = false;
     }
+  }
+}
+
+async function handleMaxChallenges(event) {
+  event.preventDefault();
+  const raw = String(els.maxChallengesInput?.value || "").trim();
+  if (!raw) {
+    return;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    pushSchedulerActivity("max active change failed: enter an integer >= 0", "error");
+    return;
+  }
+  try {
+    const payload = await postOperator("/api/runtime/set-max-challenges", {
+      max_active: value,
+    });
+    pushSchedulerActivity(`max active set to ${value}`, "ok");
+    pushServerActivity(payload?.result, "ok");
+    await fetchStatus();
+  } catch (error) {
+    pushSchedulerActivity(`max active change failed: ${error.message}`, "error");
+  }
+}
+
+async function handlePriorityWaiting(event) {
+  event.preventDefault();
+  const challengeName = String(state.selectedChallenge || "").trim();
+  if (!challengeName) {
+    pushChallengeActivity("", "priority waiting failed: select a challenge first", "error");
+    return;
+  }
+  try {
+    const payload = await postOperator("/api/runtime/set-challenge-priority", {
+      challenge_name: challengeName,
+      priority: true,
+    });
+    pushChallengeActivity(challengeName, "moved to priority waiting", "ok");
+    pushServerActivity(payload?.result, "ok");
+    await fetchStatus();
+  } catch (error) {
+    pushChallengeActivity(challengeName, `priority waiting failed: ${error.message}`, "error");
+  }
+}
+
+async function handleNormalWaiting() {
+  const challengeName = String(state.selectedChallenge || "").trim();
+  if (!challengeName) {
+    pushChallengeActivity("", "restore waiting failed: select a challenge first", "error");
+    return;
+  }
+  try {
+    const payload = await postOperator("/api/runtime/set-challenge-priority", {
+      challenge_name: challengeName,
+      priority: false,
+    });
+    pushChallengeActivity(challengeName, "restored to normal waiting", "ok");
+    pushServerActivity(payload?.result, "ok");
+    await fetchStatus();
+  } catch (error) {
+    pushChallengeActivity(challengeName, `restore waiting failed: ${error.message}`, "error");
+  }
+}
+
+async function handleRestartChallenge() {
+  const challengeName = String(state.selectedChallenge || "").trim();
+  if (!challengeName) {
+    pushChallengeActivity("", "resume failed: select a challenge first", "error");
+    return;
+  }
+  try {
+    const payload = await postOperator("/api/runtime/resume-challenge", {
+      challenge_name: challengeName,
+    });
+    pushChallengeActivity(challengeName, "resume requested", "ok");
+    pushServerActivity(payload?.result, "ok");
+    await fetchStatus();
+  } catch (error) {
+    pushChallengeActivity(challengeName, `resume failed: ${error.message}`, "error");
   }
 }
 
@@ -1256,9 +1546,13 @@ function bindEvents() {
     state.traceTypeFilter = els.traceTypeFilter.value;
     renderTraceTable();
   });
-  els.hideErrorLanesToggle.addEventListener("change", () => {
-    state.hideErrorLanes = els.hideErrorLanesToggle.checked;
+  els.hideErrorLanes.addEventListener("change", () => {
+    state.hideErrorLanes = Boolean(els.hideErrorLanes.checked);
+    syncSelections();
     render();
+    if (state.selectedChallenge && state.selectedLane) {
+      fetchTraceFiles();
+    }
   });
   els.traceTextFilter.addEventListener("input", () => {
     state.traceTextFilter = els.traceTextFilter.value.trim();
@@ -1267,6 +1561,10 @@ function bindEvents() {
   els.msgForm.addEventListener("submit", handleCoordinatorMessage);
   els.laneBumpForm.addEventListener("submit", handleLaneBump);
   els.challengeBumpForm.addEventListener("submit", handleChallengeBump);
+  els.maxChallengesForm.addEventListener("submit", handleMaxChallenges);
+  els.queuePriorityForm.addEventListener("submit", handlePriorityWaiting);
+  els.normalQueueBtn.addEventListener("click", handleNormalWaiting);
+  els.restartChallengeBtn.addEventListener("click", handleRestartChallenge);
   els.externalSolveForm.addEventListener("submit", handleExternalSolve);
   els.flagCandidatesList.addEventListener("click", handleCandidateAction);
 }

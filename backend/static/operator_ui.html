@@ -24,7 +24,7 @@
         </div>
         <div class="metric-pill">
           <span class="metric-label">Sync</span>
-          <strong id="syncMode">polling 2s</strong>
+          <strong id="syncMode">connecting...</strong>
         </div>
       </div>
     </header>
@@ -69,7 +69,7 @@
 
         <div class="trace-toolbar">
           <label class="toggle-inline">
-            <input id="hideErrorLanesToggle" type="checkbox" checked>
+            <input id="hideErrorLanes" type="checkbox">
             <span>Hide error lanes</span>
           </label>
           <label class="field-inline">
@@ -105,6 +105,26 @@
         </div>
 
         <section class="stack">
+          <div class="note-card scheduler-card">
+            <h3>Scheduler</h3>
+            <form class="composer-body compact-form scheduler-limit-form" id="maxChallengesForm">
+              <div class="scheduler-limit-row">
+                <label class="field-inline wide">
+                  <span>Max active challenges</span>
+                  <input id="maxChallengesInput" type="number" min="0" step="1" value="0">
+                </label>
+                <button type="submit">Apply</button>
+              </div>
+            </form>
+            <form class="composer-body compact-form scheduler-queue-form" id="queuePriorityForm">
+              <p class="scheduler-meta" id="selectedChallengeQueueMeta">Select a challenge to change queue priority.</p>
+              <div class="button-row scheduler-actions">
+                <button id="priorityWaitBtn" type="submit">Move to priority waiting</button>
+                <button id="normalQueueBtn" type="button">Restore normal waiting</button>
+                <button id="restartChallengeBtn" type="button">Resume previous work</button>
+              </div>
+            </form>
+          </div>
           <div class="note-card">
             <h3>Coordinator Advisory</h3>
             <p id="coordinatorAdvisoryText">-</p>

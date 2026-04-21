@@ -36,6 +36,8 @@ class _FakeSwarm:
         self.approved: list[str] = []
         self.rejected: list[str] = []
         self.external_solved: list[str] = []
+        self.killed: list[str] = []
+        self.requeue_requested: tuple[bool, str] | None = None
 
     async def approve_flag_candidate(self, flag: str, *, approved_by: str = "operator_local") -> str:
         self.approved.append(f"{approved_by}:{flag}")
@@ -64,6 +66,12 @@ class _FakeSwarm:
         if note:
             display = f"{display} Note: {note}"
         return display
+
+    def request_requeue(self, *, priority: bool = False, reason: str = "queued") -> None:
+        self.requeue_requested = (priority, reason)
+
+    def kill(self, reason: str = "swarm cancelled") -> None:
+        self.killed.append(reason)
 
 
 async def _get_json(port: int, path: str) -> tuple[str, dict]:
@@ -705,6 +713,136 @@ def test_mark_solved_endpoint_persists_result_without_active_swarm(tmp_path: Pat
     assert (challenge_dir / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{external}"
 
 
+def test_set_max_challenges_endpoint_updates_runtime_limit() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=type("Settings", (), {"max_concurrent_challenges": 4})(),
+        max_concurrent_challenges=4,
+    )
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/set-max-challenges",
+                {"max_active": 6},
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload["max_concurrent_challenges"] == 6
+    assert deps.max_concurrent_challenges == 6
+
+
+def test_set_challenge_priority_endpoint_marks_pending_priority_waiting() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    deps.pending_swarm_queue.append("queued-one")
+    deps.pending_swarm_set.add("queued-one")
+    deps.pending_swarm_meta["queued-one"] = {
+        "priority": False,
+        "reason": "queued",
+        "enqueued_at": 1.0,
+    }
+    deps.results["queued-one"] = {"status": "pending"}
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/set-challenge-priority",
+                {"challenge_name": "queued-one", "priority": True},
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload["result"] == 'Challenge "queued-one" moved to priority waiting.'
+    assert deps.pending_swarm_meta["queued-one"]["priority"] is True
+    assert deps.pending_swarm_meta["queued-one"]["reason"] == "priority_waiting"
+
+
+def test_set_challenge_priority_endpoint_pauses_active_swarm() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Priority Me"] = swarm
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/set-challenge-priority",
+                {"challenge_name": "Priority Me", "priority": True},
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload["result"] == 'Pausing "Priority Me" and returning it to priority waiting.'
+    assert swarm.requeue_requested == (True, "priority_waiting")
+    assert swarm.killed == ["operator moved Priority Me to priority waiting"]
+
+
+def test_restart_challenge_endpoint_requeues_active_swarm() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    solver = _FakeSolver()
+    swarm = _FakeSwarm("codex/gpt-5.4", solver)
+    deps.swarms["Restart Me"] = swarm
+
+    async def _exercise() -> tuple[str, dict]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            return await _post_json(
+                port,
+                "/api/runtime/resume-challenge",
+                {"challenge_name": "Restart Me"},
+            )
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    status_line, payload = asyncio.run(_exercise())
+
+    assert status_line.startswith("HTTP/1.1 200")
+    assert payload["result"] == 'Resuming "Restart Me" after the current run stops.'
+    assert swarm.requeue_requested == (True, "resume_requested")
+    assert swarm.killed == ["operator resuming Restart Me"]
+
+
 def test_ui_endpoint_serves_browser_console() -> None:
     deps = CoordinatorDeps(
         ctfd=cast(Any, object()),
@@ -965,6 +1103,63 @@ def test_trace_files_do_not_mix_codex_and_codex_mini(tmp_path, monkeypatch) -> N
     assert mini_status.startswith("HTTP/1.1 200")
     assert regular_payload["trace_files"] == [regular_trace.name]
     assert mini_payload["trace_files"] == [mini_trace.name]
+
+
+def test_trace_files_allow_challenge_level_fallback_and_saved_solve_trace(tmp_path, monkeypatch) -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    challenge_dir = tmp_path / "challenges" / "sanity-check"
+    solve_dir = challenge_dir / "solve"
+    solve_dir.mkdir(parents=True)
+    lane_trace = logs_dir / "trace-sanity_check-gpt-5.4-20260421-120000.jsonl"
+    solve_trace = solve_dir / "trace.jsonl"
+    lane_trace.write_text(json.dumps({"ts": 1.0, "type": "start"}), encoding="utf-8")
+    solve_trace.write_text(
+        "\n".join(
+            [
+                json.dumps({"ts": 2.0, "type": "tool_call", "tool": "bash"}),
+                json.dumps({"ts": 3.0, "type": "model_response", "text": "saved trace"}),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    deps.challenge_dirs["sanity check"] = str(challenge_dir)
+    monkeypatch.chdir(tmp_path)
+
+    async def _exercise() -> tuple[tuple[str, dict], tuple[str, dict]]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            files = await _get_json(
+                port,
+                "/api/runtime/traces?challenge_name=sanity%20check",
+            )
+            window = await _get_json(
+                port,
+                "/api/runtime/trace-window?challenge_name=sanity%20check&trace_name=trace.jsonl&limit=10",
+            )
+            return files, window
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    files_resp, window_resp = asyncio.run(_exercise())
+    files_status, files_payload = files_resp
+    window_status, window_payload = window_resp
+
+    assert files_status.startswith("HTTP/1.1 200")
+    assert files_payload["lane_id"] == ""
+    assert files_payload["trace_files"] == [lane_trace.name, "trace.jsonl"]
+
+    assert window_status.startswith("HTTP/1.1 200")
+    assert window_payload["trace_name"] == "trace.jsonl"
+    assert [event["type"] for event in window_payload["events"]] == ["tool_call", "model_response"]
 
 
 def test_advisories_endpoint_returns_recent_unique_lane_notes(tmp_path, monkeypatch) -> None:

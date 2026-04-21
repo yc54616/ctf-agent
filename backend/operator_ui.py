@@ -82,18 +82,64 @@ def list_trace_files(
     )
 
 
+def list_ui_trace_files(
+    challenge_name: str,
+    model_spec: str | None = None,
+    *,
+    log_dir: str | Path = "logs",
+    challenge_dir: str | Path | None = None,
+) -> list[Path]:
+    """List trace files shown in the operator UI.
+
+    If a lane is selected, prefer lane-specific traces. Otherwise fall back to
+    all challenge traces. Include saved solve/trace.jsonl when available so
+    pending/finished challenges still expose their persisted trace.
+    """
+    if model_spec:
+        traces = list_trace_files(challenge_name, model_spec, log_dir=log_dir)
+    else:
+        traces = list_challenge_trace_files(challenge_name, log_dir=log_dir)
+
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for trace in traces:
+        resolved = trace.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        ordered.append(trace)
+
+    if challenge_dir:
+        solve_trace = Path(challenge_dir) / "solve" / "trace.jsonl"
+        if solve_trace.exists():
+            resolved = solve_trace.resolve()
+            if resolved not in seen:
+                ordered.append(solve_trace)
+
+    return ordered
+
+
 def read_trace_window(
     challenge_name: str,
-    model_spec: str,
+    model_spec: str | None,
     trace_name: str,
     *,
     cursor: int | None = None,
     limit: int = TRACE_LIMIT_DEFAULT,
     log_dir: str | Path = "logs",
+    challenge_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Read a validated JSONL trace window."""
     clamped_limit = max(1, min(int(limit), TRACE_LIMIT_MAX))
-    candidates = {path.name: path for path in list_trace_files(challenge_name, model_spec, log_dir=log_dir)}
+    candidates = {
+        path.name: path
+        for path in list_ui_trace_files(
+            challenge_name,
+            model_spec,
+            log_dir=log_dir,
+            challenge_dir=challenge_dir,
+        )
+    }
     trace_path = candidates.get(trace_name)
     if trace_path is None:
         raise FileNotFoundError(trace_name)

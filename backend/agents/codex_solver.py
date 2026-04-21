@@ -46,6 +46,7 @@ from backend.solver_base import (
     QUOTA_ERROR,
     LaneRuntimeStatus,
     SolverResult,
+    candidate_report_was_accepted,
     lifecycle_for_result,
     summarize_tool_input,
     summarize_tool_result,
@@ -807,18 +808,23 @@ class CodexSolver:
         cleaned_flag = flag.strip()
         if not cleaned_flag:
             return "Flag candidate rejected: empty flag."
-        self._candidate_flag = cleaned_flag
-        self._candidate_evidence = evidence.strip()
-        self._candidate_confidence = confidence.strip() or "medium"
         if not self.report_flag_candidate_fn:
+            self._candidate_flag = cleaned_flag
+            self._candidate_evidence = evidence.strip()
+            self._candidate_confidence = confidence.strip() or "medium"
             return f"Flag candidate noted locally: {cleaned_flag}"
-        return await self.report_flag_candidate_fn(
+        ack = await self.report_flag_candidate_fn(
             cleaned_flag,
-            self._candidate_evidence,
-            self._candidate_confidence,
+            evidence.strip(),
+            confidence.strip() or "medium",
             self._step_count,
             self.tracer.path,
         )
+        if candidate_report_was_accepted(ack):
+            self._candidate_flag = cleaned_flag
+            self._candidate_evidence = evidence.strip()
+            self._candidate_confidence = confidence.strip() or "medium"
+        return ack
 
     def get_runtime_status(self) -> dict[str, object]:
         snapshot = self._runtime.snapshot()
@@ -904,19 +910,19 @@ class CodexSolver:
                 return self._result(ERROR)
 
             if self._structured_output and self._structured_output.get("type") == "flag_candidate":
-                self._candidate_flag = str(self._structured_output.get("flag") or "").strip() or None
-                self._candidate_evidence = str(self._structured_output.get("method", "") or "").strip()
-                self._candidate_confidence = "medium"
-                if self._candidate_flag:
+                candidate_flag = str(self._structured_output.get("flag") or "").strip()
+                candidate_evidence = str(self._structured_output.get("method", "") or "").strip()
+                if candidate_flag:
                     ack = await self._report_flag_candidate(
-                        self._candidate_flag,
-                        evidence=self._candidate_evidence,
-                        confidence=self._candidate_confidence,
+                        candidate_flag,
+                        evidence=candidate_evidence,
+                        confidence="medium",
                     )
                     self._findings = (
-                        f"Flag candidate via {self._candidate_evidence or '?'}: {self._candidate_flag}\n{ack}"
+                        f"Flag candidate via {candidate_evidence or '?'}: {candidate_flag}\n{ack}"
                     )[:2000]
-                    return self._result(FLAG_CANDIDATE)
+                    if candidate_report_was_accepted(ack):
+                        return self._result(FLAG_CANDIDATE)
 
             if self._confirmed and self._flag:
                 return self._result(FLAG_FOUND)

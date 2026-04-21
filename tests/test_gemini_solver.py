@@ -113,6 +113,32 @@ async def test_gemini_report_flag_candidate_ipc_queues_candidate(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_gemini_rejected_candidate_does_not_set_candidate_state() -> None:
+    solver = _make_solver()
+
+    async def fake_report(flag: str, evidence: str, confidence: str, step_count: int, trace_path: str) -> str:
+        assert flag == "NOT_SOLVE"
+        assert evidence == "analysis marker"
+        assert confidence == "low"
+        assert step_count == 0
+        assert trace_path
+        return "Flag candidate rejected: placeholder sentinel."
+
+    solver.report_flag_candidate_fn = fake_report
+
+    ack = await solver._report_flag_candidate(
+        "NOT_SOLVE",
+        evidence="analysis marker",
+        confidence="low",
+    )
+
+    assert ack == "Flag candidate rejected: placeholder sentinel."
+    assert solver._candidate_flag is None
+    assert solver._candidate_evidence == ""
+    assert solver._candidate_confidence == ""
+
+
+@pytest.mark.asyncio
 async def test_gemini_watchdog_terminates_stalled_turn(monkeypatch) -> None:
     solver = GeminiSolver(
         model_spec="gemini/gemini-2.5-flash",

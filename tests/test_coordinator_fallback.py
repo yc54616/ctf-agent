@@ -68,6 +68,7 @@ async def test_run_coordinator_uses_codex_only(monkeypatch) -> None:
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
+        resume_mode=False,
         msg_port=9400,
     )
 
@@ -113,6 +114,7 @@ async def test_run_coordinator_ignores_non_codex_backend_argument(monkeypatch) -
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
+        resume_mode=False,
         msg_port=9400,
     )
 
@@ -173,6 +175,7 @@ async def test_run_coordinator_reuses_active_runtime(monkeypatch) -> None:
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
+        resume_mode=False,
         msg_port=9400,
     )
 
@@ -288,6 +291,136 @@ async def test_run_codex_coordinator_defaults_to_gpt_54(monkeypatch) -> None:
     assert result["results"] == {}
     assert result["total_cost_usd"] == 0.0
     assert result["shutdown_reason"] == "test shutdown"
+
+
+@pytest.mark.asyncio
+async def test_run_coordinator_skips_runtime_reset_in_resume_mode(monkeypatch) -> None:
+    startup_cleanup_called = {"value": False}
+
+    async def fake_cleanup() -> None:
+        startup_cleanup_called["value"] = True
+
+    def fake_configure(_max_containers: int) -> None:
+        return None
+
+    reset_called = {"value": False}
+
+    def fake_reset_runtime_state_dirs(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        reset_called["value"] = True
+        raise AssertionError("runtime reset should not run in resume mode")
+
+    monkeypatch.setattr("backend.sandbox.cleanup_orphan_containers", fake_cleanup)
+    monkeypatch.setattr("backend.sandbox.configure_semaphore", fake_configure)
+    monkeypatch.setattr("backend.cli._reset_runtime_state_dirs", fake_reset_runtime_state_dirs)
+    monkeypatch.setattr(
+        "backend.cli.build_deps",
+        lambda settings, model_specs, challenges_root, no_submit, local_mode: (
+            object(),
+            object(),
+            type(
+                "Deps",
+                (),
+                {
+                    "msg_port": 0,
+                    "results": {},
+                    "swarms": {},
+                    "swarm_tasks": {},
+                    "pending_swarm_queue": [],
+                    "pending_swarm_set": set(),
+                    "pending_swarm_meta": {},
+                },
+            )(),
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.cli.cleanup_coordinator_runtime",
+        lambda deps, ctfd, cost_tracker, **kwargs: asyncio.sleep(0),
+    )
+    monkeypatch.setattr(
+        "backend.cli.run_codex_coordinator",
+        lambda **kwargs: asyncio.sleep(0, result={"results": {}, "total_cost_usd": 0.0}),
+    )
+
+    await _run_coordinator(
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+        challenges_dir="challenges",
+        no_submit=True,
+        local_mode=False,
+        coordinator_model=None,
+        coordinator_backend="claude",
+        max_challenges=2,
+        resume_mode=True,
+        msg_port=9400,
+    )
+
+    assert reset_called["value"] is False
+    assert startup_cleanup_called["value"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_coordinator_restores_saved_pending_queue_in_resume_mode(monkeypatch) -> None:
+    async def fake_cleanup() -> None:
+        return None
+
+    def fake_configure(_max_containers: int) -> None:
+        return None
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    deps.results["resume-me"] = {"status": "pending"}
+    deps.results["hold-me"] = {
+        "status": "pending",
+        "requeue_requested": True,
+        "requeue_priority": True,
+        "requeue_reason": "priority_waiting",
+    }
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr("backend.sandbox.cleanup_orphan_containers", fake_cleanup)
+    monkeypatch.setattr("backend.sandbox.configure_semaphore", fake_configure)
+    monkeypatch.setattr(
+        "backend.cli.build_deps",
+        lambda settings, model_specs, challenges_root, no_submit, local_mode: (
+            object(),
+            CostTracker(),
+            deps,
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.cli.cleanup_coordinator_runtime",
+        lambda deps, ctfd, cost_tracker, **kwargs: fake_cleanup(),
+    )
+
+    async def run_codex(**kwargs):  # type: ignore[no-untyped-def]
+        captured["pending"] = list(kwargs["deps"].pending_swarm_queue)
+        captured["hold_reason"] = kwargs["deps"].pending_swarm_meta["hold-me"]["reason"]
+        captured["resume_reason"] = kwargs["deps"].pending_swarm_meta["resume-me"]["reason"]
+        return {"results": {}, "total_cost_usd": 0.0}
+
+    monkeypatch.setattr("backend.cli.run_codex_coordinator", run_codex)
+
+    await _run_coordinator(
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+        challenges_dir="challenges",
+        no_submit=True,
+        local_mode=False,
+        coordinator_model=None,
+        coordinator_backend="claude",
+        max_challenges=2,
+        resume_mode=True,
+        msg_port=9400,
+    )
+
+    assert captured["pending"] == ["hold-me", "resume-me"]
+    assert captured["hold_reason"] == "priority_waiting"
+    assert captured["resume_reason"] == "resume_requested"
 
 
 @pytest.mark.asyncio

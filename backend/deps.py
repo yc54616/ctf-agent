@@ -69,8 +69,13 @@ class CoordinatorDeps:
     challenge_metas: dict[str, Any] = field(default_factory=dict)
     pending_swarm_queue: deque[str] = field(default_factory=deque)
     pending_swarm_set: set[str] = field(default_factory=set)
+    pending_swarm_meta: dict[str, dict[str, object]] = field(default_factory=dict)
+    quota_exhausted_model_specs: set[str] = field(default_factory=set)
     known_challenge_count: int = 0
     known_solved_count: int = 0
     session_started_at: float = field(default_factory=time.time)
+    ctfd_refresh_backoff_until: float = 0.0
+    ctfd_refresh_backoff_failures: int = 0
+    ctfd_refresh_backoff_reason: str = ""
     shutdown_reason: str = ""
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)

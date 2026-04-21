@@ -36,6 +36,14 @@ class CTFdClient:
     _csrf_token: str = ""
     _logged_in: bool = False
     _challenge_ids: dict[str, int] = field(default_factory=dict)
+    _solved_names_cache: set[str] = field(default_factory=set)
+
+    @staticmethod
+    def _is_transient_solved_fetch_error(exc: Exception) -> bool:
+        if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
+            return True
+        message = str(exc).strip().lower()
+        return message.startswith("ctfd get timed out:") or message.startswith("ctfd post timed out:")
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -218,15 +226,26 @@ class CTFdClient:
                 if not user_id:
                     return set()
                 solves = await self._get(f"/users/{user_id}/solves")
-            return {
+            solved = {
                 s["challenge"]["name"]
                 for s in solves.get("data", [])
                 if s.get("challenge", {}).get("name")
             }
+            self._solved_names_cache = set(solved)
+            return solved
         except Exception as exc:
-            logger.warning("Could not fetch solved challenges: %s", exc)
-            logger.debug("Could not fetch solved challenges", exc_info=True)
-            return set()
+            cached = set(self._solved_names_cache)
+            if cached:
+                logger.warning(
+                    "Could not fetch solved challenges: %s; using cached solved set (%d entries)",
+                    exc,
+                    len(cached),
+                )
+            else:
+                logger.warning("Could not fetch solved challenges: %s", exc)
+            if not self._is_transient_solved_fetch_error(exc):
+                logger.debug("Could not fetch solved challenges", exc_info=True)
+            return cached
 
     async def pull_challenge(self, challenge: dict[str, Any], output_dir: str) -> str:
         """Download a challenge's distfiles and write metadata.yml.

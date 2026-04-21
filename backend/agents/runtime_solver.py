@@ -42,6 +42,7 @@ class InSandboxRuntimeSolver:
         notify_coordinator=None,
         sandbox: DockerSandbox | None = None,
         initial_step_count: int = 0,
+        warm_container_id: str = "",
     ) -> None:
         self.model_spec = model_spec
         self.challenge_dir = challenge_dir
@@ -79,6 +80,8 @@ class InSandboxRuntimeSolver:
             repo_root_dir=str(repo_root),
             challenge_src_dir=str(Path(challenge_dir).resolve()),
             auth_seed_mounts=auth_seed_mounts,
+            existing_container_id=str(warm_container_id or "").strip(),
+            preserve_stopped_container=True,
         )
         self._runtime = LaneRuntimeStatus()
         self._event_offset = 0
@@ -431,7 +434,16 @@ PY"""
         self._hard_reset_count += 1
         self._soft_reset_count = 0
         old_sandbox = self.sandbox
-        await old_sandbox.stop()
+        workspace_dir = old_sandbox.workspace_dir
+        shared_artifacts_dir = old_sandbox.shared_artifacts_dir
+        control_dir = old_sandbox.control_dir
+        provider_home_dir = old_sandbox.provider_home_dir
+        trace_dir = old_sandbox.trace_dir
+        repo_root_dir = old_sandbox.repo_root_dir
+        challenge_src_dir = old_sandbox.challenge_src_dir
+        auth_seed_mounts = dict(old_sandbox.auth_seed_mounts)
+        preserve_stopped_container = old_sandbox.preserve_stopped_container
+        await old_sandbox.stop(delete=True)
         self.sandbox = DockerSandbox(
             image=old_sandbox.image,
             challenge_dir=old_sandbox.challenge_dir,
@@ -439,14 +451,15 @@ PY"""
             exec_output_spill_threshold_bytes=old_sandbox.exec_output_spill_threshold_bytes,
             read_file_spill_threshold_bytes=old_sandbox.read_file_spill_threshold_bytes,
             artifact_preview_bytes=old_sandbox.artifact_preview_bytes,
-            workspace_dir=old_sandbox.workspace_dir,
-            shared_artifacts_dir=old_sandbox.shared_artifacts_dir,
-            control_dir=old_sandbox.control_dir,
-            provider_home_dir=old_sandbox.provider_home_dir,
-            trace_dir=old_sandbox.trace_dir,
-            repo_root_dir=old_sandbox.repo_root_dir,
-            challenge_src_dir=old_sandbox.challenge_src_dir,
-            auth_seed_mounts=dict(old_sandbox.auth_seed_mounts),
+            workspace_dir=workspace_dir,
+            shared_artifacts_dir=shared_artifacts_dir,
+            control_dir=control_dir,
+            provider_home_dir=provider_home_dir,
+            trace_dir=trace_dir,
+            repo_root_dir=repo_root_dir,
+            challenge_src_dir=challenge_src_dir,
+            auth_seed_mounts=auth_seed_mounts,
+            preserve_stopped_container=preserve_stopped_container,
         )
         await self.sandbox.start()
         self._write_runtime_config()

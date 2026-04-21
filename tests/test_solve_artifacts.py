@@ -12,7 +12,7 @@ from backend.agents.swarm import ChallengeSwarm, FlagCandidateRecord
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
 from backend.prompts import ChallengeMeta
-from backend.solver_base import FLAG_FOUND, SolverResult
+from backend.solver_base import CANCELLED, FLAG_FOUND, SolverResult
 
 
 class _FakeSandbox:
@@ -27,6 +27,103 @@ class _FakeSolver:
 
     async def stop_process(self) -> None:
         self.process_stopped += 1
+
+
+class _TaskCancellationSolver:
+    def __init__(self, workspace_dir: Path) -> None:
+        self.sandbox = _FakeSandbox(workspace_dir)
+        self.started = 0
+        self.process_stopped = 0
+        self.stopped = 0
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def run_until_done_or_gave_up(self) -> SolverResult:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    def get_runtime_status(self) -> dict[str, object]:
+        return {"lifecycle": "busy"}
+
+    def mark_terminal_status(self, status: str) -> None:
+        return None
+
+    async def stop_process(self) -> None:
+        self.process_stopped += 1
+
+    async def stop(self) -> None:
+        self.stopped += 1
+
+
+class _AutoSubmitSolver(_TaskCancellationSolver):
+    def __init__(self, workspace_dir: Path, *, swarm: ChallengeSwarm, model_spec: str) -> None:
+        super().__init__(workspace_dir)
+        self._swarm = swarm
+        self._model_spec = model_spec
+        self._released = asyncio.Event()
+        self._submitted = False
+
+    async def run_until_done_or_gave_up(self) -> SolverResult:
+        if not self._submitted:
+            self._submitted = True
+            await asyncio.sleep(0)
+            await self._swarm.report_flag_candidate(
+                "flag{ctfd}",
+                self._model_spec,
+                evidence="confirmed by automatic CTFd submit",
+                confidence="high",
+                step_count=7,
+                trace_path="",
+            )
+        await self._released.wait()
+        return SolverResult(
+            flag=None,
+            status=CANCELLED,
+            findings_summary="solver stopped after CTFd confirmation",
+            step_count=7,
+            cost_usd=0.0,
+            log_path="",
+        )
+
+    async def stop_process(self) -> None:
+        self.process_stopped += 1
+        self._released.set()
+
+
+class _AutoSubmitIncorrectSolver(_TaskCancellationSolver):
+    def __init__(self, workspace_dir: Path, *, swarm: ChallengeSwarm, model_spec: str) -> None:
+        super().__init__(workspace_dir)
+        self._swarm = swarm
+        self._model_spec = model_spec
+        self._released = asyncio.Event()
+        self._submitted = False
+
+    async def run_until_done_or_gave_up(self) -> SolverResult:
+        if not self._submitted:
+            self._submitted = True
+            await asyncio.sleep(0)
+            await self._swarm.report_flag_candidate(
+                "flag{incorrect}",
+                self._model_spec,
+                evidence="candidate was auto-submitted and rejected",
+                confidence="high",
+                step_count=7,
+                trace_path="",
+            )
+        await self._released.wait()
+        return SolverResult(
+            flag=None,
+            status=CANCELLED,
+            findings_summary="solver stopped after CTFd rejection",
+            step_count=7,
+            cost_usd=0.0,
+            log_path="",
+        )
+
+    async def stop_process(self) -> None:
+        self.process_stopped += 1
+        self._released.set()
 
 
 def test_persist_solved_artifacts_writes_workspace_trace_and_writeup(tmp_path: Path) -> None:
@@ -256,6 +353,218 @@ async def test_manual_candidate_approval_persists_solved_artifacts(tmp_path: Pat
     assert (challenge_dir / "solve" / "workspace" / "exploit.sh").exists()
     assert (challenge_dir / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{local}"
     assert cast(_FakeSolver, swarm.solvers["codex/gpt-5.4"]).process_stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_candidate_approval_cancels_active_swarm_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    challenge_dir = tmp_path / "challenge-live"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    created: list[_TaskCancellationSolver] = []
+
+    def fake_create_solver(self: ChallengeSwarm, model_spec: str, *, sandbox=None, initial_step_count: int = 0):
+        del self, model_spec, sandbox, initial_step_count
+        solver = _TaskCancellationSolver(workspace_dir)
+        created.append(solver)
+        return solver
+
+    monkeypatch.setattr(ChallengeSwarm, "_create_solver", fake_create_solver)
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-live", category="web", value=200),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+    )
+    swarm.flag_candidates["flag{live}"] = FlagCandidateRecord(
+        normalized_flag="flag{live}",
+        raw_flag="flag{live}",
+        status="pending",
+        source_models={"codex/gpt-5.4"},
+        step_counts={"codex/gpt-5.4": 5},
+        evidence_snippets=["candidate found during active run"],
+    )
+
+    run_task = asyncio.create_task(swarm.run())
+    for _ in range(20):
+        if created and created[0].started:
+            break
+        await asyncio.sleep(0)
+
+    display = await swarm.approve_flag_candidate("flag{live}", approved_by="operator_manual")
+    result = await asyncio.wait_for(run_task, timeout=1)
+
+    assert display.startswith('USER CONFIRMED MANUALLY — "flag{live}" marked solved without CTFd confirmation.')
+    assert result is not None
+    assert result.status == FLAG_FOUND
+    assert created[0].process_stopped == 1
+    assert created[0].stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_candidate_rejection_cancels_active_swarm_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    challenge_dir = tmp_path / "challenge-reject-live"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    created: list[_TaskCancellationSolver] = []
+
+    def fake_create_solver(self: ChallengeSwarm, model_spec: str, *, sandbox=None, initial_step_count: int = 0):
+        del self, model_spec, sandbox, initial_step_count
+        solver = _TaskCancellationSolver(workspace_dir)
+        created.append(solver)
+        return solver
+
+    monkeypatch.setattr(ChallengeSwarm, "_create_solver", fake_create_solver)
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-reject-live", category="web", value=200),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+    )
+    swarm.flag_candidates["flag{live}"] = FlagCandidateRecord(
+        normalized_flag="flag{live}",
+        raw_flag="flag{live}",
+        status="pending",
+        source_models={"codex/gpt-5.4"},
+        step_counts={"codex/gpt-5.4": 5},
+        evidence_snippets=["candidate found during active run"],
+    )
+    swarm.paused_candidate_flag = "flag{live}"
+
+    run_task = asyncio.create_task(swarm.run())
+    for _ in range(20):
+        if created and created[0].started:
+            break
+        await asyncio.sleep(0)
+
+    display = await swarm.reject_flag_candidate("flag{live}", rejected_by="operator_manual")
+    result = await asyncio.wait_for(run_task, timeout=1)
+
+    assert display.startswith('USER REJECTED — "flag{live}" dismissed by operator review.')
+    assert result is None
+    assert swarm.requeue_requested is True
+    assert swarm.requeue_reason == "candidate_retry"
+    assert created[0].process_stopped == 1
+    assert created[0].stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_ctfd_confirmation_stops_active_swarm_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    challenge_dir = tmp_path / "challenge-ctfd"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    class _FakeSubmitCTFd:
+        async def submit_flag(self, challenge_name: str, flag: str):
+            assert challenge_name == "challenge-ctfd"
+            assert flag == "flag{ctfd}"
+            from backend.ctfd import SubmitResult
+
+            return SubmitResult("correct", "accepted", 'CORRECT — "flag{ctfd}" accepted.')
+
+    created: dict[str, _TaskCancellationSolver] = {}
+
+    def fake_create_solver(self: ChallengeSwarm, model_spec: str, *, sandbox=None, initial_step_count: int = 0):
+        del sandbox, initial_step_count
+        if model_spec == "codex/gpt-5.4":
+            solver = _AutoSubmitSolver(workspace_dir, swarm=self, model_spec=model_spec)
+        else:
+            solver = _TaskCancellationSolver(workspace_dir)
+        created[model_spec] = solver
+        return solver
+
+    monkeypatch.setattr(ChallengeSwarm, "_create_solver", fake_create_solver)
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-ctfd", category="web", value=200),
+        ctfd=cast(Any, _FakeSubmitCTFd()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4", "gemini/gemini-2.5-flash"],
+    )
+
+    result = await asyncio.wait_for(swarm.run(), timeout=1)
+
+    assert result is not None
+    assert result.status == FLAG_FOUND
+    assert swarm.confirmed_flag == "flag{ctfd}"
+    assert created["codex/gpt-5.4"].process_stopped == 1
+    assert created["codex/gpt-5.4"].stopped == 1
+    assert created["gemini/gemini-2.5-flash"].process_stopped == 1
+    assert created["gemini/gemini-2.5-flash"].stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_ctfd_incorrect_requeues_and_cancels_active_swarm_tasks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    challenge_dir = tmp_path / "challenge-incorrect"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    class _FakeRejectCTFd:
+        async def submit_flag(self, challenge_name: str, flag: str):
+            assert challenge_name == "challenge-incorrect"
+            assert flag == "flag{incorrect}"
+            from backend.ctfd import SubmitResult
+
+            return SubmitResult("incorrect", "rejected", 'INCORRECT — "flag{incorrect}" rejected.')
+
+    created: dict[str, _TaskCancellationSolver] = {}
+
+    def fake_create_solver(self: ChallengeSwarm, model_spec: str, *, sandbox=None, initial_step_count: int = 0):
+        del sandbox, initial_step_count
+        solver = _AutoSubmitIncorrectSolver(workspace_dir, swarm=self, model_spec=model_spec)
+        created[model_spec] = solver
+        return solver
+
+    monkeypatch.setattr(ChallengeSwarm, "_create_solver", fake_create_solver)
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-incorrect", category="web", value=200),
+        ctfd=cast(Any, _FakeRejectCTFd()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+    )
+
+    result = await asyncio.wait_for(swarm.run(), timeout=1)
+
+    assert result is None
+    assert swarm.requeue_requested is True
+    assert swarm.requeue_reason == "candidate_retry"
+    assert swarm.flag_candidates["flag{incorrect}"].status == "incorrect"
+    assert created["codex/gpt-5.4"].process_stopped == 1
+    assert created["codex/gpt-5.4"].stopped == 1
 
 
 @pytest.mark.asyncio

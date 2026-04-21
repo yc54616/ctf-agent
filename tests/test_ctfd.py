@@ -41,6 +41,24 @@ async def test_fetch_solved_names_logs_single_line_on_connect_error(caplog) -> N
 
 
 @pytest.mark.asyncio
+async def test_fetch_solved_names_uses_cached_set_on_timeout(caplog) -> None:
+    client = CTFdClient(base_url="https://ctfd.example", token="token")
+    client._solved_names_cache = {"welcome", "web-100"}
+
+    async def _boom(_path: str):  # type: ignore[no-untyped-def]
+        raise RuntimeError("CTFd GET timed out: /api/v1/users/me")
+
+    client._get = cast(Any, _boom)
+
+    with caplog.at_level(logging.WARNING):
+        solved = await client.fetch_solved_names()
+
+    assert solved == {"welcome", "web-100"}
+    assert "using cached solved set (2 entries)" in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_fetch_all_challenges_skips_missing_detail_404(caplog) -> None:
     client = CTFdClient(base_url="https://ctfd.example", token="token")
 

@@ -10,7 +10,7 @@ from typing import Any, cast
 from backend.agents.swarm import ChallengeSwarm, LaneRestartState
 from backend.message_bus import SharedFindingRef
 from backend.prompts import ChallengeMeta, build_prompt
-from backend.solver_base import ERROR, GAVE_UP, SolverResult
+from backend.solver_base import CANCELLED, ERROR, GAVE_UP, SolverResult
 
 
 class _FakeSandbox:
@@ -863,3 +863,93 @@ def test_lane_digest_updates_only_on_change(tmp_path: Path) -> None:
     assert "# Artifact Digest" in digest_text
     assert "token-456" in digest_text
     assert "/api/auth" in digest_text
+
+
+def test_requeue_resume_packets_restore_into_next_swarm_run(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge"
+    challenge_dir.mkdir()
+    model_spec = "codex/gpt-5.4"
+    result_store = {
+        "Resume Me": {
+            "status": "pending",
+            "resume_packets": {
+                model_spec: "Previous challenge run was paused before completion. Continue from the prior work.",
+            },
+        }
+    }
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="Resume Me", category="web"),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
+        result_store=result_store,
+        model_specs=[model_spec],
+    )
+
+    solver = _QueuedSolver(
+        model_spec=model_spec,
+        sandbox=_FakeSandbox(),
+        runtime_status={"lifecycle": "idle", "step_count": 9},
+        results=[
+            SolverResult(
+                flag=None,
+                status=CANCELLED,
+                findings_summary="paused by operator",
+                step_count=9,
+                cost_usd=0.0,
+                log_path="",
+            )
+        ],
+    )
+
+    def _fake_create_solver(spec: str, *, sandbox=None, initial_step_count: int = 0):
+        assert spec == model_spec
+        return solver
+
+    swarm._create_solver = cast(Any, _fake_create_solver)
+
+    result = asyncio.run(swarm._run_solver(model_spec))
+
+    assert result is not None
+    assert solver.started == 1
+    assert solver.bumped == ["Previous challenge run was paused before completion. Continue from the prior work."]
+    assert model_spec not in swarm._resume_packets
+
+
+def test_swarm_runtime_state_tracks_warm_container_ids(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge"
+    challenge_dir.mkdir()
+    model_spec = "codex/gpt-5.4"
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="Warm Resume", category="web"),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
+        model_specs=[model_spec],
+    )
+    solver = _FakeSolver(
+        model_spec=model_spec,
+        sandbox=SimpleNamespace(resume_container_id="warm-abc123"),
+        runtime_status={"lifecycle": "idle", "step_count": 4},
+    )
+    swarm.solvers[model_spec] = solver
+
+    payload = swarm._runtime_result_payload()
+
+    assert payload["warm_container_ids"] == {model_spec: "warm-abc123"}
+
+    restored = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="Warm Resume", category="web"),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
+        model_specs=[model_spec],
+        result_store={"Warm Resume": payload},
+    )
+
+    assert restored._warm_container_ids == {model_spec: "warm-abc123"}

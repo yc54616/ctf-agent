@@ -16,6 +16,17 @@ QUOTA_ERROR = "quota_error"
 
 # Flag confirmation markers from CTFd
 CORRECT_MARKERS = ("CORRECT", "ALREADY SOLVED")
+
+
+def candidate_report_was_rejected(reply: object) -> bool:
+    normalized = " ".join(str(reply or "").split()).lower()
+    return normalized.startswith("flag candidate rejected:")
+
+
+def candidate_report_was_accepted(reply: object) -> bool:
+    return not candidate_report_was_rejected(reply)
+
+
 def _compact_runtime_text(value: object, limit: int = 160) -> str:
     text = str(value or "")
     text = " ".join(text.split())

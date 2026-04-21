@@ -62,8 +62,9 @@ ADVISOR_LISTENER_INTERVAL_SECONDS = 2.0
 ADVISOR_COORDINATOR_TIMEOUT_SECONDS = 8.0
 ADVISOR_LANE_HINT_TIMEOUT_SECONDS = 30.0
 ADVISOR_TIMEOUT_BACKOFF_AFTER_CONSECUTIVE_TIMEOUTS = 2
-ADVISOR_TIMEOUT_BACKOFF_SECONDS = 120.0
-ADVISOR_TIMEOUT_BACKOFF_LOG_BUCKET_SECONDS = 30.0
+ADVISOR_TIMEOUT_BACKOFF_BASE_SECONDS = 20.0
+ADVISOR_TIMEOUT_BACKOFF_MAX_SECONDS = 60.0
+ADVISOR_TIMEOUT_BACKOFF_LOG_BUCKET_SECONDS = 15.0
 ADVISOR_ARTIFACT_PREVIEW_MAX_FILES = 3
 ADVISOR_ARTIFACT_PREVIEW_BYTES = 2048
 ADVISOR_ARTIFACT_ESCALATED_MAX_FILES = 1
@@ -91,6 +92,26 @@ PROACTIVE_CONTEXT_REFRESH_MIN_STEPS = 180
 FLAG_CANDIDATE_SENTINEL_COMPACTS = frozenset(
     {
         "noflagseen",
+        "noflagyet",
+        "noflagfound",
+        "flagnotfound",
+        "nosolve",
+        "nosolveyet",
+        "notsolve",
+        "notsolved",
+        "notsolvedyet",
+        "notsolveremoterefused",
+        "notsolvedremoterefused",
+        "notfound",
+        "pending",
+        "queued",
+        "submitted",
+        "correct",
+        "incorrect",
+        "accepted",
+        "rejected",
+        "alreadysolved",
+        "cooldown",
         "none",
         "null",
         "unknown",
@@ -103,18 +124,50 @@ FLAG_CANDIDATE_PLACEHOLDER_COMPACTS = frozenset(
     {
         "flag",
         "fakeflag",
+        "extremelyfakeflag",
         "placeholder",
         "dummy",
+        "dummyflag",
         "exampleflag",
         "sampleflag",
         "noflagseen",
+        "noflagyet",
+        "noflagfound",
+        "flagnotfound",
+        "nosolve",
+        "nosolveyet",
+        "notsolve",
+        "notsolved",
+        "notsolvedyet",
+        "notsolveremoterefused",
+        "notsolvedremoterefused",
+        "notfound",
+        "placeholderflag",
+        "fakeflaghere",
+        "flaggoeshere",
         "insertflaghere",
         "putflaghere",
         "yourflaghere",
         "notaflag",
         "notrealflag",
+        "nottheflag",
+        "nottherealflag",
+        "thisisnottheflag",
+        "thisisnottherealflag",
+        "testingflag",
+        "testflag",
+        "flagfortesting",
         "reflect",
         "reflection",
+    }
+)
+FLAG_CANDIDATE_ANALYSIS_LABEL_TOKENS = frozenset(
+    {
+        "advisory",
+        "analysis",
+        "finding",
+        "status",
+        "summary",
     }
 )
 FLAG_CANDIDATE_PLACEHOLDER_TOKENS = frozenset(
@@ -127,6 +180,7 @@ FLAG_CANDIDATE_PLACEHOLDER_TOKENS = frozenset(
         "sample",
         "no",
         "seen",
+        "yet",
         "insert",
         "put",
         "your",
@@ -403,6 +457,7 @@ class ChallengeSwarm:
     settings: Settings
     result_store: dict[str, dict[str, object]] | None = None
     model_specs: list[str] = field(default_factory=lambda: list(DEFAULT_MODELS))
+    disabled_model_specs: set[str] | None = None
     no_submit: bool = False
     local_mode: bool = False
     coordinator_inbox: asyncio.Queue | None = None
@@ -423,6 +478,11 @@ class ChallengeSwarm:
     shared_artifacts_dir: Path = field(init=False)
     winner_model_spec: str | None = None
     winner_confirmation_source: str = ""
+    started_at: float = field(default_factory=time.time)
+    paused_candidate_flag: str = ""
+    requeue_requested: bool = False
+    requeue_priority: bool = False
+    requeue_reason: str = ""
     saved_solve_artifacts: dict[str, str] = field(default_factory=dict)
     last_advisor_note: str = ""
     last_coordinator_advisor_note: str = ""
@@ -434,6 +494,8 @@ class ChallengeSwarm:
     _save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _advisors: dict[str, AdvisorProtocol] = field(default_factory=dict, init=False, repr=False)
     _background_tasks: set[asyncio.Task] = field(default_factory=set, init=False, repr=False)
+    _solver_tasks: set[asyncio.Task[SolverResult | None]] = field(default_factory=set, init=False, repr=False)
+    _stopped_process_models: set[str] = field(default_factory=set, init=False, repr=False)
     _lane_restart_state: dict[str, LaneRestartState] = field(default_factory=dict, init=False, repr=False)
     _lane_restart_notes: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _lane_advisory_fingerprints: dict[str, str] = field(default_factory=dict, init=False, repr=False)
@@ -441,6 +503,8 @@ class ChallengeSwarm:
     _artifact_manifest_entries: list[dict[str, str]] = field(default_factory=list, init=False, repr=False)
     _artifact_digest_cache: dict[str, tuple[str, str, str]] = field(default_factory=dict, init=False, repr=False)
     _lane_seen_digest_revisions: dict[str, dict[str, str]] = field(default_factory=dict, init=False, repr=False)
+    _resume_packets: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _warm_container_ids: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _manifest_cache_signature: str = field(default="", init=False, repr=False)
     _manifest_cache_lines: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
     _sticky_advisor_backend: str | None = field(default=None, init=False, repr=False)
@@ -463,6 +527,9 @@ class ChallengeSwarm:
             self.confirmed_flag = str(persisted.get("flag") or "").strip() or None
             self.winner_model_spec = str(persisted.get("winner_model") or "").strip() or None
             self.winner_confirmation_source = str(persisted.get("confirmation_source") or "").strip()
+        persisted_started_at = _float_from_object(persisted.get("started_at"))
+        if persisted_started_at:
+            self.started_at = persisted_started_at
         self.last_advisor_note = str(persisted.get("advisor_note") or "")
         self.last_coordinator_advisor_note = str(persisted.get("coordinator_advisor_note") or "")
         self.last_shared_finding = str(persisted.get("shared_finding") or "")
@@ -484,6 +551,18 @@ class ChallengeSwarm:
                 restored = FlagCandidateRecord.from_snapshot(str(normalized_flag), payload)
                 if restored is not None:
                     self.flag_candidates[restored.normalized_flag] = restored
+        raw_resume_packets = persisted.get("resume_packets", {})
+        if isinstance(raw_resume_packets, dict):
+            for model_spec, packet in raw_resume_packets.items():
+                packet_text = str(packet or "").strip()
+                if packet_text:
+                    self._resume_packets[str(model_spec)] = packet_text
+        raw_warm_container_ids = persisted.get("warm_container_ids", {})
+        if isinstance(raw_warm_container_ids, dict):
+            for model_spec, container_id in raw_warm_container_ids.items():
+                container_text = str(container_id or "").strip()
+                if container_text:
+                    self._warm_container_ids[str(model_spec)] = container_text
 
     def _runtime_step_count(self) -> int:
         total = 0
@@ -494,13 +573,18 @@ class ChallengeSwarm:
         return total
 
     def _runtime_result_payload(self) -> dict[str, object]:
+        pending_candidate = any(
+            str(record.status or "").strip().lower() not in {"confirmed", "rejected"}
+            for record in self.flag_candidates.values()
+        )
         status = FLAG_FOUND if self.confirmed_flag else (
-            "candidate_pending" if self.flag_candidates else "pending"
+            "candidate_pending" if pending_candidate else "pending"
         )
         payload: dict[str, object] = {
             "challenge_name": self.meta.name,
             "status": status,
             "step_count": self._runtime_step_count(),
+            "started_at": self.started_at,
             "advisor_note": self.last_advisor_note,
             "coordinator_advisor_note": self.last_coordinator_advisor_note,
             "shared_finding": self.last_shared_finding,
@@ -511,12 +595,28 @@ class ChallengeSwarm:
                 for model_spec, finding in sorted(self.shared_finding_events.items())
             },
             "shared_artifacts_path": str(self.shared_artifacts_dir.resolve()),
+            "paused_candidate_flag": self.paused_candidate_flag,
+            "requeue_requested": self.requeue_requested,
+            "requeue_priority": self.requeue_priority,
+            "requeue_reason": self.requeue_reason,
             "flag_candidates": {
                 flag: record.snapshot()
                 for flag, record in sorted(self.flag_candidates.items())
             },
             "saved_at": datetime.now(UTC).isoformat(),
         }
+        warm_container_ids = dict(self._warm_container_ids)
+        for model_spec, solver in self.solvers.items():
+            sandbox = getattr(solver, "sandbox", None)
+            container_id = str(getattr(sandbox, "resume_container_id", "") or "").strip()
+            if container_id:
+                warm_container_ids[model_spec] = container_id
+        if warm_container_ids:
+            payload["warm_container_ids"] = {
+                model_spec: container_id
+                for model_spec, container_id in sorted(warm_container_ids.items())
+                if str(container_id or "").strip()
+            }
         if self.confirmed_flag:
             payload["flag"] = self.confirmed_flag
             payload["winner_model"] = self.winner_model_spec or ""
@@ -550,6 +650,41 @@ class ChallengeSwarm:
 
             result_path = solve_dir / "result.json"
             result_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def request_requeue(self, *, priority: bool = False, reason: str = "queued") -> None:
+        self.requeue_requested = True
+        self.requeue_priority = bool(priority)
+        self.requeue_reason = reason
+
+    def clear_requeue_request(self) -> None:
+        self.requeue_requested = False
+        self.requeue_priority = False
+        self.requeue_reason = ""
+
+    def _note_quota_exhausted_model(self, model_spec: str) -> None:
+        if self.disabled_model_specs is None:
+            return
+        if model_spec in self.disabled_model_specs:
+            return
+        self.disabled_model_specs.add(model_spec)
+        logger.warning(
+            "[%s] Session-disabled model after quota exhaustion: %s",
+            self.meta.name,
+            model_spec,
+        )
+
+    async def _pause_for_candidate(self, normalized_flag: str, source_model: str) -> None:
+        if self.confirmed_flag:
+            return
+        self.paused_candidate_flag = normalized_flag
+        self.clear_requeue_request()
+        self._set_all_solver_stop_reasons(
+            f"candidate awaiting review for {self.meta.name}",
+            exclude={source_model},
+        )
+        await self._stop_solver_processes(exclude={source_model})
+        self.cancel_event.set()
+        await self._persist_runtime_state()
 
     def _persist_shared_text_pointer(
         self,
@@ -1549,6 +1684,7 @@ class ChallengeSwarm:
                 notify_coordinator=_notify,
                 initial_step_count=initial_step_count,
                 sandbox=sandbox,
+                warm_container_id="" if sandbox is not None else self._warm_container_ids.get(model_spec, ""),
             )
 
         if provider in ("gemini", "google"):
@@ -1567,6 +1703,7 @@ class ChallengeSwarm:
                 notify_coordinator=_notify,
                 initial_step_count=initial_step_count,
                 sandbox=sandbox,
+                warm_container_id="" if sandbox is not None else self._warm_container_ids.get(model_spec, ""),
             )
 
         raise ValueError(f"Unsupported solver provider in model spec: {model_spec}")
@@ -1621,8 +1758,30 @@ class ChallengeSwarm:
             return False
         if compact in FLAG_CANDIDATE_PLACEHOLDER_COMPACTS:
             return True
+        if re.fullmatch(r"(?:fake){2,}(?:flag)?", compact):
+            return True
         tokens = cls._candidate_marker_tokens(value)
         return bool(tokens) and all(token in FLAG_CANDIDATE_PLACEHOLDER_TOKENS for token in tokens)
+
+    @classmethod
+    def _looks_like_analysis_marker(cls, value: str) -> bool:
+        tokens = cls._candidate_marker_tokens(value)
+        if len(tokens) < 2:
+            return False
+        return tokens[0] in FLAG_CANDIDATE_ANALYSIS_LABEL_TOKENS and tokens[1] == "result"
+
+    @classmethod
+    def _format_hint_prefix_suffix(cls, format_hint: str) -> tuple[str, str]:
+        normalized = str(format_hint or "").strip().strip("`")
+        if not normalized:
+            return "", ""
+        body = cls._extract_candidate_flag_body(normalized)
+        if body:
+            open_brace = normalized.find("{")
+            return normalized[: open_brace + 1], "}"
+        if normalized.endswith("..."):
+            return normalized[:-3], ""
+        return normalized, ""
 
     @classmethod
     def _reject_candidate_reason(cls, flag: str) -> str:
@@ -1635,9 +1794,75 @@ class ChallengeSwarm:
         if cls._looks_like_placeholder_marker(normalized):
             return "placeholder sentinel"
         body = cls._extract_candidate_flag_body(normalized)
+        if not body and cls._looks_like_analysis_marker(normalized):
+            return "placeholder sentinel"
+        if body and not cls._compact_candidate_marker(body):
+            return "invalid flag body"
         if body and cls._looks_like_placeholder_marker(body):
             return "placeholder sentinel"
         return ""
+
+    def _challenge_flag_guard_rejection_reason(self, flag: str) -> str:
+        regex_hint = str(getattr(self.meta, "flag_regex", "") or "").strip()
+        if regex_hint:
+            try:
+                if re.fullmatch(regex_hint, flag) is None:
+                    return f'format mismatch: does not match challenge regex "{regex_hint}"'
+            except re.error:
+                logger.warning(
+                    "[%s] Ignoring invalid challenge flag regex: %r",
+                    self.meta.name,
+                    regex_hint,
+                )
+
+        format_hint = str(getattr(self.meta, "flag_format", "") or "").strip()
+        if not format_hint:
+            return ""
+        expected_prefix, expected_suffix = self._format_hint_prefix_suffix(format_hint)
+        if expected_prefix and not flag.startswith(expected_prefix):
+            return f'format mismatch: expected prefix "{expected_prefix}"'
+        if expected_suffix and not flag.endswith(expected_suffix):
+            return f'format mismatch: expected suffix "{expected_suffix}"'
+        return ""
+
+    @staticmethod
+    def _candidate_resubmission_block_reason_from_status(status: str) -> str:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status == "rejected":
+            return "previously rejected for this challenge"
+        if normalized_status == "incorrect":
+            return "previously rejected by CTFd for this challenge"
+        return ""
+
+    def candidate_resubmission_block_reason(self, flag: str) -> str:
+        normalized = self._normalize_candidate_flag(flag)
+        if not normalized:
+            return ""
+        candidate = self.flag_candidates.get(normalized)
+        if candidate is None:
+            return ""
+        return self._candidate_resubmission_block_reason_from_status(candidate.status)
+
+    def _broadcast_candidate_advisory(self, advisory: str) -> None:
+        for solver in self.solvers.values():
+            advisory_bump = getattr(solver, "bump_advisory", None)
+            if callable(advisory_bump):
+                advisory_bump(advisory)
+
+    async def _finalize_candidate_requeue(self, normalized_flag: str) -> None:
+        should_resume = self.requeue_requested
+        if self.paused_candidate_flag == normalized_flag:
+            self.request_requeue(priority=False, reason="candidate_retry")
+            self.paused_candidate_flag = ""
+            should_resume = True
+        if not should_resume:
+            return
+        self._set_all_solver_stop_reasons(
+            f"candidate rejected for {self.meta.name}; resume fresh exploration",
+        )
+        await self._stop_solver_processes()
+        self.cancel_event.set()
+        await self._cancel_solver_tasks()
 
     async def report_flag_candidate(
         self,
@@ -1653,6 +1878,8 @@ class ChallengeSwarm:
         if not normalized:
             return "Flag candidate rejected: empty flag."
         reject_reason = self._reject_candidate_reason(normalized)
+        if not reject_reason:
+            reject_reason = self._challenge_flag_guard_rejection_reason(normalized)
         if reject_reason:
             return f"Flag candidate rejected: {reject_reason}."
 
@@ -1661,6 +1888,14 @@ class ChallengeSwarm:
                 return f"ALREADY SOLVED — flag already confirmed: {self.confirmed_flag}"
 
             candidate = self.flag_candidates.get(normalized)
+            block_reason = self._candidate_resubmission_block_reason_from_status(
+                candidate.status if candidate is not None else ""
+            )
+            if block_reason:
+                return (
+                    f'Flag candidate rejected: "{normalized}" was {block_reason}. '
+                    "Do not re-submit the same exact flag for this challenge."
+                )
             is_new = candidate is None
             if candidate is None:
                 candidate = FlagCandidateRecord(
@@ -1702,6 +1937,7 @@ class ChallengeSwarm:
             candidate.status = "pending"
 
         await self._persist_runtime_state()
+        await self._pause_for_candidate(normalized, model_spec)
 
         if self.no_submit:
             if is_new:
@@ -1770,13 +2006,12 @@ class ChallengeSwarm:
             rejection_scope = "locally" if self.local_mode else "manually by operator review"
             advisory = (
                 f'Candidate rejected {rejection_scope}: "{candidate.raw_flag}". '
-                "Treat it as a dead end unless you get materially different evidence."
+                "Treat it as a dead end and do not re-submit the exact same flag in this challenge "
+                "unless you have materially different evidence."
             )
-            for model_spec in sorted(candidate.source_models):
-                solver = self.solvers.get(model_spec)
-                if solver and hasattr(solver, "bump_advisory"):
-                    solver.bump_advisory(advisory)
+            self._broadcast_candidate_advisory(advisory)
 
+        await self._finalize_candidate_requeue(normalized)
         await self._persist_runtime_state()
         return candidate.submit_display
 
@@ -1864,6 +2099,8 @@ class ChallengeSwarm:
         if status in {"correct", "already_solved"}:
             candidate.status = "confirmed"
             candidate.confirmation_source = "ctfd"
+            self.paused_candidate_flag = ""
+            self.clear_requeue_request()
             self.confirmed_flag = normalized
             self.winner_confirmation_source = "ctfd"
             self.winner = SolverResult(
@@ -1894,6 +2131,7 @@ class ChallengeSwarm:
             )
             await self._stop_solver_processes()
             self.cancel_event.set()
+            await self._cancel_solver_tasks()
             await self._persist_runtime_state()
             return
 
@@ -1905,10 +2143,8 @@ class ChallengeSwarm:
                 "Do not retry the same flag automatically. Keep exploring other hypotheses, "
                 "but operator review may still confirm it manually if external evidence is stronger than the CTFd response."
             )
-            for model_spec in sorted(candidate.source_models):
-                solver = self.solvers.get(model_spec)
-                if solver:
-                    solver.bump_advisory(advisory)
+            self._broadcast_candidate_advisory(advisory)
+            await self._finalize_candidate_requeue(normalized)
         await self._persist_runtime_state()
 
     async def approve_flag_candidate(self, flag: str, *, approved_by: str = "operator_local") -> str:
@@ -1945,6 +2181,8 @@ class ChallengeSwarm:
             candidate.confirmation_source = approved_by
             candidate.submit_display = display
             candidate.last_seen_at = time.time()
+            self.paused_candidate_flag = ""
+            self.clear_requeue_request()
             self.confirmed_flag = normalized
             self.winner_model_spec = source_model or self.winner_model_spec
             self.winner_confirmation_source = approved_by
@@ -1975,6 +2213,7 @@ class ChallengeSwarm:
         )
         await self._stop_solver_processes()
         self.cancel_event.set()
+        await self._cancel_solver_tasks()
         await self._persist_runtime_state()
         return display
 
@@ -2024,6 +2263,8 @@ class ChallengeSwarm:
             candidate.confirmation_source = approved_by
             candidate.submit_display = display
             candidate.last_seen_at = time.time()
+            self.paused_candidate_flag = ""
+            self.clear_requeue_request()
             self.confirmed_flag = normalized
             self.winner_model_spec = source_model or self.winner_model_spec
             self.winner_confirmation_source = approved_by
@@ -2054,6 +2295,7 @@ class ChallengeSwarm:
         )
         await self._stop_solver_processes()
         self.cancel_event.set()
+        await self._cancel_solver_tasks()
         await self._persist_runtime_state()
         return display
 
@@ -2259,9 +2501,12 @@ class ChallengeSwarm:
         self._advisor_timeout_streaks[cooldown_key] = streak
         if streak < ADVISOR_TIMEOUT_BACKOFF_AFTER_CONSECUTIVE_TIMEOUTS:
             return
-        self._advisor_timeout_backoff_until[cooldown_key] = (
-            time.monotonic() + ADVISOR_TIMEOUT_BACKOFF_SECONDS
+        exponent = min(max(0, streak - ADVISOR_TIMEOUT_BACKOFF_AFTER_CONSECUTIVE_TIMEOUTS), 2)
+        delay = min(
+            ADVISOR_TIMEOUT_BACKOFF_MAX_SECONDS,
+            ADVISOR_TIMEOUT_BACKOFF_BASE_SECONDS * (2 ** exponent),
         )
+        self._advisor_timeout_backoff_until[cooldown_key] = time.monotonic() + delay
         self._advisor_timeout_backoff_buckets.pop(cooldown_key, None)
 
     def _schedule_background(self, coro) -> None:
@@ -2907,6 +3152,13 @@ class ChallengeSwarm:
                 return f"ALREADY SOLVED — flag already confirmed: {self.confirmed_flag}", True
 
             normalized = flag.strip()
+            block_reason = self.candidate_resubmission_block_reason(normalized)
+            if block_reason:
+                return (
+                    f'INCORRECT — "{normalized}" was {block_reason}. '
+                    "Do not re-submit the same exact flag for this challenge.",
+                    False,
+                )
 
             # Dedup exact flags across all models
             if normalized in self._submitted_flags:
@@ -3094,6 +3346,59 @@ class ChallengeSwarm:
         ]
         return "\n".join(parts)
 
+    def _latest_resume_packet(self, entry: dict[str, object], resume_path: Path) -> str:
+        last_command = str(entry.get("last_command") or "").strip()
+        last_exit_hint = str(entry.get("last_exit_hint") or "").strip()
+        findings = str(entry.get("findings_summary") or "").strip()
+        shared_artifacts_path = str(entry.get("shared_artifacts_path") or "").strip()
+        resume_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{resume_path.name}"
+        manifest_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/manifest.md"
+
+        parts = [
+            "Previous challenge run was paused before completion. Continue from the prior work, not from scratch.",
+            f"First, read this resume file and use it as your working context: {resume_container_path}",
+            f"Then read {manifest_container_path} if it exists to recover the latest shared evidence.",
+            "",
+            f"Last command: {last_command or '-'}",
+            f"Last note: {last_exit_hint or '-'}",
+            f"Findings summary: {findings or '-'}",
+            f"Shared artifacts root: {shared_artifacts_path or '-'}",
+            "",
+            "Resume instructions:",
+            "- Continue from the previous run's evidence and partial progress.",
+            "- Do not restart broad exploration from zero unless the resume file shows no useful progress.",
+            "- Read targeted artifact ranges first before running new broad commands.",
+        ]
+        return "\n".join(parts)
+
+    def snapshot_requeue_resume_packets(self) -> dict[str, str]:
+        packets: dict[str, str] = {}
+        resume_reason = str(self.requeue_reason or "queued").strip() or "queued"
+        for model_spec, solver in self.solvers.items():
+            result = self.agent_results.get(model_spec)
+            if result is None:
+                runtime = solver.get_runtime_status()
+                result = SolverResult(
+                    flag=None,
+                    status=CANCELLED,
+                    findings_summary=str(runtime.get("last_exit_hint") or ""),
+                    step_count=_int_from_object(runtime.get("step_count", 0)),
+                    cost_usd=0.0,
+                    log_path="",
+                )
+            entry = self._collect_handoff_entry(
+                model_spec,
+                solver,
+                result,
+                restart_reason=f"resume after {resume_reason}",
+                restart_count=0,
+            )
+            self._append_handoff_entry(model_spec, entry)
+            resume_path = self._write_resume_file(model_spec, entry)
+            packets[model_spec] = self._latest_resume_packet(entry, resume_path)
+        self._resume_packets = dict(packets)
+        return packets
+
     def _fingerprint_text(self, value: str) -> str:
         text = value.strip()
         if not text:
@@ -3186,9 +3491,12 @@ class ChallengeSwarm:
         for model_spec, solver in self.solvers.items():
             if model_spec in excluded:
                 continue
+            if model_spec in self._stopped_process_models:
+                continue
             stopper = getattr(solver, "stop_process", None)
             if not callable(stopper):
                 continue
+            self._stopped_process_models.add(model_spec)
             stop_tasks.append(
                 asyncio.create_task(
                     stopper(),
@@ -3205,6 +3513,18 @@ class ChallengeSwarm:
                     self.meta.name,
                     exc_info=result,
                 )
+
+    async def _cancel_solver_tasks(self) -> None:
+        current = asyncio.current_task()
+        pending: list[asyncio.Task[SolverResult | None]] = []
+        for task in list(self._solver_tasks):
+            if task.done() or task is current:
+                continue
+            task.cancel()
+            pending.append(task)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._solver_tasks = {task for task in self._solver_tasks if not task.done()}
 
     async def _maybe_restart_stalled_lane(
         self,
@@ -3264,6 +3584,7 @@ class ChallengeSwarm:
             sandbox=old_sandbox,
             initial_step_count=_int_from_object(entry.get("step_count", 0)),
         )
+        self._stopped_process_models.discard(model_spec)
         replacement.bump(restart_packet)
         self.solvers[model_spec] = replacement
         await replacement.start()
@@ -3282,6 +3603,7 @@ class ChallengeSwarm:
     async def _run_solver(self, model_spec: str) -> SolverResult | None:
         solver = self._create_solver(model_spec)
         self.solvers[model_spec] = solver
+        self._stopped_process_models.discard(model_spec)
 
         try:
             result, final_solver = await self._run_solver_loop(solver, model_spec)
@@ -3309,6 +3631,9 @@ class ChallengeSwarm:
             return None
         finally:
             latest_solver = self.solvers.get(model_spec, solver)
+            sandbox = getattr(latest_solver, "sandbox", None)
+            if sandbox is not None and hasattr(sandbox, "preserve_stopped_container"):
+                sandbox.preserve_stopped_container = self._should_preserve_solver_container(result)
             stop_task = asyncio.create_task(latest_solver.stop(), name=f"stop-{self.meta.name}-{model_spec}")
             try:
                 await asyncio.shield(stop_task)
@@ -3322,6 +3647,19 @@ class ChallengeSwarm:
                     model_spec,
                     exc_info=True,
                 )
+            sandbox = getattr(latest_solver, "sandbox", None)
+            container_id = str(getattr(sandbox, "resume_container_id", "") or "").strip()
+            if container_id:
+                self._warm_container_ids[model_spec] = container_id
+            else:
+                self._warm_container_ids.pop(model_spec, None)
+
+    def _should_preserve_solver_container(self, result: SolverResult) -> bool:
+        if self.confirmed_flag or result.status == FLAG_FOUND:
+            return False
+        if self.requeue_requested:
+            return True
+        return bool(self.cancel_event.is_set())
 
     async def _run_solver_loop(self, solver, model_spec: str) -> tuple[SolverResult, SolverProtocol]:
         """Observe the in-sandbox runtime until it emits a terminal result."""
@@ -3330,6 +3668,9 @@ class ChallengeSwarm:
             step_count=0, cost_usd=0.0, log_path="",
         )
         await solver.start()
+        resume_packet = self._resume_packets.pop(model_spec, "").strip()
+        if resume_packet:
+            solver.bump(resume_packet)
 
         while not self.cancel_event.is_set():
             result = await solver.run_until_done_or_gave_up()
@@ -3359,6 +3700,7 @@ class ChallengeSwarm:
                 )
                 await self._stop_solver_processes(exclude={model_spec})
                 self.cancel_event.set()
+                await self._cancel_solver_tasks()
                 self.winner = result
                 self.winner_model_spec = model_spec
                 self.winner_confirmation_source = self.winner_confirmation_source or "ctfd"
@@ -3370,10 +3712,15 @@ class ChallengeSwarm:
             if result.status == CANCELLED:
                 break
 
-            runtime_lifecycle = str(solver.get_runtime_status().get("lifecycle") or "")
+            runtime_status_getter = getattr(solver, "get_runtime_status", None)
+            runtime_status = runtime_status_getter() if callable(runtime_status_getter) else {}
+            if not isinstance(runtime_status, dict):
+                runtime_status = {}
+            runtime_lifecycle = str(runtime_status.get("lifecycle") or "")
             runtime_finished = runtime_lifecycle in {"won", "finished", "cancelled", "quota_error", "error"}
 
             if result.status == QUOTA_ERROR:
+                self._note_quota_exhausted_model(model_spec)
                 logger.warning(
                     f"[{self.meta.name}/{model_spec}] Quota exhausted — stopping lane"
                 )
@@ -3405,10 +3752,12 @@ class ChallengeSwarm:
     async def run(self) -> SolverResult | None:
         """Run all solvers in parallel. Returns the winner's result or None."""
         await self._resume_pending_candidate_reviews()
-        tasks = [
+        solver_tasks = [
             asyncio.create_task(self._run_solver(spec), name=f"solver-{spec}")
             for spec in self.model_specs
         ]
+        self._solver_tasks.update(solver_tasks)
+        tasks = list(solver_tasks)
         artifact_monitor = asyncio.create_task(
             self._monitor_live_artifact_sharing(),
             name=f"artifact-share-{self.meta.name}",
@@ -3425,6 +3774,8 @@ class ChallengeSwarm:
                 for task in done:
                     try:
                         result = task.result()
+                    except asyncio.CancelledError:
+                        continue
                     except Exception:
                         continue
                     if result and result.status == FLAG_FOUND:
@@ -3452,11 +3803,15 @@ class ChallengeSwarm:
             artifact_monitor.cancel()
             advisory_monitor.cancel()
             await asyncio.gather(artifact_monitor, advisory_monitor, return_exceptions=True)
+            self._solver_tasks.difference_update(solver_tasks)
 
     def kill(self, reason: str = "swarm cancelled") -> None:
         """Cancel all agents for this challenge."""
         self._set_all_solver_stop_reasons(reason)
         self.cancel_event.set()
+        for task in list(self._solver_tasks):
+            if not task.done():
+                task.cancel()
         for task in list(self._background_tasks):
             task.cancel()
 
@@ -3497,6 +3852,7 @@ class ChallengeSwarm:
 
         return {
             "challenge": self.meta.name,
+            "started_at": self.started_at,
             "cancelled": self.cancel_event.is_set(),
             "winner": self.winner.flag if self.winner else None,
             "winner_model": self.winner_model_spec,

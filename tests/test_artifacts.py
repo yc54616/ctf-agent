@@ -257,6 +257,36 @@ async def test_do_bash_blocks_relative_python_reread_patterns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_do_bash_blocks_wholefile_generated_stdout_reread() -> None:
+    sandbox = _FakeBashSandbox(ExecResult(exit_code=0, stdout="should not run", stderr=""))
+
+    out = await do_bash(sandbox, "cat /challenge/shared-artifacts/stdout.log")
+
+    assert "Blocked whole-file reread of generated stdout/stderr artifacts" in out
+    assert not sandbox.commands
+
+
+@pytest.mark.asyncio
+async def test_do_bash_keeps_targeted_shared_artifact_reads_inline() -> None:
+    sandbox = _FakeBashSandbox(
+        ExecResult(
+            exit_code=0,
+            stdout=("token-line\n" * 90).strip(),
+            stderr="",
+        )
+    )
+
+    out = await do_bash(
+        sandbox,
+        "sed -n '1,90p' /challenge/shared-artifacts/routes.txt",
+    )
+
+    assert "[stdout saved]" not in out
+    assert out.startswith("token-line")
+    assert "preview truncated" not in out
+
+
+@pytest.mark.asyncio
 async def test_do_web_fetch_materializes_medium_response(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = _FakeBashSandbox(
         ExecResult(exit_code=0, stdout="", stderr=""),

@@ -18,7 +18,7 @@ from backend.message_bus import CandidateRef, CoordinatorNoteRef
 from backend.models import DEFAULT_MODELS
 from backend.operator_ui import (
     collect_advisory_history,
-    list_trace_files,
+    list_ui_trace_files,
     load_ui_asset,
     read_trace_window,
 )
@@ -112,6 +112,17 @@ def _render_solver_message(event: object) -> str:
         return "\n".join(line for line in lines if line.strip())
 
     return f"SOLVER MESSAGE: {prefix}{str(payload.get('summary') or event).strip()}"
+
+
+def _dedupe_preserve_order(messages: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for message in messages:
+        if message in seen:
+            continue
+        seen.add(message)
+        deduped.append(message)
+    return deduped
 
 
 def _restored_solved_names(deps: CoordinatorDeps) -> set[str]:
@@ -232,42 +243,74 @@ def _lane_last_command(deps: CoordinatorDeps, agent_name: str) -> str:
     return ""
 
 
-def _log_shutdown_cost_details(deps: CoordinatorDeps, cost_tracker: CostTracker) -> None:
-    usage_by_agent = cost_tracker.get_usage_by_agent()
-    lane_usage = {
-        agent_name: stats
-        for agent_name, stats in usage_by_agent.items()
-        if "/" in agent_name
-    }
-    if not lane_usage:
-        return
-
+def _challenge_usage_snapshot(cost_tracker: CostTracker) -> dict[str, dict[str, float | int]]:
     by_challenge: dict[str, dict[str, float | int]] = {}
-    for agent_name, stats in lane_usage.items():
+    for agent_name, agent in cost_tracker.by_agent.items():
         challenge_name, _, _model_name = agent_name.rpartition("/")
         if not challenge_name:
             continue
         bucket = by_challenge.setdefault(
             challenge_name,
-            {"cost": 0.0, "input": 0, "cached": 0, "output": 0},
+            {
+                "cost_usd": 0.0,
+                "duration_seconds": 0.0,
+                "total_tokens": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "output_tokens": 0,
+            },
         )
-        bucket["cost"] = float(bucket["cost"]) + float(stats.get("cost", 0.0) or 0.0)
-        bucket["input"] = int(bucket["input"]) + int(stats.get("input", 0) or 0)
-        bucket["cached"] = int(bucket["cached"]) + int(stats.get("cached", 0) or 0)
-        bucket["output"] = int(bucket["output"]) + int(stats.get("output", 0) or 0)
+        bucket["cost_usd"] = float(bucket["cost_usd"]) + float(agent.cost_usd)
+        bucket["duration_seconds"] = float(bucket["duration_seconds"]) + float(agent.duration_seconds)
+        bucket["total_tokens"] = int(bucket["total_tokens"]) + int(agent.usage.total_tokens)
+        bucket["input_tokens"] = int(bucket["input_tokens"]) + int(agent.usage.input_tokens)
+        bucket["cached_tokens"] = int(bucket["cached_tokens"]) + int(agent.usage.cache_read_tokens)
+        bucket["output_tokens"] = int(bucket["output_tokens"]) + int(agent.usage.output_tokens)
+
+    for usage in by_challenge.values():
+        usage["cost_usd"] = round(float(usage["cost_usd"]), 4)
+        usage["duration_seconds"] = round(float(usage["duration_seconds"]), 3)
+
+    return by_challenge
+
+
+def _challenge_usage_or_default(
+    usage_by_challenge: dict[str, dict[str, float | int]],
+    challenge_name: str,
+) -> dict[str, float | int]:
+    usage = usage_by_challenge.get(challenge_name)
+    if usage:
+        return dict(usage)
+    return {
+        "cost_usd": 0.0,
+        "duration_seconds": 0.0,
+        "total_tokens": 0,
+        "input_tokens": 0,
+        "cached_tokens": 0,
+        "output_tokens": 0,
+    }
+
+
+def _log_shutdown_cost_details(deps: CoordinatorDeps, cost_tracker: CostTracker) -> None:
+    usage_by_agent = cost_tracker.get_usage_by_agent()
+    lane_usage = {agent_name: stats for agent_name, stats in usage_by_agent.items() if "/" in agent_name}
+    if not lane_usage:
+        return
+
+    by_challenge = _challenge_usage_snapshot(cost_tracker)
 
     if by_challenge:
         top_challenge_name, top_challenge_stats = max(
             by_challenge.items(),
-            key=lambda item: (float(item[1]["cost"]), int(item[1]["input"]), item[0]),
+            key=lambda item: (float(item[1]["cost_usd"]), int(item[1]["input_tokens"]), item[0]),
         )
         logger.info(
             "  Top challenge: %s | $%.2f | %s in / %s cached / %s out",
             top_challenge_name,
-            float(top_challenge_stats["cost"]),
-            _fmt_tokens(int(top_challenge_stats["input"])),
-            _fmt_tokens(int(top_challenge_stats["cached"])),
-            _fmt_tokens(int(top_challenge_stats["output"])),
+            float(top_challenge_stats["cost_usd"]),
+            _fmt_tokens(int(top_challenge_stats["input_tokens"])),
+            _fmt_tokens(int(top_challenge_stats["cached_tokens"])),
+            _fmt_tokens(int(top_challenge_stats["output_tokens"])),
         )
 
     hot_agent_name, hot_agent_stats = max(
@@ -410,15 +453,9 @@ async def run_event_loop(
                     parts.append(f"SOLVER FINISHED: Swarm for '{name}' completed. Check results or retry.")
 
             if finished_names:
-                from backend.agents.coordinator_core import (
-                    _fill_swarm_capacity,
-                    _retire_finished_swarms,
-                )
+                from backend.agents.coordinator_core import _retire_finished_swarms
 
                 _retire_finished_swarms(deps)
-                spawned = await _fill_swarm_capacity(deps)
-                for name in spawned:
-                    parts.append(f"QUEUED SWARM STARTED: '{name}' moved from queue to active run.")
 
             # Drain solver-to-coordinator messages
             while True:
@@ -427,6 +464,13 @@ async def run_event_loop(
                     parts.append(_render_solver_message(solver_msg))
                 except asyncio.QueueEmpty:
                     break
+
+            if deps.pending_swarm_queue and len(deps.swarms) < deps.max_concurrent_challenges:
+                from backend.agents.coordinator_core import _fill_swarm_capacity
+
+                spawned = await _fill_swarm_capacity(deps)
+                for name in spawned:
+                    parts.append(f"QUEUED SWARM STARTED: '{name}' moved from queue to active run.")
 
             # Drain operator messages
             while True:
@@ -455,6 +499,7 @@ async def run_event_loop(
                     logger.info(f"Event -> coordinator: {status_line}")
 
             if parts:
+                parts = _dedupe_preserve_order(parts)
                 msg = "\n\n".join(parts)
                 logger.info("Event -> coordinator: %s", msg[:200])
                 await turn_fn(msg)
@@ -512,7 +557,10 @@ async def _auto_spawn_one(deps: CoordinatorDeps, challenge_name: str) -> None:
     try:
         from backend.agents.coordinator_core import do_spawn_swarm
         result = await do_spawn_swarm(deps, challenge_name)
-        logger.info(f"Auto-spawn {challenge_name}: {result[:100]}")
+        if result.startswith("Swarm already queued for ") or result.startswith("Queued swarm for "):
+            logger.debug("Auto-spawn %s: %s", challenge_name, result[:140])
+        else:
+            logger.info("Auto-spawn %s: %s", challenge_name, result[:140])
     except Exception as e:
         logger.warning(f"Auto-spawn failed for {challenge_name}: {e}")
 
@@ -552,7 +600,7 @@ async def _auto_spawn_unsolved(deps: CoordinatorDeps, poller: CTFdPoller | None)
         if name in _local_known_challenge_names(deps)
         and name not in (set(poller.known_challenges) if poller is not None else set())
     ]
-    if local_only:
+    if local_only and (deps.local_mode or deps.ctfd_refresh_backoff_until > 0):
         ranked_local = sorted(
             local_only,
             key=lambda name: (
@@ -560,12 +608,14 @@ async def _auto_spawn_unsolved(deps: CoordinatorDeps, poller: CTFdPoller | None)
                 name,
             ),
         )
-        ordered = [name for name in ordered if name not in set(local_only)] + ranked_local
+        ordered = ranked_local + [name for name in ordered if name not in set(local_only)]
     for name in ordered:
         await _auto_spawn_one(deps, name)
 
 
 def _status_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
+    from backend.agents.coordinator_core import _pending_swarm_entries
+
     active = {
         name: swarm.get_status()
         for name, swarm in deps.swarms.items()
@@ -577,6 +627,7 @@ def _status_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         if task.done() and name in deps.swarms
     }
     swarm_names = set(active) | set(finished)
+    challenge_usage = _challenge_usage_snapshot(deps.cost_tracker)
     live_steps = 0
     for swarm in [*active.values(), *finished.values()]:
         agents = swarm.get("agents", {})
@@ -590,6 +641,11 @@ def _status_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         for name, result in deps.results.items()
         if name not in swarm_names and isinstance(result, dict)
     )
+    pending_entries = _pending_swarm_entries(deps)
+    pending = _pending_swarms_snapshot(deps, pending_entries)
+    for challenge_name, swarm in [*active.items(), *pending.items(), *finished.items()]:
+        if isinstance(swarm, dict):
+            swarm["usage"] = _challenge_usage_or_default(challenge_usage, challenge_name)
     return {
         "models": list(deps.model_specs),
         "session_started_at": deps.session_started_at,
@@ -598,9 +654,11 @@ def _status_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "known_solved_count": deps.known_solved_count,
         "active_swarm_count": len(active),
         "finished_swarm_count": len(finished),
-        "pending_challenge_count": len(deps.pending_swarm_queue),
-        "pending_challenges": list(deps.pending_swarm_queue),
+        "pending_challenge_count": len(pending_entries),
+        "pending_challenges": [entry["challenge_name"] for entry in pending_entries],
+        "pending_challenge_entries": pending_entries,
         "active_swarms": active,
+        "pending_swarms": pending,
         "finished_swarms": finished,
         "results": deps.results,
         "cost_usd": round(deps.cost_tracker.total_cost_usd, 4),
@@ -613,25 +671,36 @@ def _status_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
 
 def _pending_candidate_count(challenges: list[dict[str, Any]], results: dict[str, Any]) -> int:
     count = 0
+    seen: set[tuple[str, str]] = set()
     for challenge in challenges:
+        challenge_name = str(challenge.get("challenge") or "").strip()
         raw_candidates = challenge.get("flag_candidates", {})
         if not isinstance(raw_candidates, dict):
             continue
-        for candidate in raw_candidates.values():
+        for flag, candidate in raw_candidates.items():
             if not isinstance(candidate, dict):
                 continue
             if str(candidate.get("status") or "").strip().lower() not in {"confirmed", "rejected"}:
+                key = (challenge_name, str(flag).strip())
+                if key in seen:
+                    continue
+                seen.add(key)
                 count += 1
-    for payload in results.values():
+    for challenge_name, payload in results.items():
         if not isinstance(payload, dict):
             continue
         raw_candidates = payload.get("flag_candidates", {})
         if not isinstance(raw_candidates, dict):
             continue
-        for candidate in raw_candidates.values():
+        normalized_name = str(challenge_name).strip()
+        for flag, candidate in raw_candidates.items():
             if not isinstance(candidate, dict):
                 continue
             if str(candidate.get("status") or "").strip().lower() not in {"confirmed", "rejected"}:
+                key = (normalized_name, str(flag).strip())
+                if key in seen:
+                    continue
+                seen.add(key)
                 count += 1
     return count
 
@@ -639,9 +708,11 @@ def _pending_candidate_count(challenges: list[dict[str, Any]], results: dict[str
 def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
     legacy = _status_snapshot(deps)
     active = legacy.get("active_swarms", {})
+    pending = legacy.get("pending_swarms", {})
     finished = legacy.get("finished_swarms", {})
     results = legacy.get("results", {})
     active_values = [value for value in active.values() if isinstance(value, dict)]
+    pending_values = [value for value in pending.values() if isinstance(value, dict)]
     finished_values = [value for value in finished.values() if isinstance(value, dict)]
 
     healthy_lanes = 0
@@ -697,7 +768,7 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
             "active_challenge_count": len(active_values),
             "pending_challenge_count": len(legacy.get("pending_challenges", [])),
             "pending_candidate_count": _pending_candidate_count(
-                [*active_values, *finished_values],
+                [*active_values, *pending_values, *finished_values],
                 results if isinstance(results, dict) else {},
             ),
             "local_approval_enabled": bool(deps.local_mode),
@@ -706,8 +777,10 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         },
         "models": legacy.get("models", []),
         "active_swarms": active,
+        "pending_swarms": pending,
         "finished_swarms": finished,
         "pending_challenges": legacy.get("pending_challenges", []),
+        "pending_challenge_entries": legacy.get("pending_challenge_entries", []),
         "results": results,
         "known_challenge_count": legacy.get("known_challenge_count", 0),
         "known_solved_count": legacy.get("known_solved_count", 0),
@@ -725,6 +798,44 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
     }
 
 
+def _pending_swarms_snapshot(
+    deps: CoordinatorDeps,
+    pending_entries: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    pending: dict[str, dict[str, Any]] = {}
+    for entry in pending_entries:
+        challenge_name = str(entry.get("challenge_name") or "").strip()
+        if not challenge_name:
+            continue
+        result = deps.results.get(challenge_name, {})
+        result_dict = result if isinstance(result, dict) else {}
+        pending[challenge_name] = {
+            "challenge": challenge_name,
+            "started_at": result_dict.get("started_at"),
+            "winner": result_dict.get("flag") or result_dict.get("status") or "",
+            "winner_model": result_dict.get("winner_model") or "",
+            "agents": {},
+            "step_count": int(result_dict.get("step_count", 0) or 0),
+            "status": str(result_dict.get("status") or "pending"),
+            "flag_candidates": result_dict.get("flag_candidates") or {},
+            "coordinator_advisor_note": str(result_dict.get("coordinator_advisor_note") or ""),
+            "shared_finding": str(result_dict.get("shared_finding") or ""),
+            "shared_findings": result_dict.get("shared_findings") or {},
+            "pending_reason": str(entry.get("reason") or "queued"),
+            "pending_priority": bool(entry.get("priority")),
+            "pending_local_preloaded": bool(entry.get("local_preloaded")),
+            "signals": {
+                "total_posts": 0,
+                "total_checks": 0,
+                "total_delivered": 0,
+                "coordinator_messages": 0,
+                "advisor_lane_hints": 0,
+                "advisor_coordinator_appends": 0,
+            },
+        }
+    return pending
+
+
 async def _start_msg_server(
     inbox: asyncio.Queue,
     deps: CoordinatorDeps,
@@ -737,6 +848,9 @@ async def _start_msg_server(
         do_bump_agent,
         do_mark_challenge_solved,
         do_reject_flag_candidate,
+        do_restart_challenge,
+        do_set_challenge_priority_waiting,
+        do_set_max_concurrent_challenges,
     )
 
     async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -810,25 +924,30 @@ async def _start_msg_server(
             elif method == "GET" and path == "/api/runtime/traces":
                 challenge_name = str(query.get("challenge_name", "")).strip()
                 lane_id = str(query.get("lane_id", "")).strip()
-                if not challenge_name or not lane_id:
+                if not challenge_name:
                     _json_response(
                         "400 Bad Request",
-                        {"error": "challenge_name and lane_id are required"},
+                        {"error": "challenge_name is required"},
                     )
                 else:
+                    challenge_dir = deps.challenge_dirs.get(challenge_name)
                     trace_files = [
                         trace_path.name
-                        for trace_path in list_trace_files(challenge_name, lane_id)
+                        for trace_path in list_ui_trace_files(
+                            challenge_name,
+                            lane_id or None,
+                            challenge_dir=challenge_dir,
+                        )
                     ]
                     _json_response("200 OK", {"challenge_name": challenge_name, "lane_id": lane_id, "trace_files": trace_files})
             elif method == "GET" and path == "/api/runtime/trace-window":
                 challenge_name = str(query.get("challenge_name", "")).strip()
                 lane_id = str(query.get("lane_id", "")).strip()
                 trace_name = str(query.get("trace_name", "")).strip()
-                if not challenge_name or not lane_id or not trace_name:
+                if not challenge_name or not trace_name:
                     _json_response(
                         "400 Bad Request",
-                        {"error": "challenge_name, lane_id, and trace_name are required"},
+                        {"error": "challenge_name and trace_name are required"},
                     )
                 else:
                     cursor_raw = query.get("cursor")
@@ -836,12 +955,14 @@ async def _start_msg_server(
                     try:
                         cursor = int(cursor_raw) if cursor_raw is not None else None
                         limit = int(limit_raw) if limit_raw is not None else 200
+                        challenge_dir = deps.challenge_dirs.get(challenge_name)
                         payload = read_trace_window(
                             challenge_name,
-                            lane_id,
+                            lane_id or None,
                             trace_name,
                             cursor=cursor,
                             limit=limit,
+                            challenge_dir=challenge_dir,
                         )
                     except ValueError:
                         _json_response(
@@ -1005,6 +1126,70 @@ async def _start_msg_server(
                         _json_response("409 Conflict", {"ok": False, "error": result})
                     else:
                         _json_response("200 OK", {"ok": True, "result": result})
+            elif method == "POST" and path == "/api/runtime/set-max-challenges" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                try:
+                    max_active = int(data.get("max_active"))
+                except (TypeError, ValueError):
+                    _json_response("400 Bad Request", {"error": "max_active must be an integer"})
+                else:
+                    result = await do_set_max_concurrent_challenges(deps, max_active)
+                    if result.startswith("max_active must be"):
+                        _json_response("400 Bad Request", {"ok": False, "error": result})
+                    else:
+                        _json_response(
+                            "200 OK",
+                            {
+                                "ok": True,
+                                "result": result,
+                                "max_concurrent_challenges": deps.max_concurrent_challenges,
+                            },
+                        )
+            elif method == "POST" and path == "/api/runtime/set-challenge-priority" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                priority = bool(data.get("priority"))
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    result = await do_set_challenge_priority_waiting(
+                        deps,
+                        challenge_name,
+                        priority=priority,
+                    )
+                    if result.startswith("Unknown challenge") or result.startswith("Could not queue"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    elif result.startswith("Challenge \"") and (
+                        "currently active" in result or "already solved" in result
+                    ):
+                        _json_response("409 Conflict", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+            elif method == "POST" and path in {"/api/runtime/restart-challenge", "/api/runtime/resume-challenge"} and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    result = await do_restart_challenge(deps, challenge_name)
+                    if result.startswith("Unknown challenge") or result.startswith("Could not queue"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    elif result.startswith("Challenge \"") and "already solved" in result:
+                        _json_response("409 Conflict", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
             else:
                 _json_response(
                     "400 Bad Request",
@@ -1042,6 +1227,18 @@ async def _start_msg_server(
                             "mark_solved": (
                                 'POST /api/runtime/mark-solved {"challenge_name": "...", '
                                 '"flag": "...", "note": "..."}'
+                            ),
+                            "set_max_challenges": (
+                                'POST /api/runtime/set-max-challenges {"max_active": 4}'
+                            ),
+                            "set_challenge_priority": (
+                                'POST /api/runtime/set-challenge-priority {"challenge_name": "...", "priority": true}'
+                            ),
+                            "resume_challenge": (
+                                'POST /api/runtime/resume-challenge {"challenge_name": "..."}'
+                            ),
+                            "restart_challenge": (
+                                'POST /api/runtime/restart-challenge {"challenge_name": "..."}'
                             ),
                         },
                     },

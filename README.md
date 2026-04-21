@@ -1,267 +1,472 @@
 # CTF Agent
 
-Autonomous CTF (Capture The Flag) solver that races multiple AI models against challenges in parallel. Built in a weekend, we used it to solve all 52/52 challenges and win **1st place at BSidesSF 2026 CTF**.
+Autonomous multi-model CTF solver with an operator console, per-challenge swarms, pause/resume controls, and manual review when you want a human in the loop.
 
-Built by [Veria Labs](https://verialabs.com), founded by members of [.;,;.](https://ctftime.org/team/222911) (smiley), the [#1 US CTF team on CTFTime in 2024 and 2025](https://ctftime.org/stats/2024/US). We build AI agents that find and exploit real security vulnerabilities for large enterprises.
+This repository was originally built by [Veria Labs](https://verialabs.com) and used to win **1st place at BSidesSF 2026 CTF**. If you are reading this in a fork: thank you for forking it, adapting it, and pushing it further.
 
-## Results
+## What This Fork Does Well
 
-| Competition | Challenges Solved | Result |
-|-------------|:-:|--------|
-| **BSidesSF 2026** | 52/52 (100%) | **1st place ($1,500)** |
-
-The agent solves challenges across all categories — pwn, rev, crypto, forensics, web, and misc.
-
-## How It Works
-
-A **coordinator** LLM reads the live challenge feed or scans local challenge directories and assigns work to **solver swarms**. Each swarm launches multiple AI models in parallel on the same challenge — the first confirmed flag wins, and that result is shared with the rest via a cross-solver message bus.
-
-```
-                        +-----------------+
-                        |  CTFd Platform  |
-                        +--------+--------+
-                                 |
-                        +--------v--------+
-                        |  Poller (5s)    |
-                        +--------+--------+
-                                 |
-                        +--------v--------+
-                        | Coordinator LLM |
-                        |     (Codex)     |
-                        +--------+--------+
-                                 |
-              +------------------+------------------+
-              |                  |                  |
-     +--------v--------+ +------v---------+ +------v---------+
-     | Swarm:          | | Swarm:         | | Swarm:         |
-     | challenge-1     | | challenge-2    | | challenge-N    |
-     |                 | |                | |                |
-     |  Gemini Flash   | |  Gemini Flash  | |                |
-     |  Gemini Pro     | |  Gemini Pro    | |     ...        |
-     |  GPT-5.4        | |  GPT-5.4       | |                |
-     |  GPT-5.4-mini   | |  GPT-5.4-mini  | |                |
-     |  GPT-5.3-codex  | |  GPT-5.3-codex | |                |
-     +--------+--------+ +--------+-------+ +----------------+
-              |                    |
-     +--------v--------+  +-------v--------+
-     | Docker Sandbox  |  | Docker Sandbox |
-     | (isolated)      |  | (isolated)     |
-     |                 |  |                |
-     | pwntools, r2,   |  | pwntools, r2,  |
-     | gdb, sage...    |  | gdb, sage...   |
-     +-----------------+  +----------------+
-```
-
-Each solver runs in an isolated Docker container with CTF tools pre-installed. Solvers share discoveries through a message bus and never give up — they keep trying different approaches until the flag is found or the challenge is won by another lane.
-
-### Key Components
-
-| Component | File | Role |
-|-----------|------|------|
-| Coordinator loop | `backend/agents/coordinator_loop.py` | Main event loop; reads CTFd feed or local challenge dirs; drives the coordinator LLM |
-| Codex coordinator | `backend/agents/codex_coordinator.py` | LLM orchestration via Codex JSON-RPC |
-| Challenge swarm | `backend/agents/swarm.py` | Manages parallel solver lanes for one challenge |
-| Claude solver | `backend/agents/solver.py` | Pydantic AI agent (claude-sdk provider) |
-| Codex solver | `backend/agents/codex_solver.py` | Codex JSON-RPC agent |
-| Gemini solver | `backend/agents/gemini_solver.py` | Gemini CLI subprocess agent |
-| Docker sandbox | `backend/sandbox.py` | Async container lifecycle (aiodocker) |
-| CTFd client | `backend/ctfd.py` | Challenge fetching, flag submission, CSRF |
-| Message bus | `backend/message_bus.py` | Cross-solver shared findings |
-| Operator UI | `backend/operator_ui.py` | Browser console for live monitoring and guidance |
+- Runs multiple models against multiple challenges in parallel
+- Lets you **pause**, **resume previous work**, and **prioritize** challenges from the browser
+- Supports **CTFd mode**, **CTFd sync with submission disabled**, and **fully local mode**
+- Treats flag candidates as reviewable state instead of an all-or-nothing dead end
+- Saves winning artifacts automatically when a challenge is confirmed solved
 
 ## Quick Start
 
+### 1. Install and build
+
 ```bash
-# Install
 uv sync
-
-# Build sandbox image
 docker build -f sandbox/Dockerfile.sandbox -t ctf-sandbox .
-
-# Override the Ubuntu apt mirror if needed (default: mirror.navercorp.com)
-docker build --build-arg UBUNTU_MIRROR=http://mirror.kakao.com/ubuntu \
-  -f sandbox/Dockerfile.sandbox -t ctf-sandbox .
-
-# Configure credentials
-cp .env.example .env
-# Edit .env with your CTFd URL and token
-
-# Run against a CTFd instance
-uv run ctf-solve \
-  --ctfd-url https://ctf.example.com \
-  --ctfd-token ctfd_your_token \
-  --challenges-dir challenges \
-  --max-challenges 10 \
-  -v
-
-# Run in local mode against already-pulled challenge directories only
-uv run ctf-solve \
-  --local \
-  --challenges-dir challenges \
-  --max-challenges 10 \
-  -v
-
-# Keep CTFd sync, but disable actual flag submission
-uv run ctf-solve \
-  --ctfd-url https://ctf.example.com \
-  --ctfd-token ctfd_your_token \
-  --challenges-dir challenges \
-  --no-submit
-
-# Open the browser operator console
-uv run ctf-status
-
-# Print a one-shot terminal snapshot
-uv run ctf-status --once
-
-# Legacy terminal dashboard (watch mode)
-uv run ctf-status --text
-
-# Show every lane in the terminal dashboard
-uv run ctf-status --text --verbose
-
-# Send a hint to the running coordinator
-uv run ctf-msg "focus on web challenges"
-
-# Send targeted guidance to a specific lane
-uv run ctf-bump --challenge "Midnight Roulette" --model "codex/gpt-5.4" \
-  "Use the provided CTFd token and verify /ctfd/api/v1/challenges first"
 ```
 
-### Mode semantics
+If your default Ubuntu mirror is slow:
 
 ```bash
-# Local mode: no CTFd fetch, no CTFd submit, operator approval allowed
-uv run ctf-solve --local --challenges-dir challenges
-
-# CTFd mode with submit suppression: still syncs challenges, does not submit flags
-uv run ctf-solve --ctfd-url ... --ctfd-token ... --no-submit
+docker build \
+  --build-arg UBUNTU_MIRROR=http://mirror.kakao.com/ubuntu \
+  -f sandbox/Dockerfile.sandbox \
+  -t ctf-sandbox .
 ```
 
-- `--local` means the coordinator only uses local challenge directories under `--challenges-dir`.
-- `--local` also enables operator-side approval for flag candidates, because there is no CTFd confirmation path.
-- `--no-submit` does **not** mean local mode. It disables submission while leaving CTFd challenge sync enabled.
-- Operator confirmation is available from the browser console in every mode. In normal CTFd mode it acts as a manual override; in `--local` and `--no-submit` it is the primary confirmation path.
-- The browser console also lets you mark a challenge solved from outside the swarm when you solved it manually or on another machine.
-- The `ctf-bump` helper still uses `--challenge` because it targets a specific running challenge swarm by name.
-
-## Solver Models
-
-Default model lineup (configurable in `backend/models.py`):
-
-| Model | Provider | Context | Notes |
-|-------|----------|---------|-------|
-| Gemini 2.5 Flash | Gemini CLI | 1M | Fast general-purpose solver |
-| Gemini 2.5 Flash Lite | Gemini CLI | 1M | Cheapest high-parallelism lane |
-| Gemini 2.5 Pro | Gemini CLI | 1M | Deep reasoning when quota is available |
-| GPT-5.4 | Codex | 1M | Best overall solver; supports vision |
-| GPT-5.4-mini | Codex | 400K | Fast, good for easy challenges |
-| GPT-5.3-codex | Codex | 1M | Reasoning model (xhigh effort) |
-| GPT-5.3-codex-spark | Codex | 128K | Ultra-fast exploratory lane |
-
-Models are added or removed by editing `DEFAULT_MODELS` in `backend/models.py`.
-
-## Sandbox Tooling
-
-Each solver gets an isolated Docker container pre-loaded with CTF tools:
-
-| Category | Tools |
-|----------|-------|
-| **Binary / Rev** | radare2, GDB, gdb-multiarch, objdump, readelf, binwalk, strings, patchelf, checksec, qemu-user-static, qemu-system-* |
-| **Pwn** | pwntools, ROPgadget, angr, unicorn, capstone, socat, tcpdump, tshark |
-| **Crypto** | SageMath, RsaCtfTool, z3, gmpy2, pycryptodome, cado-nfs, flatter, hashcat, john, yara |
-| **Forensics / Filesystems** | volatility3, Sleuthkit, foremost, testdisk, squashfs-tools, mtd-utils, u-boot-tools, device-tree-compiler |
-| **Stego / Media** | steghide, stegseek, zsteg, ImageMagick, tesseract OCR, ffmpeg, sox, Pillow |
-| **Web / Recon** | curl, nmap, ffuf, gobuster, sqlmap, whatweb, nikto, dirb, hydra, Python requests, flask |
-| **Mobile / Android** | adb, fastboot, apktool, jadx |
-| **Cloud / Containers** | podman, podman compose, buildah, skopeo, kubectl, helm |
-| **Toolchains / Misc** | gcc, g++, cmake, make, node, npm, go, rustc, cargo, ripgrep, fd, jq, sqlite3, PyTorch |
-
-Run the smoke check after building or updating the image:
-
-```bash
-docker run --rm ctf-sandbox sandbox-smoke-check
-```
-
-## Features
-
-- **Multi-model racing** — multiple AI models attack each challenge simultaneously; first to find the flag wins
-- **Coordinator LLM** — reads solver traces and crafts targeted technical guidance per lane
-- **Cross-solver insights** — discoveries are shared between models via an in-memory message bus so no solver re-discovers the same dead end
-- **Auto-spawn** — new challenges detected from the CTFd feed, or unsolved local challenge dirs in `--local` mode, are automatically spawned into swarms
-- **Cooldown gating** — escalating submission cooldowns per model after incorrect flags (0s → 30s → 2m → 5m → 10m) to prevent rate-limit bans
-- **Operator messaging** — send hints to the coordinator or directly to a running lane mid-competition
-- **Browser operator console** — live challenge status, per-lane traces, JSONL event browser, and inline controls
-- **Manual candidate approval** — an operator can approve or reject a flag candidate from the browser console in any mode
-- **External solve reporting** — if you solve a challenge outside the running lanes, you can mark it solved manually and persist the flag/result from the browser console
-- **Artifact spooling** — large command output is saved to a shared directory and pointer-summarized to keep context windows clean
-- **Cost tracking** — per-agent token and dollar accounting via `genai-prices`
-- **Solve artifacts** — when a flag is confirmed, the winning lane's workspace, trace, and a draft writeup are saved automatically
-
-## Configuration
-
-Copy `.env.example` to `.env` and fill in your CTFd settings:
+### 2. Configure CTFd credentials
 
 ```bash
 cp .env.example .env
 ```
+
+Then edit `.env`:
 
 ```env
 CTFD_URL=https://ctf.example.com
 CTFD_TOKEN=ctfd_your_token
 ```
 
-All settings can also be passed as CLI flags or environment variables. See `backend/config.py` for the full list (`Settings` class).
+### 3. Start the coordinator
 
-### Authentication
+Normal CTFd mode:
 
-Home auth is auto-detected by default:
+```bash
+uv run ctf-solve \
+  --ctfd-url https://ctf.example.com \
+  --ctfd-token ctfd_your_token \
+  --challenges-dir challenges \
+  --max-challenges 4 \
+  -v
+```
 
-- `codex` — `~/.codex/auth.json`
-- `claude` — `~/.claude/.credentials.json`
-- `gemini` — `~/.gemini/oauth_creds.json` (re-run `gemini` login if expired)
+Resume previous paused/requeueable work instead of clearing runtime state:
 
-The repository does not embed Gemini OAuth client credentials. `gemini/*` model specs use Gemini CLI with an isolated temporary `GEMINI_HOME`. Legacy `google/*` specs are treated as the same Gemini backend alias.
+```bash
+uv run ctf-solve \
+  --ctfd-url https://ctf.example.com \
+  --ctfd-token ctfd_your_token \
+  --challenges-dir challenges \
+  --max-challenges 4 \
+  --resume \
+  -v
+```
 
-Direct API providers (Azure, Bedrock, Zen) are not supported. If a lane hits quota or rate limits, that lane stops rather than retrying through an alternate endpoint.
+Local-only mode:
 
-### Infra defaults (overridable via env/CLI)
+```bash
+uv run ctf-solve \
+  --local \
+  --challenges-dir challenges \
+  --max-challenges 4 \
+  -v
+```
 
-| Setting | Default | Description |
-|---------|---------|-------------|
+CTFd sync, but no automatic flag submission:
+
+```bash
+uv run ctf-solve \
+  --ctfd-url https://ctf.example.com \
+  --ctfd-token ctfd_your_token \
+  --challenges-dir challenges \
+  --max-challenges 4 \
+  --no-submit \
+  -v
+```
+
+### 4. Open the operator console
+
+```bash
+uv run ctf-status
+```
+
+Other useful views:
+
+```bash
+uv run ctf-status --once
+uv run ctf-status --text
+uv run ctf-status --text --verbose
+uv run ctf-status --json-output
+```
+
+### 5. Send live guidance
+
+Send a message to the coordinator:
+
+```bash
+uv run ctf-msg "focus on web and crypto first"
+```
+
+Send a targeted bump to one running lane:
+
+```bash
+uv run ctf-bump \
+  --challenge "Midnight Roulette" \
+  --model "codex/gpt-5.4" \
+  "Check the admin route and inspect the JWT claims."
+```
+
+## Mental Model
+
+Think of the system as three layers:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ Operator                                                    │
+│  Browser UI, status views, manual confirm/reject, reprioritization │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Coordinator                                                 │
+│  - watches challenge inventory                              │
+│  - fills active challenge slots                             │
+│  - reacts to candidates, solves, pauses, retries           │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Challenge Swarms                                            │
+│  each challenge gets one swarm, each swarm runs many lanes  │
+│                                                              │
+│  challenge A: gpt-5.4 | gpt-5.4-mini | gemini | ...         │
+│  challenge B: gpt-5.4 | gpt-5.4-mini | gemini | ...         │
+└──────────────────────────────┬───────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│ Docker Sandbox                                              │
+│  isolated tools, workspace, challenge files, shared artifacts │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## How It Actually Runs
+
+### Challenge scheduling
+
+`--max-challenges` controls **how many challenges are active at once**, not how many lanes exist in total.
+
+```text
+pending queue ──▶ active swarms (up to max active challenges)
+```
+
+If `--max-challenges 4`, the coordinator will try to keep up to 4 challenges active at a time. Each active challenge then fans out into multiple model lanes.
+
+### Scheduler states
+
+```text
+queued
+priority_waiting
+ctfd_retry
+candidate_retry
+candidate_pending
+flag_found
+```
+
+What they mean:
+
+- `queued`: normal waiting
+- `priority_waiting`: held on purpose; do not auto-run until restored
+- `ctfd_retry`: waiting for CTFd refresh/pull to recover
+- `candidate_retry`: a candidate was rejected or came back incorrect, so the challenge re-enters the queue
+- `candidate_pending`: challenge is paused because a serious candidate is under review
+- `flag_found`: solved and done
+
+### Candidate lifecycle
+
+This is the part most people care about operationally:
+
+```text
+serious candidate found
+        │
+        ▼
+challenge pauses
+        │
+ ┌──────┴───────────────┐
+ │                      │
+ ▼                      ▼
+confirm/correct         reject/incorrect
+        │                      │
+        ▼                      ▼
+   challenge done        requeue challenge
+```
+
+More concretely:
+
+- In normal CTFd mode:
+  - a serious candidate may be auto-submitted
+  - if CTFd says `correct` or `already solved`, the challenge stops
+  - if CTFd says `incorrect`, the candidate stays manually reviewable and the challenge can go back to waiting
+- In `--no-submit` or `--local`:
+  - candidates are not auto-confirmed through CTFd
+  - the operator can confirm or reject them from the UI
+
+### Pause, priority waiting, and resume
+
+The scheduler now distinguishes **hold** from **restart**:
+
+```text
+▶ active challenge
+   └─ Pause to priority waiting
+      └─ held, not auto-spawned
+
+priority_waiting
+   └─ Restore waiting
+      └─ becomes normal queue entry again
+
+held or queued challenge
+   └─ Resume previous work
+      └─ new swarm starts with saved resume packet
+```
+
+Important detail:
+
+- `Resume previous work` does **not** resurrect the exact same container process.
+- It starts a fresh swarm and injects saved handoff context so lanes continue from prior work instead of starting blind.
+
+## Modes and Semantics
+
+| Mode | Challenge source | Flag submission | Who confirms solves? |
+|------|------------------|-----------------|----------------------|
+| default CTFd mode | CTFd + local preload | enabled | CTFd or operator override |
+| `--no-submit` | CTFd + local preload | disabled | operator |
+| `--local` | local challenge dirs only | disabled | operator |
+| `--resume` | same as selected mode | same as selected mode | same as selected mode |
+
+Notes:
+
+- `--resume` is a startup mode modifier, not a separate execution mode.
+- `--resume` skips runtime cleanup and restores pending/requeueable challenge work from saved runtime state.
+- `candidate_pending` entries are intentionally **not** auto-resumed at startup. They stay review-driven.
+
+## Operator Console
+
+Open it with:
+
+```bash
+uv run ctf-status
+```
+
+The browser UI gives you:
+
+- live challenge and lane status
+- candidate confirm / reject
+- external solve reporting
+- `max active challenges` runtime changes
+- `Pause to priority waiting`
+- `Restore waiting`
+- `Resume previous work`
+- trace browsing and artifact links
+
+### Runtime max active changes
+
+Changing max active challenges is a **soft cap**:
+
+```text
+4 → 6  : fill more slots if work is available
+6 → 3  : do not kill running swarms; just stop filling above 3
+```
+
+This is intentional. Lowering the cap does not abruptly kill active work.
+
+### Priority waiting
+
+`priority_waiting` means:
+
+- the challenge stays in the scheduler state
+- it is visible in the UI
+- it will **not** auto-run again until restored
+
+This is useful when you want to clear the deck, keep the work, and come back later.
+
+## Typical Workflows
+
+### Fresh competition start
+
+```bash
+uv run ctf-solve --ctfd-url ... --ctfd-token ... --challenges-dir challenges --max-challenges 4 -v
+uv run ctf-status
+```
+
+### Resume yesterday's paused work
+
+```bash
+uv run ctf-solve --ctfd-url ... --ctfd-token ... --challenges-dir challenges --max-challenges 4 --resume -v
+```
+
+### Work fully locally
+
+```bash
+uv run ctf-solve --local --challenges-dir challenges --max-challenges 4 -v
+```
+
+### Sync with CTFd, but keep human approval
+
+```bash
+uv run ctf-solve --ctfd-url ... --ctfd-token ... --challenges-dir challenges --no-submit -v
+```
+
+### Solve outside the swarm, then tell the system
+
+Use the operator UI:
+
+- `Mark solved`
+- enter the challenge name and flag
+- the challenge is recorded as solved and removed from the active queue
+
+## Commands
+
+| Command | Purpose |
+|--------|---------|
+| `uv run ctf-solve ...` | start the coordinator |
+| `uv run ctf-status` | open browser operator UI |
+| `uv run ctf-status --once` | one-shot snapshot |
+| `uv run ctf-status --text` | terminal dashboard |
+| `uv run ctf-status --json-output` | raw JSON status |
+| `uv run ctf-msg "..."` | send a message to the coordinator |
+| `uv run ctf-bump --challenge ... --model ... "..."` | send targeted advice to one lane |
+
+## Directory Layout
+
+### Challenge working tree
+
+```text
+challenges/<challenge>/
+├── metadata.yml
+├── distfiles/              # pulled files or local challenge data
+├── challenge-src/          # unpacked app/source when relevant
+├── workspace/              # active lane scratch space
+├── .lane-state/            # runtime lane control / handoff state
+├── .shared-artifacts/      # shared outputs, manifests, digests
+└── solve/
+    ├── result.json
+    ├── flag.txt
+    ├── writeup.md
+    ├── trace.jsonl
+    └── workspace/
+```
+
+### What gets saved when a challenge is solved
+
+```text
+solve/
+├── result.json   # final status, winner, metadata
+├── flag.txt      # confirmed flag
+├── writeup.md    # draft writeup
+├── trace.jsonl   # winning lane trace, when available
+└── workspace/    # winning workspace snapshot, when available
+```
+
+If you confirm an external solve without a live winning workspace, `flag.txt` and `result.json` still exist, but `trace.jsonl`, `writeup.md`, or `workspace/` may be absent.
+
+## Code Structure
+
+| File | Role |
+|------|------|
+| `backend/cli.py` | CLI entry points: `ctf-solve`, `ctf-status`, `ctf-msg`, `ctf-bump` |
+| `backend/agents/coordinator_loop.py` | shared coordinator event loop and operator API server |
+| `backend/agents/coordinator_core.py` | scheduler, queue logic, runtime actions |
+| `backend/agents/codex_coordinator.py` | Codex-backed coordinator |
+| `backend/agents/swarm.py` | one challenge swarm, candidate handling, pause/resume handoff |
+| `backend/agents/codex_solver.py` | Codex lane runtime |
+| `backend/agents/gemini_solver.py` | Gemini lane runtime |
+| `backend/agents/solver.py` | Claude/Pydantic lane runtime |
+| `backend/ctfd.py` | challenge sync and flag submission |
+| `backend/sandbox.py` | Docker sandbox lifecycle |
+| `backend/operator_ui.py` | UI data assembly |
+| `backend/static/` | browser UI |
+
+## Models
+
+Default lane set lives in `backend/models.py`.
+
+Current default lineup includes:
+
+- `codex/gpt-5.4`
+- `codex/gpt-5.4-mini`
+- `codex/gpt-5.3-codex`
+- `codex/gpt-5.3-codex-spark`
+- `gemini/gemini-2.5-flash`
+- `gemini/gemini-2.5-flash-lite`
+- `gemini/gemini-2.5-pro`
+
+You can override the lineup at startup:
+
+```bash
+uv run ctf-solve \
+  --models codex/gpt-5.4 \
+  --models codex/gpt-5.4-mini \
+  --models gemini/gemini-2.5-flash
+```
+
+## Sandbox Tooling
+
+The Docker image includes a broad CTF toolbox, including:
+
+- pwntools, radare2, GDB, gdb-multiarch
+- SageMath, z3, RsaCtfTool, pycryptodome
+- binwalk, foremost, Sleuthkit, volatility3
+- ffmpeg, sox, steghide, stegseek, zsteg, tesseract
+- curl, ffuf, gobuster, sqlmap, nmap
+- gcc, clang-style toolchains, node, npm, rust, cargo, jq, sqlite3
+
+Run the smoke test after changing the image:
+
+```bash
+docker run --rm ctf-sandbox sandbox-smoke-check
+```
+
+## Configuration Notes
+
+All runtime settings can come from CLI flags, `.env`, or `backend/config.py`.
+
+Useful defaults:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `--max-challenges` | `10` | max active challenges |
+| `container_memory_limit` | `16g` | per-container memory cap |
 | `sandbox_image` | `ctf-sandbox` | Docker image name |
-| `max_concurrent_challenges` | `10` | Max active swarms at once |
-| `max_attempts_per_challenge` | `3` | Swarm restarts before giving up |
-| `container_memory_limit` | `16g` | Per-sandbox memory cap |
-| `exec_output_spill_threshold_bytes` | `65536` | Spool bash output above this size |
-| `read_file_spill_threshold_bytes` | `262144` | Spool file reads above this size |
+| `msg_port` | `9400` | operator UI / API port |
 
-### Solve artifacts
+Authentication is expected through home auth:
 
-When a lane confirms a real flag through CTFd, an operator approves a candidate manually, or an operator reports an external solve, the winner's artifacts are saved under `challenges/<challenge>/solve/`:
-
-```
-challenges/<challenge>/solve/
-  flag.txt
-  writeup.md      ← draft, not a final report
-  result.json
-  trace.jsonl
-  workspace/
-```
-
-Shared outputs (intermediate files, findings) remain in `challenges/<challenge>/.shared-artifacts/` and are referenced from the saved writeup metadata.
-
-If you mark a challenge solved externally without a live swarm workspace, the agent still saves `flag.txt` and `result.json`, but there may be no `trace.jsonl`, `writeup.md`, or `workspace/` snapshot to preserve.
+- `codex`: `~/.codex/auth.json`
+- `claude`: `~/.claude/.credentials.json`
+- `gemini`: `~/.gemini/oauth_creds.json`
 
 ## Requirements
 
 - Python 3.14+
 - Docker
-- Home auth configured for at least one of `codex`, `claude`, or `gemini`
-- `codex` CLI (for Codex solver/coordinator)
-- `claude` home auth if you want Claude advisor fallback
-- `gemini` CLI if you want `gemini/*` models
+- `uv`
+- Codex home auth for Codex lanes/coordinator
+- Gemini CLI if you want Gemini lanes
+- Claude home auth if you want Claude advisor fallback
+
+## Results
+
+| Competition | Solved | Result |
+|-------------|:-:|--------|
+| BSidesSF 2026 | 52/52 | 1st place |
 
 ## Acknowledgements
 
 - [es3n1n/Eruditus](https://github.com/es3n1n/Eruditus) — CTFd interaction and HTML helpers in `pull_challenges.py`
+- Everyone who forks this repo, experiments with it, and makes it more useful in real competitions — thank you

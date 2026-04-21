@@ -74,6 +74,61 @@ _WINDOWS_CATEGORIES = {"windows", "active-directory", "ad"}
 _MOBILE_CATEGORIES = {"mobile", "android"}
 _FIRMWARE_CATEGORIES = {"firmware", "hardware", "iot", "embedded", "forensics"}
 _BLOCKCHAIN_CATEGORIES = {"blockchain", "smart-contract", "smart contract", "solidity", "evm"}
+_FLAG_FORMAT_HINT_PATTERNS = (
+    re.compile(
+        r"(?im)^\s*(?:flag\s*(?:format|fmt)|expected\s+flag\s*format|submit\s+the\s+flag\s+as|submit\s+flag\s+as|플래그\s*(?:형식|포맷))\s*[:=-]?\s*`?([A-Za-z0-9_.:-]+\{[^`\n]{0,120}\})`?\s*$"
+    ),
+    re.compile(
+        r"(?i)\bflag\s+format(?:\s+is)?\b[^\n`]{0,24}`?([A-Za-z0-9_.:-]+\{[^`\n]{0,120}\})`?"
+    ),
+)
+_FLAG_REGEX_HINT_PATTERNS = (
+    re.compile(
+        r"(?im)^\s*(?:flag\s*(?:regex|pattern)|expected\s+flag\s*(?:regex|pattern))\s*[:=-]\s*`?([^`\n]+?)`?\s*$"
+    ),
+    re.compile(r"(?i)\bflag\s+(?:regex|pattern)\b[^\n`]{0,24}`([^`\n]+)`"),
+)
+
+
+def _strip_wrapping_ticks(value: object) -> str:
+    text = str(value or "").strip()
+    if len(text) >= 2 and text.startswith("`") and text.endswith("`"):
+        return text[1:-1].strip()
+    return text
+
+
+def _challenge_hint_texts(hints: list[dict[str, Any]]) -> list[str]:
+    texts: list[str] = []
+    for hint in hints or []:
+        content = hint.get("content") if isinstance(hint, dict) else hint
+        normalized = str(content or "").strip()
+        if normalized:
+            texts.append(normalized)
+    return texts
+
+
+def infer_flag_guard_from_texts(*texts: object) -> tuple[str, str]:
+    format_hint = ""
+    regex_hint = ""
+    for raw_text in texts:
+        text = str(raw_text or "")
+        if not text.strip():
+            continue
+        if not format_hint:
+            for pattern in _FLAG_FORMAT_HINT_PATTERNS:
+                match = pattern.search(text)
+                if match:
+                    format_hint = _strip_wrapping_ticks(match.group(1))
+                    break
+        if not regex_hint:
+            for pattern in _FLAG_REGEX_HINT_PATTERNS:
+                match = pattern.search(text)
+                if match:
+                    regex_hint = _strip_wrapping_ticks(match.group(1))
+                    break
+        if format_hint and regex_hint:
+            break
+    return format_hint, regex_hint
 
 
 @dataclass
@@ -86,6 +141,21 @@ class ChallengeMeta:
     connection_info: str = ""
     hints: list[dict[str, Any]] = field(default_factory=list)
     solves: int = 0
+    flag_format: str = ""
+    flag_regex: str = ""
+
+    def __post_init__(self) -> None:
+        self.flag_format = _strip_wrapping_ticks(self.flag_format)
+        self.flag_regex = _strip_wrapping_ticks(self.flag_regex)
+        inferred_format, inferred_regex = infer_flag_guard_from_texts(
+            self.description,
+            self.connection_info,
+            *_challenge_hint_texts(self.hints),
+        )
+        if not self.flag_format:
+            self.flag_format = inferred_format
+        if not self.flag_regex:
+            self.flag_regex = inferred_regex
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ChallengeMeta:
@@ -100,6 +170,8 @@ class ChallengeMeta:
             connection_info=data.get("connection_info", ""),
             hints=data.get("hints", []),
             solves=data.get("solves", 0),
+            flag_format=data.get("flag_format", ""),
+            flag_regex=data.get("flag_regex", ""),
         )
 
 
@@ -133,9 +205,9 @@ def build_shell_solver_preamble() -> str:
         "IMPORTANT: You are running inside a Docker sandbox. "
         "All files are under /challenge/ — distfiles at /challenge/distfiles/, "
         "workspace at /challenge/workspace/. Do NOT use any paths outside /challenge/. "
-        "Use shell commands for execution, inspection, builds, and mutation. "
-        "Large bash output may come back as a saved path with no inline preview, so inspect "
-        "saved artifacts with targeted follow-up commands. "
+        "Use shell commands for all work. "
+        "Large bash output may be saved to a path without inline preview; inspect it with "
+        "targeted follow-up commands. "
         "Do not reread /challenge/agent-repo, /challenge/host-logs, prior solve/ output, "
         "or challenge-src/.shared-artifacts history. "
         "Use `report_flag_candidate 'FLAG' ['EVIDENCE'] ['CONFIDENCE']` for the guarded flag path "
@@ -304,6 +376,14 @@ def build_prompt(
             lines.append(f"- {h['content']}")
         lines.append("")
 
+    if meta.flag_format or meta.flag_regex:
+        lines.append("## Flag Format")
+        if meta.flag_format:
+            lines.append(f"- Expected format: `{meta.flag_format}`")
+        if meta.flag_regex:
+            lines.append(f"- Expected regex: `{meta.flag_regex}`")
+        lines.append("")
+
     if _should_include_binary_analysis(meta, distfile_names):
         lines += [
             "## Binary Analysis",
@@ -342,6 +422,7 @@ def build_prompt(
         "- Never reread `/challenge/agent-repo`, `/challenge/host-logs`, prior `solve/` output, or `challenge-src/.shared-artifacts/` history. Work from distfiles, challenge-src, workspace, metadata, and current shared artifacts instead.",
         "- Do not dump huge output into the conversation. If `grep -R`, `rg`, `find`, `strings`, `objdump`, `binwalk`, `ffuf`, or large HTML/JS searches may exceed about 100 lines, redirect to `/challenge/shared-artifacts/<name>.txt` first.",
         "- Large saved output may come back with only a path, not a preview. Inspect `/challenge/shared-artifacts/` with `sed -n`, `head`, `tail`, targeted `rg`, `strings`, or `xxd` instead of re-printing giant blobs.",
+        "- Do not `cat` or `python read_text()` generated `stdout-*.log` / `stderr-*.log` artifacts wholesale. Use narrow `sed/head/tail/rg` slices, or rerun the original command with a tighter filter.",
         "- Prefer bundled wordlists under `/opt/wordlists/seclists` and `/opt/wordlists/assetnote` before downloading ad-hoc lists.",
         f"- {read_tool_hint}",
         "- If progress requires a built artifact or running service, you may run build or compose commands early, but only after identifying the artifact or runtime state you need.",
@@ -354,7 +435,7 @@ def build_prompt(
         "- Pwn: use `stty raw -echo` before launching interactive binaries over nc.",
         "- Ignore placeholder flags such as `CTF{flag}` or `CTF{placeholder}`.",
         f"- {submit_hint}",
-        "- After queueing a serious candidate, keep exploring unless the coordinator confirms it.",
+        "- After queueing a serious candidate, expect the challenge to pause for review or guarded auto-submit. Make your candidate evidence clear and self-contained before you report it.",
         "- Do not guess. Do not ask. Run the next concrete check.",
     ]
 

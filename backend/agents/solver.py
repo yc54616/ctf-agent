@@ -37,6 +37,7 @@ from backend.solver_base import (
     GAVE_UP,
     LaneRuntimeStatus,
     SolverResult,
+    candidate_report_was_accepted,
     lifecycle_for_result,
     summarize_tool_input,
 )
@@ -276,22 +277,27 @@ class Solver:
 
             output = result.output
             if isinstance(output, FlagCandidate):
-                self._candidate_flag = output.flag
-                self._candidate_evidence = output.method
-                self._candidate_confidence = "medium"
-                self._findings = f"Flag candidate via {output.method}: {output.flag}"
+                candidate_flag = output.flag.strip()
+                candidate_evidence = output.method.strip()
+                candidate_confidence = "medium"
+                self._findings = f"Flag candidate via {candidate_evidence}: {candidate_flag}"
+                ack = ""
                 if self.deps.report_flag_candidate_fn:
                     ack = await self.deps.report_flag_candidate_fn(
-                        output.flag,
-                        output.method,
-                        self._candidate_confidence,
+                        candidate_flag,
+                        candidate_evidence,
+                        candidate_confidence,
                         self._step_count[0],
                         self.tracer.path,
                     )
                     if ack:
                         self._findings = f"{self._findings}\n{ack}"[:2000]
-                self._runtime.mark_terminal(lifecycle_for_result(FLAG_CANDIDATE), self._findings)
-                return self._result(FLAG_CANDIDATE)
+                if candidate_report_was_accepted(ack or candidate_flag):
+                    self._candidate_flag = candidate_flag
+                    self._candidate_evidence = candidate_evidence
+                    self._candidate_confidence = candidate_confidence
+                    self._runtime.mark_terminal(lifecycle_for_result(FLAG_CANDIDATE), self._findings)
+                    return self._result(FLAG_CANDIDATE)
             # CTFd confirmation always counts (the primary path when not in dry-run)
             if self.deps.confirmed_flag:
                 self._confirmed = True

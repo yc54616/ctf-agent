@@ -165,6 +165,38 @@ def test_codex_runtime_status_does_not_expose_read_only_tracking() -> None:
     assert "last_progress_kind" not in status
 
 
+@pytest.mark.asyncio
+async def test_codex_rejected_candidate_does_not_set_candidate_state() -> None:
+    solver = _make_solver("codex/gpt-5.4")
+
+    async def fake_report(
+        flag: str,
+        evidence: str,
+        confidence: str,
+        step_count: int,
+        trace_path: str,
+    ) -> str:
+        assert flag == "NOT_SOLVE"
+        assert evidence == "analysis marker"
+        assert confidence == "low"
+        assert step_count == 0
+        assert trace_path
+        return "Flag candidate rejected: placeholder sentinel."
+
+    solver.report_flag_candidate_fn = fake_report
+
+    ack = await solver._report_flag_candidate(
+        "NOT_SOLVE",
+        evidence="analysis marker",
+        confidence="low",
+    )
+
+    assert ack == "Flag candidate rejected: placeholder sentinel."
+    assert solver._candidate_flag is None
+    assert solver._candidate_evidence == ""
+    assert solver._candidate_confidence == ""
+
+
 def test_codex_tool_call_phase_expires_when_local_tool_runs_past_deadline() -> None:
     solver = _make_solver("codex/gpt-5.4")
     solver._runtime.mark_busy("bash", "python3 solve.py", step_count=3)
