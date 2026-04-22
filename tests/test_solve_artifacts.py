@@ -222,6 +222,35 @@ def test_persist_solved_artifacts_exports_selected_workspace_files_and_writeup(t
     assert "step 2: web_fetch https://example.test/flag" in writeup
 
 
+def test_runtime_result_payload_marks_candidate_review_mode(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge-review-mode"
+    challenge_dir.mkdir()
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-review-mode", category="web", value=100),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+    )
+    swarm.flag_candidates["flag{candidate}"] = FlagCandidateRecord(
+        normalized_flag="flag{candidate}",
+        raw_flag="flag{candidate}",
+        status="pending",
+        source_models={"codex/gpt-5.4"},
+    )
+
+    continuing_payload = swarm._runtime_result_payload()
+    assert continuing_payload["status"] == "candidate_pending"
+    assert continuing_payload["candidate_review_mode"] == "continuing"
+
+    swarm.paused_candidate_flag = "flag{candidate}"
+    paused_payload = swarm._runtime_result_payload()
+    assert paused_payload["candidate_review_mode"] == "paused"
+
+
 def test_build_deps_restores_saved_results(tmp_path: Path) -> None:
     challenge_dir = tmp_path / "challenge-a"
     challenge_dir.mkdir()
@@ -450,7 +479,6 @@ async def test_manual_candidate_rejection_cancels_active_swarm_tasks(
         settings=cast(Any, object()),
         result_store={},
         model_specs=["codex/gpt-5.4"],
-        no_submit=True,
     )
     swarm.flag_candidates["flag{live}"] = FlagCandidateRecord(
         normalized_flag="flag{live}",
@@ -477,6 +505,66 @@ async def test_manual_candidate_rejection_cancels_active_swarm_tasks(
     assert swarm.requeue_reason == "candidate_retry"
     assert created[0].process_stopped == 1
     assert created[0].stopped == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_candidate_rejection_keeps_active_swarm_running_when_submission_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    challenge_dir = tmp_path / "challenge-reject-continue"
+    challenge_dir.mkdir()
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    created: list[_TaskCancellationSolver] = []
+
+    def fake_create_solver(self: ChallengeSwarm, model_spec: str, *, sandbox=None, initial_step_count: int = 0):
+        del self, model_spec, sandbox, initial_step_count
+        solver = _TaskCancellationSolver(workspace_dir)
+        created.append(solver)
+        return solver
+
+    monkeypatch.setattr(ChallengeSwarm, "_create_solver", fake_create_solver)
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="challenge-reject-continue", category="web", value=200),
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        result_store={},
+        model_specs=["codex/gpt-5.4"],
+        no_submit=True,
+    )
+    swarm.flag_candidates["flag{live}"] = FlagCandidateRecord(
+        normalized_flag="flag{live}",
+        raw_flag="flag{live}",
+        status="pending",
+        source_models={"codex/gpt-5.4"},
+        step_counts={"codex/gpt-5.4": 5},
+        evidence_snippets=["candidate found during active run"],
+    )
+
+    run_task = asyncio.create_task(swarm.run())
+    for _ in range(20):
+        if created and created[0].started:
+            break
+        await asyncio.sleep(0)
+
+    display = await swarm.reject_flag_candidate("flag{live}", rejected_by="operator_manual")
+    await asyncio.sleep(0)
+
+    assert display.startswith('USER REJECTED — "flag{live}" dismissed by operator review.')
+    assert run_task.done() is False
+    assert swarm.requeue_requested is False
+    assert swarm.requeue_reason == ""
+    assert created[0].process_stopped == 0
+    assert created[0].stopped == 0
+
+    swarm.kill("test cleanup")
+    result = await asyncio.wait_for(run_task, timeout=1)
+    assert result is None
 
 
 @pytest.mark.asyncio

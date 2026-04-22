@@ -498,15 +498,23 @@ function challengeSummary(name, challenge, bucket = "") {
   const winnerLabel = challengeWinnerLabel(challenge);
   const lead = winnerLabel ? `winner ${winnerLabel}` : `${lanes.length} lanes`;
   const details = [lead];
+  const status = String(challenge?.status || "").trim();
   const pendingReason = String(challenge?.pending_reason || "").trim();
-  if (pendingReason === "priority_waiting") {
+  const candidateReviewMode = String(challenge?.candidate_review_mode || "").trim();
+  if (status === "candidate_pending") {
+    if (candidateReviewMode === "paused") {
+      details.push("candidate review paused");
+    } else if (candidateReviewMode === "continuing") {
+      details.push("candidate review active");
+    } else {
+      details.push("candidate review");
+    }
+  } else if (pendingReason === "priority_waiting") {
     details.push("priority waiting");
   } else if (pendingReason === "restart_requested" || pendingReason === "resume_requested") {
     details.push("restart queued");
   } else if (pendingReason === "candidate_retry") {
     details.push("candidate retry");
-  } else if (pendingReason === "candidate_pending") {
-    details.push("candidate paused");
   } else if (pendingReason === "ctfd_retry") {
     details.push("ctfd retry");
   }
@@ -1913,7 +1921,7 @@ function renderSelectedChallenge() {
     els.laneAdvisoryText.textContent = "-";
     els.sharedFindingList.innerHTML = '<li class="empty">No shared findings yet.</li>';
     els.flagCandidatesList.innerHTML = '<li class="empty">No candidate flags yet.</li>';
-    els.advisoryHistory.innerHTML = '<li class="empty">No advisory history yet.</li>';
+    els.advisoryHistory.innerHTML = '<li class="empty">No note history yet.</li>';
     els.laneStrip.innerHTML = '<div class="empty">No challenge selected.</div>';
     els.laneFocus.innerHTML = '<div class="empty">Select a lane to inspect current activity.</div>';
     els.traceTableBody.innerHTML = '<tr><td class="empty" colspan="3">No trace selected.</td></tr>';
@@ -2022,7 +2030,7 @@ function renderSelectedChallenge() {
         }
         ${
           lane.advisor_note
-            ? `<div class="lane-focus-advisory"><strong>Lane advisory</strong>${escapeHtml(lane.advisor_note)}</div>`
+            ? `<div class="lane-focus-advisory"><strong>Latest lane note</strong>${escapeHtml(lane.advisor_note)}</div>`
             : ""
         }
         <div class="lane-focus-subtle">${escapeHtml(lane.findings || lane.last_exit_hint || "No additional lane note.")}</div>
@@ -2046,7 +2054,7 @@ function renderSelectedChallenge() {
           `;
         })
         .join("")
-    : '<li class="empty">No advisory history yet.</li>';
+    : '<li class="empty">No note history yet.</li>';
 }
 
 function renderTraceSelector() {

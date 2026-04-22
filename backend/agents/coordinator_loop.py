@@ -906,6 +906,7 @@ def _pending_swarms_snapshot(
             "agents": {},
             "step_count": int(result_dict.get("step_count", 0) or 0),
             "status": str(result_dict.get("status") or "pending"),
+            "candidate_review_mode": str(result_dict.get("candidate_review_mode") or ""),
             "flag_candidates": result_dict.get("flag_candidates") or {},
             "coordinator_advisor_note": str(result_dict.get("coordinator_advisor_note") or ""),
             "shared_finding": str(result_dict.get("shared_finding") or ""),

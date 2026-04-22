@@ -27,7 +27,7 @@ function loadOperatorUiTestHarness({ localStorageSeed = {} } = {}) {
   const source = fs.readFileSync(sourcePath, "utf8");
   const instrumented = source.replace(
     /\nmain\(\);\s*$/,
-    "\nglobalThis.__operatorUiTest = { state, els, bindEvents, challengeBuckets, syncSelections, syncSnapshotAlerts, handleBrowserNotificationsClick, getSelectedChallengeData, visibleLaneEntries, formatElapsed, renderSchedulerControls, populateChallengeConfigForm, parseStageWorkflowText, workflowStageDefinitions, effectiveInstanceStages, syncStageWorkflowText };\n"
+    "\nglobalThis.__operatorUiTest = { state, els, bindEvents, challengeBuckets, syncSelections, syncSnapshotAlerts, handleBrowserNotificationsClick, getSelectedChallengeData, visibleLaneEntries, formatElapsed, challengeSummary, renderSchedulerControls, populateChallengeConfigForm, parseStageWorkflowText, workflowStageDefinitions, effectiveInstanceStages, syncStageWorkflowText };\n"
   );
 
   const notifications = [];
@@ -295,6 +295,42 @@ test("renderSchedulerControls syncs max active input from snapshot when idle", (
   harness.renderSchedulerControls({ bucket: "", data: null }, null);
 
   assert.equal(harness.els.maxChallengesInput.value, "6");
+});
+
+test("challengeSummary distinguishes active and paused candidate review", () => {
+  const harness = loadOperatorUiTestHarness();
+
+  const continuing = harness.challengeSummary(
+    "demo",
+    {
+      status: "candidate_pending",
+      candidate_review_mode: "continuing",
+      step_count: 9,
+      agents: {
+        "codex/gpt-5.4": { lifecycle: "busy", step_count: 9 },
+      },
+      flag_candidates: {
+        "flag{maybe}": { status: "pending" },
+      },
+    },
+    "active"
+  );
+  const paused = harness.challengeSummary(
+    "demo",
+    {
+      status: "candidate_pending",
+      candidate_review_mode: "paused",
+      step_count: 9,
+      agents: {},
+      flag_candidates: {
+        "flag{maybe}": { status: "pending" },
+      },
+    },
+    "pending"
+  );
+
+  assert.match(continuing, /candidate review active/);
+  assert.match(paused, /candidate review paused/);
 });
 
 test("syncSelections keeps the last selected lane when a challenge moves to pending without live agents", () => {

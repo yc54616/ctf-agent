@@ -769,8 +769,8 @@ async def test_swarm_report_flag_candidate_queues_operator_review_when_submissio
     assert candidate.evidence_digest_paths["codex/gpt-5.4"].startswith("/challenge/shared-artifacts/.advisor/")
     assert candidate.evidence_pointer_paths["codex/gpt-5.4"].startswith("/challenge/shared-artifacts/")
     assert inbox.empty()
-    assert swarm.cancel_event.is_set()
-    assert swarm.paused_candidate_flag == "flag{candidate}"
+    assert not swarm.cancel_event.is_set()
+    assert swarm.paused_candidate_flag == ""
 
 
 @pytest.mark.asyncio

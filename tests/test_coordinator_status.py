@@ -142,6 +142,7 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
     }
     deps.results["challenge-c"] = {
         "status": "candidate_pending",
+        "candidate_review_mode": "paused",
         "step_count": 9,
         "flag_candidates": {
             "flag{maybe}": {
@@ -172,6 +173,7 @@ def test_status_snapshot_reports_active_and_finished_swarms() -> None:
     ]
     assert snapshot["pending_swarms"]["challenge-c"]["step_count"] == 9
     assert snapshot["pending_swarms"]["challenge-c"]["pending_reason"] == "candidate_pending"
+    assert snapshot["pending_swarms"]["challenge-c"]["candidate_review_mode"] == "paused"
     assert "flag{maybe}" in snapshot["pending_swarms"]["challenge-c"]["flag_candidates"]
     assert "challenge-a" in snapshot["active_swarms"]
     assert snapshot["active_swarms"]["challenge-a"]["usage"]["input_tokens"] == 100

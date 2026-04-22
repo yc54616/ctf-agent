@@ -632,17 +632,26 @@ class ChallengeSwarm:
             total = max(total, max(candidate.step_counts.values(), default=0))
         return total
 
-    def _runtime_result_payload(self) -> dict[str, object]:
-        pending_candidate = any(
+    def _has_pending_candidate_reviews(self) -> bool:
+        return any(
             str(record.status or "").strip().lower() not in {"confirmed", "rejected"}
             for record in self.flag_candidates.values()
         )
+
+    def _candidate_review_mode(self) -> str:
+        if not self._has_pending_candidate_reviews():
+            return ""
+        return "paused" if self.paused_candidate_flag else "continuing"
+
+    def _runtime_result_payload(self) -> dict[str, object]:
+        pending_candidate = self._has_pending_candidate_reviews()
         status = FLAG_FOUND if self.confirmed_flag else (
             "candidate_pending" if pending_candidate else "pending"
         )
         payload: dict[str, object] = {
             "challenge_name": self.meta.name,
             "status": status,
+            "candidate_review_mode": self._candidate_review_mode(),
             "step_count": self._runtime_step_count(),
             "started_at": self.started_at,
             "advisor_note": self.last_advisor_note,
@@ -2207,18 +2216,24 @@ class ChallengeSwarm:
             candidate.status = "pending"
 
         await self._persist_runtime_state()
-        await self._pause_for_candidate(normalized, model_spec)
 
-        if self.no_submit:
+        if self.no_submit or self.local_mode:
+            self._broadcast_candidate_advisory(
+                f'Flag candidate "{normalized}" is pending operator review. '
+                "Keep exploring while review is in progress and do not re-submit the exact same flag "
+                "unless you find materially stronger evidence."
+            )
             if is_new:
                 return (
                     f'Queued flag candidate "{normalized}" for operator review. '
-                    "Keep exploring and do not submit it yourself."
+                    "Keep exploring while review is in progress and do not submit it yourself."
                 )
             return (
                 f'Flag candidate "{normalized}" is already queued for operator review. '
-                "Keep exploring and do not re-submit the same candidate."
+                "Keep exploring while review is in progress and do not re-submit the same candidate."
             )
+
+        await self._pause_for_candidate(normalized, model_spec)
 
         display, is_confirmed = await self.try_submit_flag(normalized, model_spec)
         normalized_display = str(display or "").strip()
@@ -4255,8 +4270,15 @@ class ChallengeSwarm:
                 or self._lane_restart_notes.get(spec, ""),
             }
 
+        candidate_review_mode = self._candidate_review_mode()
+        challenge_status = FLAG_FOUND if self.winner else (
+            "candidate_pending" if candidate_review_mode else "running"
+        )
+
         return {
             "challenge": self.meta.name,
+            "status": challenge_status,
+            "candidate_review_mode": candidate_review_mode,
             "started_at": self.started_at,
             "cancelled": self.cancel_event.is_set(),
             "winner": self.winner.flag if self.winner else None,
