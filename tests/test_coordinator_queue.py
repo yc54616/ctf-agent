@@ -13,7 +13,7 @@ from backend.agents.coordinator_core import (
     PENDING_REASON_PRIORITY_WAITING,
     PENDING_REASON_QUEUED,
     PENDING_REASON_QUOTA_BLOCKED,
-    PENDING_REASON_RESUME_REQUESTED,
+    PENDING_REASON_RESTART_REQUESTED,
     _fill_swarm_capacity,
     _retire_finished_swarms,
     _spawn_swarm_now,
@@ -50,6 +50,9 @@ class _FakeTask:
 
 
 class _FakeCTFd:
+    platform = "ctfd"
+    label = "CTFd"
+
     def __init__(self, challenges: list[dict[str, object]], solved: set[str] | None = None) -> None:
         self._challenges = challenges
         self._solved = solved or set()
@@ -372,7 +375,7 @@ async def test_restart_challenge_promotes_pending_item_and_spawns_it(monkeypatch
 
     result = await do_restart_challenge(deps, "restart-me")
 
-    assert result == 'Resumed "restart-me" from saved progress.'
+    assert result == 'Restarted "restart-me" from saved notes.'
     assert spawned == ["restart-me"]
     assert "restart-me" in deps.swarms
     assert "restart-me" not in deps.pending_swarm_set
@@ -403,9 +406,9 @@ async def test_restart_challenge_requeues_active_swarm_with_restart_reason() -> 
 
     result = await do_restart_challenge(deps, "restart-live")
 
-    assert result == 'Resuming "restart-live" after the current run stops.'
-    assert swarm.requeue_requested == (True, PENDING_REASON_RESUME_REQUESTED)
-    assert swarm.killed == ["operator resuming restart-live"]
+    assert result == 'Restarting "restart-live" after the current run stops.'
+    assert swarm.requeue_requested == (True, PENDING_REASON_RESTART_REQUESTED)
+    assert swarm.killed == ["operator restarting restart-live"]
 
 
 @pytest.mark.asyncio
@@ -457,7 +460,7 @@ def test_restore_pending_swarms_from_results_rehydrates_resume_queue() -> None:
     assert list(deps.pending_swarm_queue) == ["hold-me", "resume-me"]
     assert deps.pending_swarm_meta["hold-me"]["reason"] == PENDING_REASON_PRIORITY_WAITING
     assert deps.pending_swarm_meta["hold-me"]["priority"] is True
-    assert deps.pending_swarm_meta["resume-me"]["reason"] == PENDING_REASON_RESUME_REQUESTED
+    assert deps.pending_swarm_meta["resume-me"]["reason"] == PENDING_REASON_RESTART_REQUESTED
     assert deps.pending_swarm_meta["resume-me"]["priority"] is False
     assert "candidate-review" not in deps.pending_swarm_set
     assert "solved" not in deps.pending_swarm_set
@@ -677,7 +680,7 @@ async def test_do_spawn_swarm_returns_nonfatal_error_when_ctfd_refresh_fails() -
 
     result = await do_spawn_swarm(deps, "ghost-challenge")
 
-    assert result.startswith("Queued swarm for ghost-challenge awaiting CTFd retry")
+    assert result.startswith("Queued swarm for ghost-challenge awaiting remote refresh retry")
     assert deps.swarms == {}
     assert list(deps.pending_swarm_queue) == ["ghost-challenge"]
     assert deps.pending_swarm_set == {"ghost-challenge"}
@@ -990,7 +993,7 @@ async def test_try_submit_flag_blocks_previously_incorrect_candidate(tmp_path: P
     display, is_confirmed = await swarm.try_submit_flag("flag{candidate}", "codex/gpt-5.4")
 
     assert is_confirmed is False
-    assert "previously rejected by CTFd for this challenge" in display
+    assert "previously rejected by the remote platform for this challenge" in display
 
 
 @pytest.mark.asyncio
@@ -1084,7 +1087,7 @@ async def test_do_submit_flag_blocks_stored_incorrect_candidate(tmp_path: Path) 
     display = await do_submit_flag(deps, "candidate-chal", "flag{candidate}")
 
     assert "SUBMIT BLOCKED" in display
-    assert "previously rejected by CTFd for this challenge" in display
+    assert "previously rejected by the remote platform for this challenge" in display
 
 
 @pytest.mark.asyncio

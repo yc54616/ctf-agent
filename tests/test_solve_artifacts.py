@@ -126,13 +126,17 @@ class _AutoSubmitIncorrectSolver(_TaskCancellationSolver):
         self._released.set()
 
 
-def test_persist_solved_artifacts_writes_workspace_trace_and_writeup(tmp_path: Path) -> None:
+def test_persist_solved_artifacts_exports_selected_workspace_files_and_writeup(tmp_path: Path) -> None:
     challenge_dir = tmp_path / "challenge-a"
     challenge_dir.mkdir()
 
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
     (workspace_dir / "exploit.py").write_text("print('pwnd')\n", encoding="utf-8")
+    runner = workspace_dir / "solve"
+    runner.write_text("#!/usr/bin/env python3\nprint('run')\n", encoding="utf-8")
+    runner.chmod(0o755)
+    (workspace_dir / "ignored.bin").write_bytes(b"\x00" * 256)
 
     shared_dir = challenge_dir / ".shared-artifacts"
     shared_dir.mkdir()
@@ -192,7 +196,10 @@ def test_persist_solved_artifacts_writes_workspace_trace_and_writeup(tmp_path: P
 
     solve_dir = challenge_dir / "solve"
     assert (solve_dir / "flag.txt").read_text(encoding="utf-8").strip() == "flag{done}"
-    assert (solve_dir / "workspace" / "exploit.py").exists()
+    assert (solve_dir / "export" / "exploit.py").exists()
+    assert (solve_dir / "export" / "solve").exists()
+    assert (solve_dir / "export" / "ignored.bin").exists() is False
+    assert (solve_dir / "export" / "MANIFEST.md").exists()
     assert (solve_dir / "trace.jsonl").exists()
 
     result_payload = json.loads((solve_dir / "result.json").read_text(encoding="utf-8"))
@@ -201,13 +208,17 @@ def test_persist_solved_artifacts_writes_workspace_trace_and_writeup(tmp_path: P
     assert result_payload["step_count"] == 7
     assert result_payload["advisor_note"] == "Verify the hidden admin route before final submit."
     assert result_payload["shared_findings"] == {}
-    assert result_payload["workspace_path"].endswith("/solve/workspace")
+    assert result_payload["workspace_path"].endswith("/solve/export")
+    assert result_payload["workspace_snapshot_kind"] == "selected_export"
+    assert result_payload["workspace_export_manifest_path"].endswith("/solve/export/MANIFEST.md")
+    assert "solve" in result_payload["exported_workspace_files"]
     assert result_payload["shared_artifacts_path"].endswith("/.shared-artifacts")
 
     writeup = (solve_dir / "writeup.md").read_text(encoding="utf-8")
     assert "flag{done}" in writeup
     assert "Winner model: codex/gpt-5.4" in writeup
     assert "Used the hidden admin route" in writeup
+    assert "Selected workspace export" in writeup
     assert "step 2: web_fetch https://example.test/flag" in writeup
 
 
@@ -339,7 +350,7 @@ async def test_manual_candidate_approval_persists_solved_artifacts(tmp_path: Pat
 
     display = await swarm.approve_flag_candidate("flag{local}", approved_by="operator_manual")
 
-    assert display.startswith('USER CONFIRMED MANUALLY — "flag{local}" marked solved without CTFd confirmation.')
+    assert display.startswith('USER CONFIRMED MANUALLY — "flag{local}" marked solved without automatic remote confirmation.')
     assert swarm.confirmed_flag == "flag{local}"
     assert swarm.winner_confirmation_source == "operator_manual"
     assert swarm.flag_candidates["flag{local}"].confirmation_source == "operator_manual"
@@ -350,7 +361,8 @@ async def test_manual_candidate_approval_persists_solved_artifacts(tmp_path: Pat
     assert result_payload["confirmation_source"] == "operator_manual"
     assert result_payload["flag_candidates"]["flag{local}"]["status"] == "confirmed"
     assert result_payload["flag_candidates"]["flag{local}"]["confirmation_source"] == "operator_manual"
-    assert (challenge_dir / "solve" / "workspace" / "exploit.sh").exists()
+    assert result_payload["workspace_snapshot_kind"] == "selected_export"
+    assert (challenge_dir / "solve" / "export" / "exploit.sh").exists()
     assert (challenge_dir / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{local}"
     assert cast(_FakeSolver, swarm.solvers["codex/gpt-5.4"]).process_stopped == 1
 
@@ -403,7 +415,7 @@ async def test_manual_candidate_approval_cancels_active_swarm_tasks(
     display = await swarm.approve_flag_candidate("flag{live}", approved_by="operator_manual")
     result = await asyncio.wait_for(run_task, timeout=1)
 
-    assert display.startswith('USER CONFIRMED MANUALLY — "flag{live}" marked solved without CTFd confirmation.')
+    assert display.startswith('USER CONFIRMED MANUALLY — "flag{live}" marked solved without automatic remote confirmation.')
     assert result is not None
     assert result.status == FLAG_FOUND
     assert created[0].process_stopped == 1
@@ -604,7 +616,8 @@ async def test_external_solve_persists_solved_artifacts(tmp_path: Path) -> None:
     assert result_payload["status"] == "flag_found"
     assert result_payload["flag"] == "flag{external}"
     assert result_payload["confirmation_source"] == "operator_external"
-    assert (challenge_dir / "solve" / "workspace" / "manual.sh").exists()
+    assert result_payload["workspace_snapshot_kind"] == "selected_export"
+    assert (challenge_dir / "solve" / "export" / "manual.sh").exists()
     assert (challenge_dir / "solve" / "flag.txt").read_text(encoding="utf-8").strip() == "flag{external}"
     assert cast(_FakeSolver, swarm.solvers["codex/gpt-5.4"]).process_stopped == 1
 

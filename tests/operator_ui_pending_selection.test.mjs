@@ -9,7 +9,7 @@ function loadOperatorUiTestHarness() {
   const source = fs.readFileSync(sourcePath, "utf8");
   const instrumented = source.replace(
     /\nmain\(\);\s*$/,
-    "\nglobalThis.__operatorUiTest = { state, challengeBuckets, syncSelections, getSelectedChallengeData, visibleLaneEntries };\n"
+    "\nglobalThis.__operatorUiTest = { state, els, challengeBuckets, syncSelections, getSelectedChallengeData, visibleLaneEntries, formatElapsed, renderSchedulerControls };\n"
   );
 
   const makeElement = () => ({
@@ -54,6 +54,7 @@ function loadOperatorUiTestHarness() {
       throw new Error("fetch should not be called in operator_ui unit tests");
     },
     document: {
+      activeElement: null,
       getElementById(id) {
         return getElement(id);
       },
@@ -171,5 +172,78 @@ test("challengeBuckets keeps live shared findings when results only have empty m
   assert.equal(
     buckets.finished.demo.shared_findings["codex/gpt-5.4"].summary,
     "Potential admin API at /api/v1/k8s/get"
+  );
+});
+
+test("formatElapsed uses compact English duration labels", () => {
+  const harness = loadOperatorUiTestHarness();
+
+  assert.equal(harness.formatElapsed(81), "1m 21s");
+  assert.equal(harness.formatElapsed(3725), "1h 2m 5s");
+  assert.equal(harness.formatElapsed(93784), "1d 2h 3m 4s");
+});
+
+test("renderSchedulerControls preserves max active draft while editing", () => {
+  const harness = loadOperatorUiTestHarness();
+  harness.state.snapshot = { max_concurrent_challenges: 4 };
+  harness.state.maxChallengesDirty = true;
+  harness.state.maxChallengesDraft = "7";
+  harness.els.maxChallengesInput.value = "7";
+
+  harness.renderSchedulerControls({ bucket: "", data: null }, null);
+
+  assert.equal(harness.els.maxChallengesInput.value, "7");
+});
+
+test("renderSchedulerControls syncs max active input from snapshot when idle", () => {
+  const harness = loadOperatorUiTestHarness();
+  harness.state.snapshot = { max_concurrent_challenges: 6 };
+  harness.state.maxChallengesDirty = false;
+  harness.els.maxChallengesInput.value = "0";
+
+  harness.renderSchedulerControls({ bucket: "", data: null }, null);
+
+  assert.equal(harness.els.maxChallengesInput.value, "6");
+});
+
+test("syncSelections keeps the last selected lane when a challenge moves to pending without live agents", () => {
+  const harness = loadOperatorUiTestHarness();
+  harness.state.selectedChallenge = "sanity check";
+  harness.state.selectedLane = "codex/gpt-5.4";
+  harness.state.selectedTrace = "trace-sanity_check-gpt-5.4-20260421-120000.jsonl";
+  harness.state.snapshot = {
+    active_swarms: {},
+    finished_swarms: {},
+    pending_swarms: {
+      "sanity check": {
+        challenge: "sanity check",
+        agents: {},
+        step_count: 12,
+        status: "pending",
+        flag_candidates: {},
+      },
+    },
+    pending_challenge_entries: [
+      {
+        challenge_name: "sanity check",
+        priority: true,
+        reason: "priority_waiting",
+        local_preloaded: false,
+      },
+    ],
+    results: {
+      "sanity check": {
+        status: "pending",
+        step_count: 12,
+      },
+    },
+  };
+
+  harness.syncSelections();
+
+  assert.equal(harness.state.selectedLane, "codex/gpt-5.4");
+  assert.equal(
+    harness.state.selectedTrace,
+    "trace-sanity_check-gpt-5.4-20260421-120000.jsonl"
   );
 });

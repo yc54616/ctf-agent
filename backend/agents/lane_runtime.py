@@ -16,9 +16,9 @@ from pydantic_ai.usage import RunUsage
 
 from backend.config import Settings
 from backend.cost_tracker import AgentUsage, CostTracker
-from backend.ctfd import CTFdClient
 from backend.local_sandbox import LocalSandbox
 from backend.models import provider_from_spec
+from backend.platforms import PlatformClient, build_platform_client
 from backend.prompts import ChallengeMeta
 from backend.runtime_control import (
     HEARTBEAT_INTERVAL_SECONDS,
@@ -31,6 +31,12 @@ from backend.runtime_control import (
     write_json_atomic,
 )
 from backend.solver_base import SolverResult
+
+
+def _dict(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}
 
 
 class RuntimeCostTrackerProxy:
@@ -118,17 +124,17 @@ class LaneRuntime:
         raw_config = read_json(control_paths.config_path, default={})
         if not isinstance(raw_config, dict):
             raise RuntimeError(f"Invalid runtime config: {control_paths.config_path}")
-        self.config = {str(key): value for key, value in raw_config.items()}
+        self.config = _dict(raw_config)
         self.model_spec = str(self.config.get("model_spec") or "")
         self.provider = str(self.config.get("provider") or provider_from_spec(self.model_spec))
-        self.meta = ChallengeMeta(**dict(self.config.get("meta") or {}))
+        self.meta = ChallengeMeta.from_dict(_dict(self.config.get("meta")))
         self.settings = self._build_settings()
         self.cancel_event = asyncio.Event()
         self._commands_offset = self._initial_commands_offset()
         self._last_event = "starting"
         self._running = True
         self._solver: Any = None
-        self._ctfd: CTFdClient | None = None
+        self._ctfd: PlatformClient | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._turn_task: asyncio.Task[SolverResult] | None = None
         self._consecutive_errors = 0
@@ -140,7 +146,7 @@ class LaneRuntime:
             return 0
 
     def _build_settings(self) -> Settings:
-        payload = dict(self.config.get("settings") or {})
+        payload = _dict(self.config.get("settings"))
         provider_home = str(self.config.get("provider_home_dir") or "/challenge/provider-home")
         codex_auth_path = str(Path(provider_home) / ".codex" / "auth.json")
         gemini_auth_path = str(Path(provider_home) / ".gemini" / "oauth_creds.json")
@@ -149,6 +155,7 @@ class LaneRuntime:
             ctfd_user=str(payload.get("ctfd_user") or "admin"),
             ctfd_pass=str(payload.get("ctfd_pass") or "admin"),
             ctfd_token=str(payload.get("ctfd_token") or ""),
+            remote_cookie_header=str(payload.get("remote_cookie_header") or ""),
             sandbox_image=str(payload.get("sandbox_image") or "ctf-sandbox"),
             container_memory_limit=str(payload.get("container_memory_limit") or "4g"),
             exec_output_spill_threshold_bytes=int(payload.get("exec_output_spill_threshold_bytes") or 65_536),
@@ -197,11 +204,11 @@ class LaneRuntime:
         os.environ["CTF_AGENT_LOG_DIR"] = str(self.config.get("trace_dir") or "/challenge/host-logs")
         os.environ["CTF_AGENT_CODEX_THREAD_PATH"] = str(self.control_paths.codex_thread_path)
 
-        self._ctfd = CTFdClient(
-            base_url=self.settings.ctfd_url,
-            token=self.settings.ctfd_token,
-            username=self.settings.ctfd_user,
-            password=self.settings.ctfd_pass,
+        self._ctfd = build_platform_client(
+            self.settings,
+            {self.meta.name: self.meta},
+            local_mode=bool(self.config.get("local_mode", False)),
+            cookie_header=self.settings.remote_cookie_header,
         )
         sandbox = LocalSandbox(
             challenge_dir=str(self.config.get("challenge_dir") or "/challenge/challenge-src"),
@@ -220,13 +227,12 @@ class LaneRuntime:
             provider_spec=self.provider,
         )
         initial_step_count = 0
-        heartbeat = read_json(self.control_paths.heartbeat_path, default={})
-        if isinstance(heartbeat, dict):
-            raw_step = heartbeat.get("step_count", 0)
-            if isinstance(raw_step, (int, float)):
-                initial_step_count = int(raw_step)
+        heartbeat = _dict(read_json(self.control_paths.heartbeat_path, default={}))
+        raw_step = heartbeat.get("step_count", 0)
+        if isinstance(raw_step, (int, float)):
+            initial_step_count = int(raw_step)
 
-        solver_kwargs = {
+        solver_kwargs: dict[str, Any] = {
             "model_spec": self.model_spec,
             "challenge_dir": str(self.config.get("challenge_dir") or "/challenge/challenge-src"),
             "meta": self.meta,

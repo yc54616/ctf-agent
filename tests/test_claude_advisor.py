@@ -160,6 +160,7 @@ def _make_swarm(tmp_path) -> ChallengeSwarm:
 def test_advisor_system_prompt_stays_compact() -> None:
     assert "NO_ADVICE" in ADVISOR_SYSTEM_PROMPT
     assert "Do not call tools." in ADVISOR_SYSTEM_PROMPT
+    assert "/challenge/agent-repo/ctf-skills/" in ADVISOR_SYSTEM_PROMPT
     assert len(ADVISOR_SYSTEM_PROMPT) < 900
 
 

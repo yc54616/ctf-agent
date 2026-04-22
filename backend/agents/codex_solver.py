@@ -25,10 +25,10 @@ from typing import Any
 
 from backend.agents.codex_rpc_io import read_jsonrpc_line
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.loop_detect import LoopDetector
 from backend.models import model_id_from_spec, supports_vision
 from backend.output_types import solver_output_json_schema
+from backend.platforms import PlatformClient
 from backend.prompts import (
     ChallengeMeta,
     build_lane_bump_prompt,
@@ -102,7 +102,7 @@ BASE_SANDBOX_TOOLS = [
     },
     {
         "name": "report_flag_candidate",
-        "description": "Queue a candidate flag for advisor and coordinator review without submitting it to CTFd.",
+        "description": "Queue a candidate flag for advisor and coordinator review without submitting it automatically.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -145,7 +145,7 @@ class CodexSolver:
         model_spec: str,
         challenge_dir: str,
         meta: ChallengeMeta,
-        ctfd: CTFdClient,
+        ctfd: PlatformClient,
         cost_tracker: CostTracker,
         settings: object,
         cancel_event: asyncio.Event | None = None,

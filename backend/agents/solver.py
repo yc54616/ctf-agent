@@ -16,7 +16,6 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.deps import SolverDeps
 from backend.loop_detect import LOOP_WARNING_MESSAGE, LoopDetector
 from backend.models import (
@@ -27,6 +26,7 @@ from backend.models import (
     supports_vision,
 )
 from backend.output_types import FlagCandidate
+from backend.platforms import PlatformClient
 from backend.prompts import ChallengeMeta, build_lane_bump_prompt, build_prompt, list_distfiles
 from backend.sandbox import DockerSandbox
 from backend.solver_base import (
@@ -113,7 +113,7 @@ class Solver:
         model_spec: str,
         challenge_dir: str,
         meta: ChallengeMeta,
-        ctfd: CTFdClient,
+        ctfd: PlatformClient,
         cost_tracker: CostTracker,
         settings: object,
         cancel_event: asyncio.Event | None = None,
@@ -298,7 +298,7 @@ class Solver:
                     self._candidate_confidence = candidate_confidence
                     self._runtime.mark_terminal(lifecycle_for_result(FLAG_CANDIDATE), self._findings)
                     return self._result(FLAG_CANDIDATE)
-            # CTFd confirmation always counts (the primary path when not in dry-run)
+            # Automatic remote confirmation always counts (the primary path when not in dry-run)
             if self.deps.confirmed_flag:
                 self._confirmed = True
                 self._flag = self._flag or self.deps.confirmed_flag

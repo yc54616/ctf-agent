@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
+from backend.platforms import PlatformClient
 from backend.sandbox import DockerSandbox
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ RuntimeStatusGetter = Callable[[], dict[str, object]]
 @dataclass
 class SolverDeps:
     sandbox: DockerSandbox
-    ctfd: CTFdClient
+    ctfd: PlatformClient
     challenge_dir: str
     challenge_name: str
     workspace_dir: str
@@ -48,7 +48,7 @@ class SolverDeps:
 
 @dataclass
 class CoordinatorDeps:
-    ctfd: CTFdClient
+    ctfd: PlatformClient
     cost_tracker: CostTracker
     settings: Any
     model_specs: list[str] = field(default_factory=list)

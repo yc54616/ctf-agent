@@ -18,6 +18,8 @@ from typing import Any
 
 import aiodocker
 
+from backend.challenge_config import refresh_effective_metadata
+
 logger = logging.getLogger(__name__)
 
 CONTAINER_LABEL = "ctf-agent"
@@ -338,7 +340,7 @@ class DockerSandbox:
 
             challenge_root = Path(self.challenge_dir).resolve()
             distfiles = str(challenge_root / "distfiles")
-            meta_yml = str(challenge_root / "metadata.yml")
+            meta_yml = str(refresh_effective_metadata(challenge_root))
 
             binds: list[str] = [f"{self.workspace_dir}:/challenge/workspace:rw"]
             binds.append(f"{self.shared_artifacts_dir}:{SHARED_ARTIFACTS_CONTAINER_ROOT}:rw")

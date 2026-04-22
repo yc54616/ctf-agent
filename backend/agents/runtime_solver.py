@@ -24,6 +24,12 @@ from backend.sandbox import TRACE_CONTAINER_ROOT, DockerSandbox
 from backend.solver_base import ERROR, LaneRuntimeStatus, SolverResult, lifecycle_for_result
 
 
+def _dict(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
 class InSandboxRuntimeSolver:
     """Proxy that delegates full provider/tool execution to an in-container runtime."""
 
@@ -119,6 +125,7 @@ class InSandboxRuntimeSolver:
                 "ctfd_user": settings.ctfd_user,
                 "ctfd_pass": settings.ctfd_pass,
                 "ctfd_token": settings.ctfd_token,
+                "remote_cookie_header": settings.remote_cookie_header,
                 "sandbox_image": settings.sandbox_image,
                 "container_memory_limit": settings.container_memory_limit,
                 "exec_output_spill_threshold_bytes": settings.exec_output_spill_threshold_bytes,
@@ -151,11 +158,11 @@ class InSandboxRuntimeSolver:
                 if is_final:
                     self._runtime.mark_terminal(lifecycle_for_result(result.status), result.status)
                 return result
-            payload = read_json(self._control.result_path, default={})
-            if isinstance(payload, dict) and str(payload.get("type") or "") == "final_result":
+            payload = _dict(read_json(self._control.result_path, default={}))
+            if str(payload.get("type") or "") == "final_result":
                 self._last_result = payload
-                raw_result = payload.get("result", {})
-                if isinstance(raw_result, dict):
+                raw_result = _dict(payload.get("result"))
+                if raw_result:
                     mapped = self._map_result(raw_result)
                     self._runtime.mark_terminal(lifecycle_for_result(mapped.status), mapped.status)
                     return mapped
@@ -256,11 +263,11 @@ class InSandboxRuntimeSolver:
         return status
 
     def _load_terminal_result(self) -> dict[str, str]:
-        payload = read_json(self._control.result_path, default={})
-        if not isinstance(payload, dict) or str(payload.get("type") or "") != "final_result":
+        payload = _dict(read_json(self._control.result_path, default={}))
+        if str(payload.get("type") or "") != "final_result":
             return {}
-        raw_result = payload.get("result", {})
-        if not isinstance(raw_result, dict):
+        raw_result = _dict(payload.get("result"))
+        if not raw_result:
             return {}
         status = str(raw_result.get("status") or "").strip()
         if not status:
@@ -308,9 +315,9 @@ class InSandboxRuntimeSolver:
             {"type": "shutdown", "ts": time.time(), "reason": self._stop_reason},
         )
         await asyncio.sleep(0.5)
-        payload = read_json(self._control.runtime_pid_path, default={})
+        payload = _dict(read_json(self._control.runtime_pid_path, default={}))
         pid = ""
-        if isinstance(payload, dict):
+        if payload:
             pid = str(payload.get("pid") or "").strip()
         if pid:
             try:

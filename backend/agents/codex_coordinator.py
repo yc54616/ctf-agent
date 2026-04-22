@@ -26,8 +26,8 @@ from backend.agents.coordinator_core import (
 from backend.agents.coordinator_loop import build_deps, run_event_loop
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
+from backend.platforms import PlatformClient
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ COORDINATOR_TOOLS = [
     },
     {
         "name": "submit_flag",
-        "description": "Submit a flag to CTFd.",
+        "description": "Submit a flag to the active remote platform.",
         "inputSchema": {
             "type": "object",
             "properties": {"challenge_name": {"type": "string"}, "flag": {"type": "string"}},
@@ -356,16 +356,22 @@ async def run_codex_coordinator(
     coordinator_model: str | None = None,
     msg_port: int = 0,
     *,
-    ctfd: CTFdClient | None = None,
+    ctfd: PlatformClient | None = None,
     cost_tracker: CostTracker | None = None,
     deps: CoordinatorDeps | None = None,
     cleanup_runtime_on_exit: bool = True,
+    cookie_header: str = "",
 ) -> dict[str, Any]:
     """Run the Codex coordinator with the shared event loop."""
     if ctfd is None or cost_tracker is None or deps is None:
-        ctfd, cost_tracker, deps = build_deps(
-            settings, model_specs, challenges_root, no_submit, local_mode,
-        )
+        if cookie_header:
+            ctfd, cost_tracker, deps = build_deps(
+                settings, model_specs, challenges_root, no_submit, local_mode, cookie_header,
+            )
+        else:
+            ctfd, cost_tracker, deps = build_deps(
+                settings, model_specs, challenges_root, no_submit, local_mode,
+            )
     deps.msg_port = msg_port
 
     resolved_model = coordinator_model or "gpt-5.4"

@@ -39,11 +39,18 @@ _FORBIDDEN_REREAD_MARKERS = (
     "/challenge/challenge-src/.shared-artifacts",
     "challenge-src/.shared-artifacts",
 )
+_ALLOWED_CTF_SKILLS_MARKERS = (
+    "/challenge/agent-repo/ctf-skills/",
+    "agent-repo/ctf-skills/",
+    "/challenge/agent-repo/ctf-skills/ctf-skills/",
+    "agent-repo/ctf-skills/ctf-skills/",
+)
 _BASH_REREAD_BLOCK_MESSAGE = (
     "Blocked reread of prior traces or solve history. "
     "Use allowed roots only: /challenge/distfiles, /challenge/challenge-src "
     "(excluding solve/ and .shared-artifacts/), /challenge/workspace, "
-    "/challenge/shared-artifacts, /challenge/metadata.yml"
+    "/challenge/shared-artifacts, /challenge/metadata.yml, "
+    "/challenge/agent-repo/ctf-skills (targeted reads only)"
 )
 _GENERATED_ARTIFACT_REREAD_BLOCK_MESSAGE = (
     "Blocked whole-file reread of generated stdout/stderr artifacts. "
@@ -111,6 +118,17 @@ def _count_text_lines(text: str) -> int:
 def _should_block_reread_command(command: str) -> bool:
     normalized = _normalize_command_text(command)
     lowered = normalized.lower()
+    if any(marker in lowered for marker in _ALLOWED_CTF_SKILLS_MARKERS):
+        other_forbidden_markers = [
+            marker
+            for marker in _FORBIDDEN_REREAD_MARKERS
+            if marker not in {"/challenge/agent-repo", "agent-repo/"}
+        ]
+        has_other_forbidden_path = any(marker in lowered for marker in other_forbidden_markers) or bool(
+            _TRACE_JSONL_RE.search(lowered)
+        )
+        if not has_other_forbidden_path:
+            return False
     has_forbidden_path = any(marker in lowered for marker in _FORBIDDEN_REREAD_MARKERS) or bool(
         _TRACE_JSONL_RE.search(lowered)
     )

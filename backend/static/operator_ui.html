@@ -121,7 +121,61 @@
               <div class="button-row scheduler-actions">
                 <button id="priorityWaitBtn" type="submit">Move to priority waiting</button>
                 <button id="normalQueueBtn" type="button">Restore normal waiting</button>
-                <button id="restartChallengeBtn" type="button">Resume previous work</button>
+                <button id="restartChallengeBtn" type="button">Restart from saved notes</button>
+              </div>
+            </form>
+          </div>
+          <div class="note-card">
+            <h3>Challenge Config</h3>
+            <p id="challengeConfigSummary">Select a challenge to inspect imported metadata and overrides.</p>
+            <div class="config-summary" id="challengeConfigFacts"></div>
+            <form class="composer-body compact-form" id="challengeConfigForm">
+              <div class="config-grid">
+                <label class="field-inline">
+                  <span>Scheme</span>
+                  <input id="challengeConfigSchemeInput" type="text" placeholder="tcp, http, https">
+                </label>
+                <label class="field-inline">
+                  <span>Host</span>
+                  <input id="challengeConfigHostInput" type="text" placeholder="host3.dreamhack.games">
+                </label>
+                <label class="field-inline">
+                  <span>Port</span>
+                  <input id="challengeConfigPortInput" type="number" min="1" step="1" placeholder="31337">
+                </label>
+                <label class="field-inline wide">
+                  <span>URL</span>
+                  <input id="challengeConfigUrlInput" type="text" placeholder="https://target.example">
+                </label>
+                <label class="field-inline wide">
+                  <span>Raw command</span>
+                  <input id="challengeConfigRawCommandInput" type="text" placeholder="nc host 31337">
+                </label>
+                <label class="field-inline wide">
+                  <span>Notes</span>
+                  <textarea id="challengeConfigNotesInput" rows="3" placeholder="operator note for this challenge"></textarea>
+                </label>
+              </div>
+              <div class="checkbox-row">
+                <label class="toggle-inline">
+                  <input id="challengeConfigPriorityInput" type="checkbox">
+                  <span>Prefer this challenge when queued</span>
+                </label>
+                <label class="toggle-inline">
+                  <input id="challengeConfigNoSubmitInput" type="checkbox">
+                  <span>Disable remote submit for this challenge</span>
+                </label>
+                <label class="toggle-inline">
+                  <input id="challengeConfigNeedsInstanceInput" type="checkbox">
+                  <span>Manual instance step required</span>
+                </label>
+              </div>
+              <p class="instance-check-summary" id="instanceCheckSummary">Use Check instance to verify the current connection before restarting lanes.</p>
+              <div class="button-row scheduler-actions">
+                <button type="submit">Save override</button>
+                <button class="ghost" id="instanceCheckBtn" type="button">Check instance</button>
+                <button class="ghost" id="instanceCheckRestartBtn" type="button">Check and restart</button>
+                <button class="ghost" id="challengeConfigResetBtn" type="button">Reset override</button>
               </div>
             </form>
           </div>

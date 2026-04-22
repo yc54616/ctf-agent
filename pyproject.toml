@@ -14,10 +14,12 @@ dependencies = [
     "rich",
     "click",
     "markdownify",
+    "playwright",
 ]
 
 [project.scripts]
 ctf-solve = "backend.cli:main"
+ctf-import = "backend.import_cli:main"
 ctf-bump = "backend.cli:bump"
 ctf-msg = "backend.cli:msg"
 ctf-status = "backend.cli:status"

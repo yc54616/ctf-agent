@@ -29,8 +29,8 @@ from backend.agents.coordinator_core import (
 from backend.agents.coordinator_loop import build_deps, run_event_loop
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
+from backend.platforms import PlatformClient
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def _build_coordinator_mcp(deps: CoordinatorDeps, on_tool_call=None):
         _mark_tool_call()
         return _text(await do_check_swarm_status(deps, args["challenge_name"]))
 
-    @tool("submit_flag", "Submit a flag to CTFd.", {"challenge_name": str, "flag": str})
+    @tool("submit_flag", "Submit a flag to the active remote platform.", {"challenge_name": str, "flag": str})
     async def submit_flag(args: dict) -> dict:
         _mark_tool_call()
         return _text(await do_submit_flag(deps, args["challenge_name"], args["flag"]))
@@ -153,16 +153,22 @@ async def run_claude_coordinator(
     coordinator_model: str | None = None,
     msg_port: int = 0,
     *,
-    ctfd: CTFdClient | None = None,
+    ctfd: PlatformClient | None = None,
     cost_tracker: CostTracker | None = None,
     deps: CoordinatorDeps | None = None,
     cleanup_runtime_on_exit: bool = True,
+    cookie_header: str = "",
 ) -> dict[str, Any]:
     """Run the Claude Agent SDK coordinator with the shared event loop."""
     if ctfd is None or cost_tracker is None or deps is None:
-        ctfd, cost_tracker, deps = build_deps(
-            settings, model_specs, challenges_root, no_submit, local_mode,
-        )
+        if cookie_header:
+            ctfd, cost_tracker, deps = build_deps(
+                settings, model_specs, challenges_root, no_submit, local_mode, cookie_header,
+            )
+        else:
+            ctfd, cost_tracker, deps = build_deps(
+                settings, model_specs, challenges_root, no_submit, local_mode,
+            )
     deps.msg_port = msg_port
 
     tool_call_counter = {"count": 0}

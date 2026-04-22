@@ -14,7 +14,7 @@ CANCELLED = "cancelled"
 ERROR = "error"
 QUOTA_ERROR = "quota_error"
 
-# Flag confirmation markers from CTFd
+# Flag confirmation markers from automatic remote submit
 CORRECT_MARKERS = ("CORRECT", "ALREADY SOLVED")
 
 

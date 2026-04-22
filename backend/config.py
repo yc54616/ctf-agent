@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     ctfd_user: str = "admin"
     ctfd_pass: str = "admin"
     ctfd_token: str = ""
+    remote_cookie_header: str = ""
+    browser_session_dir: str = ""
 
     # Home auth discovery
     use_home_auth: bool = True

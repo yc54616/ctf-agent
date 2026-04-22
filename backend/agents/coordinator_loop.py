@@ -10,10 +10,21 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
+from backend.challenge_config import (
+    apply_override_patch,
+    challenge_config_snapshot,
+    delete_override,
+    discover_challenge_dirs,
+    load_effective_metadata,
+    load_override,
+    refresh_effective_metadata,
+    sanitize_override,
+    write_override,
+)
 from backend.config import Settings
 from backend.cost_tracker import CostTracker, _fmt_tokens
-from backend.ctfd import CTFdClient
 from backend.deps import CoordinatorDeps
+from backend.instance_probe import probe_instance_connection
 from backend.message_bus import CandidateRef, CoordinatorNoteRef
 from backend.models import DEFAULT_MODELS
 from backend.operator_ui import (
@@ -22,13 +33,15 @@ from backend.operator_ui import (
     load_ui_asset,
     read_trace_window,
 )
-from backend.poller import CTFdPoller
+from backend.platforms import NullPlatformClient, PlatformClient, build_platform_client
+from backend.poller import CTFdPoller, PlatformPoller
 from backend.prompts import ChallengeMeta
 
 logger = logging.getLogger(__name__)
 
 # Callable type for a coordinator turn: (message) -> None
 TurnFn = Callable[[str], Coroutine[Any, Any, None]]
+SHUTDOWN_SWARM_GRACE_SECONDS = 8.0
 
 
 def _is_loop_closed_error(exc: BaseException) -> bool:
@@ -139,12 +152,12 @@ def _local_known_challenge_names(deps: CoordinatorDeps) -> set[str]:
     return set(deps.challenge_dirs) | set(deps.challenge_metas)
 
 
-def _known_challenge_names(deps: CoordinatorDeps, poller: CTFdPoller | None) -> set[str]:
+def _known_challenge_names(deps: CoordinatorDeps, poller: PlatformPoller | None) -> set[str]:
     poller_names = set(poller.known_challenges) if poller is not None else set()
     return poller_names | _local_known_challenge_names(deps) | set(deps.results)
 
 
-def _known_solved_names(deps: CoordinatorDeps, poller: CTFdPoller | None) -> set[str]:
+def _known_solved_names(deps: CoordinatorDeps, poller: PlatformPoller | None) -> set[str]:
     poller_names = set(poller.known_solved) if poller is not None else set()
     return poller_names | _restored_solved_names(deps)
 
@@ -155,22 +168,17 @@ def build_deps(
     challenges_root: str = "challenges",
     no_submit: bool = False,
     local_mode: bool = False,
+    cookie_header: str = "",
     challenge_dirs: dict[str, str] | None = None,
     challenge_metas: dict[str, ChallengeMeta] | None = None,
-) -> tuple[CTFdClient, CostTracker, CoordinatorDeps]:
-    """Create CTFd client, cost tracker, and coordinator deps."""
-    ctfd = CTFdClient(
-        base_url=settings.ctfd_url,
-        token=settings.ctfd_token,
-        username=settings.ctfd_user,
-        password=settings.ctfd_pass,
-    )
+) -> tuple[PlatformClient, CostTracker, CoordinatorDeps]:
+    """Create the remote platform client, cost tracker, and coordinator deps."""
     cost_tracker = CostTracker()
     specs = model_specs or list(DEFAULT_MODELS)
     Path(challenges_root).mkdir(parents=True, exist_ok=True)
 
     deps = CoordinatorDeps(
-        ctfd=ctfd,
+        ctfd=NullPlatformClient(),
         cost_tracker=cost_tracker,
         settings=settings,
         model_specs=specs,
@@ -182,41 +190,65 @@ def build_deps(
         challenge_metas=challenge_metas or {},
     )
 
-    # Pre-load already-pulled challenges
-    for d in Path(challenges_root).iterdir():
-        meta_path = d / "metadata.yml"
-        if meta_path.exists():
-            meta = ChallengeMeta.from_yaml(meta_path)
-            if meta.name not in deps.challenge_dirs:
-                deps.challenge_dirs[meta.name] = str(d)
-                deps.challenge_metas[meta.name] = meta
-            result_path = d / "solve" / "result.json"
-            if result_path.exists():
-                try:
-                    result = json.loads(result_path.read_text(encoding="utf-8"))
-                except Exception:
-                    logger.warning("Could not restore solved result from %s", result_path)
-                else:
-                    if isinstance(result, dict):
-                        deps.results.setdefault(meta.name, result)
+    # Pre-load already-pulled challenges, including nested competition folders.
+    for challenge_dir in discover_challenge_dirs(challenges_root):
+        refresh_effective_metadata(challenge_dir)
+        meta = ChallengeMeta.from_dict(load_effective_metadata(challenge_dir))
+        if meta.name not in deps.challenge_dirs:
+            deps.challenge_dirs[meta.name] = str(challenge_dir)
+            deps.challenge_metas[meta.name] = meta
+        result_path = challenge_dir / "solve" / "result.json"
+        if result_path.exists():
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+            except Exception:
+                logger.warning("Could not restore solved result from %s", result_path)
+            else:
+                if isinstance(result, dict):
+                    deps.results.setdefault(meta.name, result)
 
-    return ctfd, cost_tracker, deps
+    deps.ctfd = build_platform_client(
+        settings,
+        deps.challenge_metas,
+        local_mode=local_mode,
+        cookie_header=cookie_header,
+    )
+    if getattr(deps.ctfd, "platform", "") == "local":
+        deps.no_submit = True
+
+    return deps.ctfd, cost_tracker, deps
 
 
 async def cleanup_coordinator_runtime(
     deps: CoordinatorDeps,
-    ctfd: CTFdClient,
+    ctfd: PlatformClient,
     cost_tracker: CostTracker,
     *,
     reason: str | None = None,
 ) -> None:
     shutdown_reason = " ".join(str(reason or deps.shutdown_reason or "coordinator cleanup").split()).strip()
     for swarm in deps.swarms.values():
+        prepare_for_shutdown = getattr(swarm, "prepare_for_shutdown", None)
+        if callable(prepare_for_shutdown):
+            try:
+                prepare_for_shutdown(preserve_solver_state=False)
+            except Exception:
+                logger.debug("Failed to switch swarm shutdown cleanup mode", exc_info=True)
         swarm.kill(reason=shutdown_reason)
-    for task in deps.swarm_tasks.values():
-        task.cancel()
-    if deps.swarm_tasks:
-        await asyncio.gather(*deps.swarm_tasks.values(), return_exceptions=True)
+    active_swarm_tasks = [task for task in deps.swarm_tasks.values() if not task.done()]
+    if active_swarm_tasks:
+        done, pending = await asyncio.wait(active_swarm_tasks, timeout=SHUTDOWN_SWARM_GRACE_SECONDS)
+        if pending:
+            logger.warning(
+                "Coordinator shutdown grace period expired after %.1fs; force-cancelling %d swarm task(s)",
+                SHUTDOWN_SWARM_GRACE_SECONDS,
+                len(pending),
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        if done:
+            await asyncio.gather(*done, return_exceptions=True)
     cost_tracker.log_summary()
     _log_shutdown_cost_details(deps, cost_tracker)
     try:
@@ -334,7 +366,7 @@ def _log_shutdown_cost_details(deps: CoordinatorDeps, cost_tracker: CostTracker)
 
 async def run_event_loop(
     deps: CoordinatorDeps,
-    ctfd: CTFdClient,
+    ctfd: PlatformClient,
     cost_tracker: CostTracker,
     turn_fn: TurnFn,
     status_interval: int = 60,
@@ -345,12 +377,12 @@ async def run_event_loop(
 
     Args:
         deps: Coordinator dependencies (shared state).
-        ctfd: CTFd client (for poller).
+        ctfd: Remote platform client (for poller).
         cost_tracker: Cost tracker.
         turn_fn: Async function that sends a message to the coordinator LLM.
         status_interval: Seconds between status updates.
     """
-    poller: CTFdPoller | None = None
+    poller: PlatformPoller | None = None
     if not deps.local_mode:
         poller = CTFdPoller(ctfd=ctfd, interval_s=5.0)
         await poller.start()
@@ -375,7 +407,7 @@ async def run_event_loop(
             f"LOCAL MODE. {len(known_challenges)} local challenges loaded, "
             f"{len(known_solved)} already marked solved.\n"
             f"Unsolved: {sorted(unsolved) if unsolved else 'NONE'}\n"
-            "Spawn swarms for all unsolved local challenges. Do not fetch or submit to CTFd."
+            "Spawn swarms for all unsolved local challenges. Do not fetch or submit remotely."
         )
     else:
         initial_msg = (
@@ -565,7 +597,7 @@ async def _auto_spawn_one(deps: CoordinatorDeps, challenge_name: str) -> None:
         logger.warning(f"Auto-spawn failed for {challenge_name}: {e}")
 
 
-async def _auto_spawn_unsolved(deps: CoordinatorDeps, poller: CTFdPoller | None) -> None:
+async def _auto_spawn_unsolved(deps: CoordinatorDeps, poller: PlatformPoller | None) -> None:
     """Auto-spawn swarms for all unsolved challenges that don't have active swarms."""
     solved_names = _known_solved_names(deps, poller)
     known_names = _known_challenge_names(deps, poller)
@@ -836,6 +868,29 @@ def _pending_swarms_snapshot(
     return pending
 
 
+def _refresh_challenge_meta(deps: CoordinatorDeps, challenge_name: str) -> ChallengeMeta | None:
+    challenge_dir = deps.challenge_dirs.get(challenge_name)
+    if not challenge_dir:
+        return None
+    refresh_effective_metadata(challenge_dir)
+    meta = ChallengeMeta.from_dict(load_effective_metadata(challenge_dir))
+    deps.challenge_metas[challenge_name] = meta
+    swarm = deps.swarms.get(challenge_name)
+    if swarm is not None:
+        swarm.meta = meta
+    return meta
+
+
+def _challenge_config_payload(deps: CoordinatorDeps, challenge_name: str) -> dict[str, Any] | None:
+    challenge_dir = deps.challenge_dirs.get(challenge_name)
+    if not challenge_dir:
+        return None
+    payload = challenge_config_snapshot(challenge_dir)
+    payload["challenge_name"] = challenge_name
+    payload["override_present"] = bool(payload.get("override"))
+    return payload
+
+
 async def _start_msg_server(
     inbox: asyncio.Queue,
     deps: CoordinatorDeps,
@@ -913,6 +968,19 @@ async def _start_msg_server(
                 _json_response("200 OK", _runtime_snapshot(deps))
             elif method == "GET" and path == "/api/runtime/stream":
                 await _runtime_stream_response()
+            elif method == "GET" and path == "/api/runtime/challenge-config":
+                challenge_name = str(query.get("challenge_name", "")).strip()
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    payload = _challenge_config_payload(deps, challenge_name)
+                    if payload is None:
+                        _json_response(
+                            "404 Not Found",
+                            {"error": f"Unknown challenge {challenge_name!r}"},
+                        )
+                    else:
+                        _json_response("200 OK", payload)
             elif method == "GET" and path in {"/ui", "/ui.css", "/ui.js"}:
                 asset_name = {
                     "/ui": "operator_ui.html",
@@ -1133,7 +1201,10 @@ async def _start_msg_server(
                 except json.JSONDecodeError:
                     data = {}
                 try:
-                    max_active = int(data.get("max_active"))
+                    raw_max_active = data.get("max_active")
+                    if raw_max_active is None:
+                        raise TypeError
+                    max_active = int(raw_max_active)
                 except (TypeError, ValueError):
                     _json_response("400 Bad Request", {"error": "max_active must be an integer"})
                 else:
@@ -1173,7 +1244,7 @@ async def _start_msg_server(
                         _json_response("409 Conflict", {"ok": False, "error": result})
                     else:
                         _json_response("200 OK", {"ok": True, "result": result})
-            elif method == "POST" and path in {"/api/runtime/restart-challenge", "/api/runtime/resume-challenge"} and content_length > 0:
+            elif method == "POST" and path == "/api/runtime/restart-challenge" and content_length > 0:
                 body = await asyncio.wait_for(reader.read(content_length), timeout=5)
                 try:
                     data = json.loads(body)
@@ -1190,6 +1261,89 @@ async def _start_msg_server(
                         _json_response("409 Conflict", {"ok": False, "error": result})
                     else:
                         _json_response("200 OK", {"ok": True, "result": result})
+            elif method == "POST" and path == "/api/runtime/check-instance" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                restart_on_success = bool(data.get("restart_on_success"))
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    challenge_dir = deps.challenge_dirs.get(challenge_name)
+                    if not challenge_dir:
+                        _json_response(
+                            "404 Not Found",
+                            {"error": f"Unknown challenge {challenge_name!r}"},
+                        )
+                    else:
+                        effective_meta = load_effective_metadata(challenge_dir)
+                        probe = await probe_instance_connection(effective_meta)
+                        payload = {
+                            "ok": True,
+                            "challenge_name": challenge_name,
+                            "ready": bool(probe.get("ready")),
+                            "probe": probe,
+                            "restart_requested": False,
+                            "challenge_config": _challenge_config_payload(deps, challenge_name),
+                        }
+                        if payload["ready"] and restart_on_success:
+                            payload["restart_requested"] = True
+                            payload["restart_result"] = await do_restart_challenge(deps, challenge_name)
+                        _json_response("200 OK", payload)
+            elif method == "PATCH" and path == "/api/runtime/challenge-config" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    challenge_dir = deps.challenge_dirs.get(challenge_name)
+                    if not challenge_dir:
+                        _json_response(
+                            "404 Not Found",
+                            {"error": f"Unknown challenge {challenge_name!r}"},
+                        )
+                    else:
+                        patch = data.get("override")
+                        if bool(data.get("replace")) and isinstance(patch, dict):
+                            updated_override = sanitize_override(patch)
+                        else:
+                            if not isinstance(patch, dict):
+                                patch = {
+                                    key: value
+                                    for key, value in data.items()
+                                    if key != "challenge_name"
+                                }
+                            current_override = load_override(challenge_dir)
+                            updated_override = apply_override_patch(current_override, patch)
+                        write_override(challenge_dir, updated_override)
+                        _refresh_challenge_meta(deps, challenge_name)
+                        payload = _challenge_config_payload(deps, challenge_name)
+                        assert payload is not None
+                        _json_response("200 OK", payload)
+            elif method == "DELETE" and path == "/api/runtime/challenge-config":
+                challenge_name = str(query.get("challenge_name", "")).strip()
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    challenge_dir = deps.challenge_dirs.get(challenge_name)
+                    if not challenge_dir:
+                        _json_response(
+                            "404 Not Found",
+                            {"error": f"Unknown challenge {challenge_name!r}"},
+                        )
+                    else:
+                        delete_override(challenge_dir)
+                        _refresh_challenge_meta(deps, challenge_name)
+                        payload = _challenge_config_payload(deps, challenge_name)
+                        assert payload is not None
+                        _json_response("200 OK", payload)
             else:
                 _json_response(
                     "400 Bad Request",
@@ -1198,6 +1352,16 @@ async def _start_msg_server(
                         "usage": {
                             "runtime_snapshot": "GET /api/runtime/snapshot",
                             "runtime_stream": "GET /api/runtime/stream",
+                            "challenge_config": (
+                                "GET /api/runtime/challenge-config?challenge_name=..."
+                            ),
+                            "patch_challenge_config": (
+                                'PATCH /api/runtime/challenge-config {"challenge_name": "...", '
+                                '"connection": {"host": "...", "port": 31337}}'
+                            ),
+                            "delete_challenge_config": (
+                                "DELETE /api/runtime/challenge-config?challenge_name=..."
+                            ),
                             "ui": "GET /ui",
                             "runtime_traces": (
                                 "GET /api/runtime/traces?challenge_name=...&lane_id=..."
@@ -1234,11 +1398,11 @@ async def _start_msg_server(
                             "set_challenge_priority": (
                                 'POST /api/runtime/set-challenge-priority {"challenge_name": "...", "priority": true}'
                             ),
-                            "resume_challenge": (
-                                'POST /api/runtime/resume-challenge {"challenge_name": "..."}'
-                            ),
                             "restart_challenge": (
                                 'POST /api/runtime/restart-challenge {"challenge_name": "..."}'
+                            ),
+                            "check_instance": (
+                                'POST /api/runtime/check-instance {"challenge_name": "...", "restart_on_success": true}'
                             ),
                         },
                     },

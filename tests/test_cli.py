@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,17 @@ def test_discover_challenge_dirs_returns_single_challenge_root(tmp_path: Path) -
     (challenge_root / "metadata.yml").write_text("name: aeBPF\n", encoding="utf-8")
 
     discovered = _discover_challenge_dirs(challenge_root)
+
+    assert discovered == [challenge_root.resolve()]
+
+
+def test_discover_challenge_dirs_recurses_into_competition_folders(tmp_path: Path) -> None:
+    competition_root = tmp_path / "2026_GMDSOFT"
+    challenge_root = competition_root / "aeBPF"
+    challenge_root.mkdir(parents=True)
+    (challenge_root / "metadata.yml").write_text("name: aeBPF\n", encoding="utf-8")
+
+    discovered = _discover_challenge_dirs(tmp_path)
 
     assert discovered == [challenge_root.resolve()]
 
@@ -75,7 +87,7 @@ def test_reset_runtime_state_dirs_falls_back_to_docker_on_permission_error(monke
     (challenge_root / "metadata.yml").write_text("name: aeBPF\n", encoding="utf-8")
     lane_state = challenge_root / ".lane-state"
     lane_state.mkdir()
-    recorded: dict[str, object] = {}
+    recorded: dict[str, list[str] | object] = {}
 
     def fake_rmtree(path: Path) -> None:
         raise PermissionError("permission denied")
@@ -92,6 +104,7 @@ def test_reset_runtime_state_dirs_falls_back_to_docker_on_permission_error(monke
     summary = _reset_runtime_state_dirs([challenge_root], log_dir=tmp_path / "logs")
 
     assert summary.lane_state_dirs == 1
+    assert isinstance(recorded["cmd"], list)
     assert recorded["cmd"][:4] == ["docker", "run", "--rm", "-v"]
     assert not lane_state.exists()
 
@@ -155,7 +168,7 @@ def test_setup_logging_creates_file_handler(tmp_path: Path) -> None:
 def test_signal_handler_requests_shutdown(monkeypatch) -> None:
     class FakeLoop:
         def __init__(self) -> None:
-            self.handlers: dict[object, tuple[object, ...]] = {}
+            self.handlers: dict[object, tuple[Callable[..., object], ...]] = {}
             self.removed: list[object] = []
 
         def add_signal_handler(self, sig, callback, *args) -> None:  # type: ignore[no-untyped-def]

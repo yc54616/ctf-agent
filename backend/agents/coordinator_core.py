@@ -10,8 +10,10 @@ from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
+from backend.challenge_config import refresh_effective_metadata
 from backend.deps import CoordinatorDeps
-from backend.prompts import ChallengeMeta
+from backend.platforms import platform_label
+from backend.prompts import ChallengeMeta, build_ctf_skills_guidance
 from backend.sandbox import resolve_shared_artifacts_dir
 from backend.solver_base import FLAG_FOUND
 
@@ -23,14 +25,16 @@ PENDING_REASON_QUEUED = "queued"
 PENDING_REASON_PRIORITY_WAITING = "priority_waiting"
 PENDING_REASON_CTFD_RETRY = "ctfd_retry"
 PENDING_REASON_CANDIDATE_RETRY = "candidate_retry"
-PENDING_REASON_RESUME_REQUESTED = "resume_requested"
+PENDING_REASON_RESTART_REQUESTED = "restart_requested"
+LEGACY_PENDING_REASON_RESUME_REQUESTED = "resume_requested"
 PENDING_REASON_QUOTA_BLOCKED = "quota_blocked"
 RESTORABLE_PENDING_REASONS = {
     PENDING_REASON_QUEUED,
     PENDING_REASON_PRIORITY_WAITING,
     PENDING_REASON_CTFD_RETRY,
     PENDING_REASON_CANDIDATE_RETRY,
-    PENDING_REASON_RESUME_REQUESTED,
+    PENDING_REASON_RESTART_REQUESTED,
+    LEGACY_PENDING_REASON_RESUME_REQUESTED,
 }
 
 COORDINATOR_PROMPT = """\
@@ -46,13 +50,17 @@ Priorities:
 
 Critical rules:
 - NEVER kill a swarm unless the flag is confirmed correct.
-- Solvers may auto-submit guarded flag candidates to CTFd. Use `submit_flag` yourself only for explicit coordinator-driven retries.
+- Solvers may auto-submit guarded flag candidates to the active remote platform. Use `submit_flag` yourself only for explicit coordinator-driven retries.
 - Do not rebroadcast advisor or artifact messages blindly. Inspect the evidence first and only rebroadcast what is broadly useful.
 - When a solver seems stuck, send a specific next-step bump: exact files, routes, tools, checks, or validation criteria.
 - Cost is not the bottleneck. Keep swarms running.
 
 You will receive event messages. Respond with tool calls to manage the competition.
 """
+
+_COORDINATOR_CTF_SKILLS_GUIDANCE = build_ctf_skills_guidance(compact=True, audience="coordinator")
+if _COORDINATOR_CTF_SKILLS_GUIDANCE:
+    COORDINATOR_PROMPT = f"{COORDINATOR_PROMPT}\n\n{_COORDINATOR_CTF_SKILLS_GUIDANCE}"
 
 
 def _int_from_object(value: object) -> int:
@@ -68,10 +76,30 @@ def _int_from_object(value: object) -> int:
     return 0
 
 
+def _float_from_object(value: object) -> float:
+    if isinstance(value, bool):
+        return float(int(value))
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _challenge_sort_key(challenge: dict[str, object]) -> tuple[int, str]:
     solves = _int_from_object(challenge.get("solves", 0))
     name = str(challenge.get("name", ""))
     return (-solves, name)
+
+
+def _normalize_pending_reason(reason: str) -> str:
+    cleaned = str(reason or "").strip()
+    if cleaned == LEGACY_PENDING_REASON_RESUME_REQUESTED:
+        return PENDING_REASON_RESTART_REQUESTED
+    return cleaned
 
 
 def _restored_solved_names(deps: CoordinatorDeps) -> set[str]:
@@ -120,7 +148,7 @@ def _pending_swarm_meta(deps: CoordinatorDeps, challenge_name: str) -> dict[str,
     meta = deps.pending_swarm_meta.get(challenge_name)
     if isinstance(meta, dict):
         return meta
-    meta = {
+    meta: dict[str, object] = {
         "priority": False,
         "reason": PENDING_REASON_QUEUED,
         "enqueued_at": time.time(),
@@ -179,7 +207,7 @@ def _pending_swarm_entries(deps: CoordinatorDeps) -> list[dict[str, object]]:
                 "priority": bool(meta.get("priority")),
                 "reason": str(meta.get("reason") or PENDING_REASON_QUEUED),
                 "local_preloaded": _challenge_spawnable_from_local(deps, challenge_name),
-                "enqueued_at": float(meta.get("enqueued_at") or 0.0),
+                "enqueued_at": _float_from_object(meta.get("enqueued_at")),
             }
         )
     return entries
@@ -239,13 +267,18 @@ def _enqueue_swarm(
     priority: bool = False,
     reason: str = PENDING_REASON_QUEUED,
 ) -> bool:
+    challenge_meta = deps.challenge_metas.get(challenge_name)
+    effective_priority = priority or bool(getattr(challenge_meta, "priority", False))
     if challenge_name in deps.swarms:
         return False
     if challenge_name in deps.pending_swarm_set:
         _set_pending_swarm_meta(
             deps,
             challenge_name,
-            priority=(priority or bool(_pending_swarm_meta(deps, challenge_name).get("priority"))),
+            priority=(
+                effective_priority
+                or bool(_pending_swarm_meta(deps, challenge_name).get("priority"))
+            ),
             reason=reason,
         )
         return False
@@ -255,7 +288,7 @@ def _enqueue_swarm(
     deps.pending_swarm_queue.append(challenge_name)
     deps.pending_swarm_set.add(challenge_name)
     deps.pending_swarm_meta[challenge_name] = {
-        "priority": bool(priority),
+        "priority": bool(effective_priority),
         "reason": reason,
         "enqueued_at": time.time(),
     }
@@ -296,12 +329,12 @@ def restore_pending_swarms_from_results(deps: CoordinatorDeps) -> list[str]:
         restore_reason = ""
         restore_priority = False
         if bool(record.get("requeue_requested")):
-            reason = str(record.get("requeue_reason") or "").strip()
+            reason = _normalize_pending_reason(str(record.get("requeue_reason") or ""))
             if reason in RESTORABLE_PENDING_REASONS:
                 restore_reason = reason
                 restore_priority = bool(record.get("requeue_priority"))
         elif status == "pending":
-            restore_reason = PENDING_REASON_RESUME_REQUESTED
+            restore_reason = PENDING_REASON_RESTART_REQUESTED
 
         if not restore_reason:
             continue
@@ -339,7 +372,7 @@ def _note_ctfd_refresh_failure(deps: CoordinatorDeps, exc: Exception) -> float:
 
 def _is_retryable_spawn_result(result: str) -> bool:
     lowered = str(result or "").strip().lower()
-    return lowered.startswith("ctfd refresh backoff active") or lowered.startswith(
+    return lowered.endswith("refresh backoff active") or " refresh backoff active " in lowered or lowered.startswith(
         "could not refresh challenge"
     ) or lowered.startswith("could not pull challenge")
 
@@ -359,7 +392,11 @@ async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
         challenges = await deps.ctfd.fetch_all_challenges()
         solved = await deps.ctfd.fetch_solved_names()
     except Exception as exc:
-        logger.warning("Could not fetch challenges from CTFd, using local preload only: %s", exc)
+        logger.warning(
+            "Could not fetch challenges from %s, using local preload only: %s",
+            platform_label(deps.ctfd),
+            exc,
+        )
         result = local_records
         result.sort(key=_challenge_sort_key)
         return json.dumps(result, indent=2)
@@ -373,7 +410,7 @@ async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
             "solves": ch.get("solves", 0),
             "status": "SOLVED" if ch.get("name") in solved else "unsolved",
             "description": (ch.get("description") or "")[:200],
-            "source": "ctfd",
+            "source": ch.get("source") or getattr(deps.ctfd, "platform", "remote"),
         }
         for ch in challenges
     ]
@@ -389,7 +426,11 @@ async def do_get_solve_status(deps: CoordinatorDeps) -> str:
         try:
             solved |= await deps.ctfd.fetch_solved_names()
         except Exception as exc:
-            logger.warning("Could not refresh solved status from CTFd: %s", exc)
+            logger.warning(
+                "Could not refresh solved status from %s: %s",
+                platform_label(deps.ctfd),
+                exc,
+            )
     swarm_status = {name: swarm.get_status() for name, swarm in deps.swarms.items()}
     return json.dumps(
         {
@@ -411,38 +452,44 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
             return f"Challenge '{challenge_name}' not found under local challenges dir"
         remaining = _ctfd_refresh_backoff_remaining(deps)
         if remaining > 0:
-            reason = deps.ctfd_refresh_backoff_reason or "recent CTFd refresh failure"
-            return f"CTFd refresh backoff active for {remaining:.0f}s after recent failure: {reason}"
+            platform_name = platform_label(deps.ctfd)
+            reason = deps.ctfd_refresh_backoff_reason or f"recent {platform_name} refresh failure"
+            return f"{platform_name} refresh backoff active for {remaining:.0f}s after recent failure: {reason}"
         try:
             challenges = await deps.ctfd.fetch_all_challenges()
         except Exception as exc:
             delay = _note_ctfd_refresh_failure(deps, exc)
             logger.warning(
-                "Could not refresh challenge %r from CTFd before spawn: %s (backoff %.0fs)",
+                "Could not refresh challenge %r from %s before spawn: %s (backoff %.0fs)",
                 challenge_name,
+                platform_label(deps.ctfd),
                 exc,
                 delay,
             )
-            return f"Could not refresh challenge '{challenge_name}' from CTFd: {exc}"
+            return f"Could not refresh challenge '{challenge_name}' from {platform_label(deps.ctfd)}: {exc}"
         _clear_ctfd_refresh_backoff(deps)
         ch_data = next((c for c in challenges if c.get("name") == challenge_name), None)
         if not ch_data:
-            return f"Challenge '{challenge_name}' not found on CTFd"
+            return f"Challenge '{challenge_name}' not found on {platform_label(deps.ctfd)}"
         output_dir = str(Path(deps.challenges_root))
         try:
             ch_dir = await deps.ctfd.pull_challenge(ch_data, output_dir)
         except Exception as exc:
             delay = _note_ctfd_refresh_failure(deps, exc)
             logger.warning(
-                "Could not pull challenge %r from CTFd: %s (backoff %.0fs)",
+                "Could not pull challenge %r from %s: %s (backoff %.0fs)",
                 challenge_name,
+                platform_label(deps.ctfd),
                 exc,
                 delay,
             )
-            return f"Could not pull challenge '{challenge_name}' from CTFd: {exc}"
+            return f"Could not pull challenge '{challenge_name}' from {platform_label(deps.ctfd)}: {exc}"
         _clear_ctfd_refresh_backoff(deps)
         deps.challenge_dirs[challenge_name] = ch_dir
         deps.challenge_metas[challenge_name] = ChallengeMeta.from_yaml(Path(ch_dir) / "metadata.yml")
+
+    refresh_effective_metadata(deps.challenge_dirs[challenge_name])
+    meta = deps.challenge_metas[challenge_name]
 
     from backend.agents.swarm import ChallengeSwarm
 
@@ -463,14 +510,14 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
 
     swarm = ChallengeSwarm(
         challenge_dir=deps.challenge_dirs[challenge_name],
-        meta=deps.challenge_metas[challenge_name],
+        meta=meta,
         ctfd=deps.ctfd,
         cost_tracker=deps.cost_tracker,
         settings=deps.settings,
         result_store=deps.results,
         model_specs=active_model_specs,
         disabled_model_specs=deps.quota_exhausted_model_specs,
-        no_submit=deps.no_submit,
+        no_submit=(deps.no_submit or bool(getattr(meta, "no_submit", False))),
         local_mode=deps.local_mode,
         coordinator_inbox=deps.coordinator_inbox,
     )
@@ -532,16 +579,18 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
         if record:
             deps.results[challenge_name] = record
         if getattr(swarm, "requeue_requested", False) and record.get("status") != FLAG_FOUND:
-            resume_packets_fn = getattr(swarm, "snapshot_requeue_resume_packets", None)
-            if callable(resume_packets_fn):
-                resume_packets = resume_packets_fn()
-                if resume_packets:
-                    record["resume_packets"] = resume_packets
+            restart_packets_fn = getattr(swarm, "snapshot_requeue_restart_packets", None)
+            if callable(restart_packets_fn):
+                restart_packets = restart_packets_fn()
+                if restart_packets:
+                    record["restart_packets"] = restart_packets
             _enqueue_finished_swarm(
                 deps,
                 challenge_name,
                 priority=bool(getattr(swarm, "requeue_priority", False)),
-                reason=str(getattr(swarm, "requeue_reason", "") or PENDING_REASON_QUEUED),
+                reason=_normalize_pending_reason(
+                    str(getattr(swarm, "requeue_reason", "") or PENDING_REASON_QUEUED)
+                ),
             )
 
     task = asyncio.create_task(_run_and_cleanup(), name=f"swarm-{challenge_name}")
@@ -626,7 +675,7 @@ async def do_spawn_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
     ):
         position = _pending_swarm_order(deps).index(challenge_name) + 1
         return (
-            f"Queued swarm for {challenge_name} awaiting CTFd retry "
+            f"Queued swarm for {challenge_name} awaiting remote refresh retry "
             f"(position {position}): {spawn_result}"
         )
     if _is_quota_blocked_spawn_result(spawn_result) and _enqueue_swarm(
@@ -731,7 +780,7 @@ def _manual_confirmation_source(deps: CoordinatorDeps) -> str:
 def _manual_confirmation_display(deps: CoordinatorDeps, flag: str) -> str:
     if deps.local_mode:
         return f'USER CONFIRMED LOCALLY — "{flag}" marked solved in local mode.'
-    return f'USER CONFIRMED MANUALLY — "{flag}" marked solved without CTFd confirmation.'
+    return f'USER CONFIRMED MANUALLY — "{flag}" marked solved without automatic remote confirmation.'
 
 
 def _manual_rejection_display(deps: CoordinatorDeps, flag: str) -> str:
@@ -1075,22 +1124,22 @@ async def do_restart_challenge(deps: CoordinatorDeps, challenge_name: str) -> st
     if swarm is not None:
         requester = getattr(swarm, "request_requeue", None)
         if callable(requester):
-            requester(priority=True, reason=PENDING_REASON_RESUME_REQUESTED)
-        swarm.kill(reason=f"operator resuming {challenge_name}")
-        return f'Resuming "{challenge_name}" after the current run stops.'
+            requester(priority=True, reason=PENDING_REASON_RESTART_REQUESTED)
+        swarm.kill(reason=f"operator restarting {challenge_name}")
+        return f'Restarting "{challenge_name}" after the current run stops.'
 
     if challenge_name in deps.pending_swarm_set:
         _set_pending_swarm_meta(
             deps,
             challenge_name,
             priority=True,
-            reason=PENDING_REASON_RESUME_REQUESTED,
+            reason=PENDING_REASON_RESTART_REQUESTED,
         )
         if deps.pending_swarm_queue and len(deps.swarms) < deps.max_concurrent_challenges:
             await _fill_swarm_capacity(deps)
         if challenge_name in deps.swarms:
-            return f'Resumed "{challenge_name}" from saved progress.'
-        return f'Resume queued for "{challenge_name}".'
+            return f'Restarted "{challenge_name}" from saved notes.'
+        return f'Restart queued for "{challenge_name}".'
 
     active_count = len(deps.swarms)
     if active_count >= deps.max_concurrent_challenges:
@@ -1098,24 +1147,24 @@ async def do_restart_challenge(deps: CoordinatorDeps, challenge_name: str) -> st
             deps,
             challenge_name,
             priority=True,
-            reason=PENDING_REASON_RESUME_REQUESTED,
+            reason=PENDING_REASON_RESTART_REQUESTED,
         ):
-            return f'Could not queue "{challenge_name}" for resume.'
+            return f'Could not queue "{challenge_name}" for restart.'
         return (
-            f'Resume queued for "{challenge_name}" '
+            f'Restart queued for "{challenge_name}" '
             f"({active_count}/{deps.max_concurrent_challenges} challenges running)."
         )
 
     spawn_result = await _spawn_swarm_now(deps, challenge_name)
     if challenge_name in deps.swarms:
-        return f'Resumed "{challenge_name}" from saved progress.'
+        return f'Restarted "{challenge_name}" from saved notes.'
     if _is_retryable_spawn_result(spawn_result) and _enqueue_swarm(
         deps,
         challenge_name,
         priority=True,
-        reason=PENDING_REASON_RESUME_REQUESTED,
+        reason=PENDING_REASON_RESTART_REQUESTED,
     ):
-        return f'Resume queued for "{challenge_name}": {spawn_result}'
+        return f'Restart queued for "{challenge_name}": {spawn_result}'
     return spawn_result
 
 

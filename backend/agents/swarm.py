@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -15,12 +16,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from backend.agents.advisor_base import AdvisorProtocol, CandidateReview, NoopAdvisor
 from backend.auth import AuthValidationError
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.message_bus import (
     CandidateRef,
     ChallengeMessageBus,
@@ -28,6 +28,7 @@ from backend.message_bus import (
     SharedFindingRef,
 )
 from backend.models import DEFAULT_MODELS, provider_from_spec
+from backend.platforms import PlatformClient, platform_label
 from backend.prompts import ChallengeMeta, list_distfiles
 from backend.sandbox import (
     SHARED_ARTIFACTS_CONTAINER_ROOT,
@@ -58,6 +59,8 @@ ARTIFACT_PREVIEW_CHARS = 500
 MAX_LOCAL_RESTARTS = 5
 RESTART_BUDGET_RESET_STEP_DELTA = 10
 MANIFEST_ENTRY_LIMIT = 8
+MAX_RESTART_TRACE_COPIES = 3
+MAX_RESTART_HANDOFF_COPY_ENTRIES = 8
 ADVISOR_LISTENER_INTERVAL_SECONDS = 2.0
 ADVISOR_COORDINATOR_TIMEOUT_SECONDS = 8.0
 ADVISOR_LANE_HINT_TIMEOUT_SECONDS = 30.0
@@ -89,6 +92,48 @@ ADVISOR_ARTIFACT_FOCUSED_SIBLING_MAX_ITEMS = 3
 ADVISOR_ARTIFACT_FOCUSED_SIBLING_MAX_CHARS = 900
 ADVISOR_LANE_STATE_MAX_CHARS = 600
 PROACTIVE_CONTEXT_REFRESH_MIN_STEPS = 180
+SOLVE_EXPORT_DIRNAME = "export"
+SOLVE_EXPORT_MANIFEST_NAME = "MANIFEST.md"
+SOLVE_EXPORT_MAX_FILES = 12
+SOLVE_EXPORT_MAX_FILE_BYTES = 1_000_000
+SOLVE_EXPORT_MAX_TOTAL_BYTES = 2_000_000
+SOLVE_EXPORT_MIN_SCORE = 3
+SOLVE_EXPORT_RECENT_WINDOW_SECONDS = 15 * 60
+SOLVE_EXPORT_SKIP_DIRS = frozenset(
+    {
+        ".cache",
+        ".git",
+        ".hg",
+        ".idea",
+        ".mypy_cache",
+        ".nox",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "target",
+        "tmp",
+    }
+)
+SOLVE_EXPORT_NAME_HINTS = frozenset(
+    {
+        "attack",
+        "exp",
+        "exploit",
+        "flag",
+        "note",
+        "payload",
+        "poc",
+        "script",
+        "shell",
+        "solve",
+        "writeup",
+    }
+)
 FLAG_CANDIDATE_SENTINEL_COMPACTS = frozenset(
     {
         "noflagseen",
@@ -264,6 +309,7 @@ IGNORED_ARTIFACT_PREFIXES = (
     "candidate-",
     "finding-",
 )
+RESTART_HISTORY_DIRNAME = "restart-history"
 
 
 def _int_from_object(value: object) -> int:
@@ -447,12 +493,22 @@ class FlagCandidateRecord:
 
 
 @dataclass
+class WorkspaceExportCandidate:
+    path: Path
+    relative_path: str
+    size_bytes: int
+    modified_at: float
+    score: int
+    reasons: tuple[str, ...]
+
+
+@dataclass
 class ChallengeSwarm:
     """Parallel solvers racing on one challenge."""
 
     challenge_dir: str
     meta: ChallengeMeta
-    ctfd: CTFdClient
+    ctfd: PlatformClient
     cost_tracker: CostTracker
     settings: Settings
     result_store: dict[str, dict[str, object]] | None = None
@@ -503,8 +559,7 @@ class ChallengeSwarm:
     _artifact_manifest_entries: list[dict[str, str]] = field(default_factory=list, init=False, repr=False)
     _artifact_digest_cache: dict[str, tuple[str, str, str]] = field(default_factory=dict, init=False, repr=False)
     _lane_seen_digest_revisions: dict[str, dict[str, str]] = field(default_factory=dict, init=False, repr=False)
-    _resume_packets: dict[str, str] = field(default_factory=dict, init=False, repr=False)
-    _warm_container_ids: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _restart_packets: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _manifest_cache_signature: str = field(default="", init=False, repr=False)
     _manifest_cache_lines: tuple[str, ...] = field(default_factory=tuple, init=False, repr=False)
     _sticky_advisor_backend: str | None = field(default=None, init=False, repr=False)
@@ -512,10 +567,17 @@ class ChallengeSwarm:
     _advisor_timeout_streaks: dict[str, int] = field(default_factory=dict, init=False, repr=False)
     _advisor_timeout_backoff_until: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _advisor_timeout_backoff_buckets: dict[str, int] = field(default_factory=dict, init=False, repr=False)
+    _preserve_solver_state_on_cancel: bool = field(default=True, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.shared_artifacts_dir = resolve_shared_artifacts_dir(self.challenge_dir)
         self._restore_runtime_state()
+
+    def _remote_platform(self) -> str:
+        return str(getattr(self.ctfd, "platform", "") or "ctfd").strip()
+
+    def _remote_platform_label(self) -> str:
+        return platform_label(self.ctfd)
 
     def _restore_runtime_state(self) -> None:
         if not self.result_store:
@@ -551,18 +613,12 @@ class ChallengeSwarm:
                 restored = FlagCandidateRecord.from_snapshot(str(normalized_flag), payload)
                 if restored is not None:
                     self.flag_candidates[restored.normalized_flag] = restored
-        raw_resume_packets = persisted.get("resume_packets", {})
-        if isinstance(raw_resume_packets, dict):
-            for model_spec, packet in raw_resume_packets.items():
+        raw_restart_packets = persisted.get("restart_packets", persisted.get("resume_packets", {}))
+        if isinstance(raw_restart_packets, dict):
+            for model_spec, packet in raw_restart_packets.items():
                 packet_text = str(packet or "").strip()
                 if packet_text:
-                    self._resume_packets[str(model_spec)] = packet_text
-        raw_warm_container_ids = persisted.get("warm_container_ids", {})
-        if isinstance(raw_warm_container_ids, dict):
-            for model_spec, container_id in raw_warm_container_ids.items():
-                container_text = str(container_id or "").strip()
-                if container_text:
-                    self._warm_container_ids[str(model_spec)] = container_text
+                    self._restart_packets[str(model_spec)] = packet_text
 
     def _runtime_step_count(self) -> int:
         total = 0
@@ -605,22 +661,12 @@ class ChallengeSwarm:
             },
             "saved_at": datetime.now(UTC).isoformat(),
         }
-        warm_container_ids = dict(self._warm_container_ids)
-        for model_spec, solver in self.solvers.items():
-            sandbox = getattr(solver, "sandbox", None)
-            container_id = str(getattr(sandbox, "resume_container_id", "") or "").strip()
-            if container_id:
-                warm_container_ids[model_spec] = container_id
-        if warm_container_ids:
-            payload["warm_container_ids"] = {
-                model_spec: container_id
-                for model_spec, container_id in sorted(warm_container_ids.items())
-                if str(container_id or "").strip()
-            }
         if self.confirmed_flag:
             payload["flag"] = self.confirmed_flag
             payload["winner_model"] = self.winner_model_spec or ""
-            payload["confirmation_source"] = self.winner_confirmation_source or "ctfd"
+            payload["confirmation_source"] = (
+                self.winner_confirmation_source or self._remote_platform()
+            )
             payload["findings_summary"] = (
                 self.winner.findings_summary if self.winner else "confirmed by coordinator"
             )
@@ -984,7 +1030,11 @@ class ChallengeSwarm:
         if not artifact_path.startswith(prefix):
             return False
         relative = artifact_path.removeprefix(prefix)
-        if not relative or relative.startswith(f"{ADVISOR_DIGEST_DIRNAME}/"):
+        if (
+            not relative
+            or relative.startswith(f"{ADVISOR_DIGEST_DIRNAME}/")
+            or relative.startswith(f"{RESTART_HISTORY_DIRNAME}/")
+        ):
             return False
         name = Path(relative).name
         if name in IGNORED_ARTIFACT_BASENAMES:
@@ -1229,12 +1279,12 @@ class ChallengeSwarm:
 
                     remaining_contexts: list[dict[str, object]] = []
                     for ctx in open_contexts:
-                        trigger_lineno = int(ctx["trigger_lineno"])
-                        remaining_after = int(ctx["remaining_after"])
+                        trigger_lineno = _int_from_object(ctx.get("trigger_lineno"))
+                        remaining_after = _int_from_object(ctx.get("remaining_after"))
                         if lineno > trigger_lineno and remaining_after > 0 and line_for_context:
                             lines_ref = ctx.get("lines")
-                            if isinstance(lines_ref, list):
-                                lines_ref.append(f"L{lineno}: {line_for_context}")
+                            if isinstance(lines_ref, list) and all(isinstance(item, str) for item in lines_ref):
+                                cast(list[str], lines_ref).append(f"L{lineno}: {line_for_context}")
                             remaining_after -= 1
                             ctx["remaining_after"] = remaining_after
                         if remaining_after > 0:
@@ -1505,6 +1555,208 @@ class ChallengeSwarm:
             recent.append(f"- step {step}: {tool} {args[:160]}")
         return recent[-limit:]
 
+    def _read_workspace_sample(self, path: Path, *, size: int = 2048) -> bytes:
+        try:
+            with path.open("rb") as handle:
+                return handle.read(size)
+        except OSError:
+            return b""
+
+    def _looks_text_like(self, sample: bytes) -> bool:
+        if not sample:
+            return True
+        if b"\x00" in sample:
+            return False
+        printable = sum(
+            1
+            for byte in sample
+            if byte in {9, 10, 12, 13} or 32 <= byte <= 126
+        )
+        return printable / max(len(sample), 1) >= 0.85
+
+    def _workspace_export_reference_text(self, *, result: SolverResult, trace_path: str) -> str:
+        parts = [
+            result.findings_summary,
+            self.last_advisor_note,
+            self.last_coordinator_advisor_note,
+            self.last_shared_finding,
+            *self._recent_trace_commands(trace_path, limit=16),
+        ]
+        return "\n".join(part.strip() for part in parts if str(part).strip()).lower()
+
+    def _score_workspace_export_candidate(
+        self,
+        *,
+        workspace_dir: Path,
+        path: Path,
+        size_bytes: int,
+        modified_at: float,
+        latest_mtime: float,
+        reference_text: str,
+    ) -> WorkspaceExportCandidate | None:
+        relative_path = path.relative_to(workspace_dir).as_posix()
+        relative_lower = relative_path.lower()
+        sample = self._read_workspace_sample(path)
+        text_like = self._looks_text_like(sample)
+        executable = os.access(path, os.X_OK)
+        has_shebang = sample.startswith(b"#!")
+
+        terms = {relative_lower, path.name.lower()}
+        stem = path.stem.lower().strip()
+        if len(stem) >= 4:
+            terms.add(stem)
+        referenced = any(len(term) >= 4 and term in reference_text for term in terms)
+        matching_hint = next((hint for hint in SOLVE_EXPORT_NAME_HINTS if hint in relative_lower), "")
+        recent = latest_mtime > 0 and modified_at >= (latest_mtime - SOLVE_EXPORT_RECENT_WINDOW_SECONDS)
+
+        score = 0
+        reasons: list[str] = []
+        if referenced:
+            score += 5
+            reasons.append("referenced in trace/findings")
+        if matching_hint:
+            score += 2
+            reasons.append(f"name hint: {matching_hint}")
+        if has_shebang:
+            score += 3
+            reasons.append("shebang")
+        if executable:
+            score += 2
+            reasons.append("executable")
+        if text_like:
+            score += 1
+            reasons.append("text-like")
+        if recent:
+            score += 1
+            reasons.append("recently modified")
+
+        if score < SOLVE_EXPORT_MIN_SCORE:
+            return None
+        if not (referenced or matching_hint or has_shebang or executable or text_like):
+            return None
+
+        return WorkspaceExportCandidate(
+            path=path,
+            relative_path=relative_path,
+            size_bytes=size_bytes,
+            modified_at=modified_at,
+            score=score,
+            reasons=tuple(reasons),
+        )
+
+    def _export_workspace_snapshot(
+        self,
+        *,
+        workspace_dir: Path,
+        solve_dir: Path,
+        result: SolverResult,
+        trace_path: str,
+    ) -> tuple[str, str, list[str]]:
+        reference_text = self._workspace_export_reference_text(result=result, trace_path=trace_path)
+        entries: list[tuple[Path, int, float]] = []
+        latest_mtime = 0.0
+
+        for root, dirnames, filenames in os.walk(workspace_dir, topdown=True):
+            dirnames[:] = sorted(
+                name for name in dirnames
+                if name not in SOLVE_EXPORT_SKIP_DIRS
+            )
+            for filename in sorted(filenames):
+                path = Path(root) / filename
+                if path.is_symlink():
+                    continue
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                if not path.is_file():
+                    continue
+                if stat.st_size <= 0 or stat.st_size > SOLVE_EXPORT_MAX_FILE_BYTES:
+                    continue
+                latest_mtime = max(latest_mtime, stat.st_mtime)
+                entries.append((path, stat.st_size, stat.st_mtime))
+
+        scored: list[WorkspaceExportCandidate] = []
+        fallback: list[WorkspaceExportCandidate] = []
+        for path, size_bytes, modified_at in entries:
+            candidate = self._score_workspace_export_candidate(
+                workspace_dir=workspace_dir,
+                path=path,
+                size_bytes=size_bytes,
+                modified_at=modified_at,
+                latest_mtime=latest_mtime,
+                reference_text=reference_text,
+            )
+            if candidate is not None:
+                scored.append(candidate)
+                continue
+            sample = self._read_workspace_sample(path)
+            if (
+                latest_mtime > 0
+                and modified_at >= (latest_mtime - SOLVE_EXPORT_RECENT_WINDOW_SECONDS)
+                and self._looks_text_like(sample)
+            ):
+                fallback.append(
+                    WorkspaceExportCandidate(
+                        path=path,
+                        relative_path=path.relative_to(workspace_dir).as_posix(),
+                        size_bytes=size_bytes,
+                        modified_at=modified_at,
+                        score=2,
+                        reasons=("recent text fallback",),
+                    )
+                )
+
+        selected: list[WorkspaceExportCandidate] = []
+        seen_paths: set[str] = set()
+        total_bytes = 0
+        for pool in (
+            sorted(scored, key=lambda item: (-item.score, -item.modified_at, item.relative_path)),
+            sorted(fallback, key=lambda item: (-item.modified_at, item.relative_path)),
+        ):
+            for candidate in pool:
+                if candidate.relative_path in seen_paths:
+                    continue
+                if len(selected) >= SOLVE_EXPORT_MAX_FILES:
+                    break
+                if selected and total_bytes + candidate.size_bytes > SOLVE_EXPORT_MAX_TOTAL_BYTES:
+                    continue
+                seen_paths.add(candidate.relative_path)
+                selected.append(candidate)
+                total_bytes += candidate.size_bytes
+            if len(selected) >= SOLVE_EXPORT_MAX_FILES:
+                break
+
+        if not selected:
+            return "", "", []
+
+        export_dir = solve_dir / SOLVE_EXPORT_DIRNAME
+        shutil.rmtree(export_dir, ignore_errors=True)
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest_lines = [
+            "# Selected Workspace Export",
+            "",
+            f"- Source workspace: {workspace_dir}",
+            f"- Exported files: {len(selected)}",
+            f"- Total bytes: {total_bytes}",
+            "",
+            "## Files",
+        ]
+        exported_files: list[str] = []
+        for candidate in selected:
+            target = export_dir / candidate.relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(candidate.path, target)
+            exported_files.append(candidate.relative_path)
+            manifest_lines.append(
+                f"- `{candidate.relative_path}` ({candidate.size_bytes} bytes) — {'; '.join(candidate.reasons)}"
+            )
+
+        manifest_path = export_dir / SOLVE_EXPORT_MANIFEST_NAME
+        manifest_path.write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
+        return str(export_dir), str(manifest_path), exported_files
+
     def _build_writeup_draft(
         self,
         *,
@@ -1512,6 +1764,7 @@ class ChallengeSwarm:
         result: SolverResult,
         trace_path: str,
         workspace_path: str,
+        workspace_manifest_path: str,
         shared_artifacts_path: str,
     ) -> str:
         commands = self._recent_trace_commands(trace_path)
@@ -1538,7 +1791,8 @@ class ChallengeSwarm:
                 findings,
                 "",
                 "## Files / Commands",
-                f"- Workspace snapshot: {workspace_path or '-'}",
+                f"- Selected workspace export: {workspace_path or '-'}",
+                f"- Export manifest: {workspace_manifest_path or '-'}",
                 command_block,
                 "",
                 "## Flag",
@@ -1565,21 +1819,25 @@ class ChallengeSwarm:
             solve_dir = challenge_root / "solve"
             solve_dir.mkdir(parents=True, exist_ok=True)
 
-            workspace_path = ""
-            sandbox = getattr(solver, "sandbox", None)
-            workspace_dir_raw = str(getattr(sandbox, "workspace_dir", "") or "")
-            workspace_dir = Path(workspace_dir_raw) if workspace_dir_raw else None
-            if workspace_dir and workspace_dir.exists():
-                workspace_dst = solve_dir / "workspace"
-                shutil.rmtree(workspace_dst, ignore_errors=True)
-                shutil.copytree(workspace_dir, workspace_dst)
-                workspace_path = str(workspace_dst)
-
             trace_path = ""
             if result.log_path and Path(result.log_path).exists():
                 trace_dst = solve_dir / "trace.jsonl"
                 shutil.copy2(result.log_path, trace_dst)
                 trace_path = str(trace_dst)
+
+            workspace_path = ""
+            workspace_manifest_path = ""
+            exported_workspace_files: list[str] = []
+            sandbox = getattr(solver, "sandbox", None)
+            workspace_dir_raw = str(getattr(sandbox, "workspace_dir", "") or "")
+            workspace_dir = Path(workspace_dir_raw) if workspace_dir_raw else None
+            if workspace_dir and workspace_dir.exists():
+                workspace_path, workspace_manifest_path, exported_workspace_files = self._export_workspace_snapshot(
+                    workspace_dir=workspace_dir,
+                    solve_dir=solve_dir,
+                    result=result,
+                    trace_path=trace_path,
+                )
 
             flag_path = solve_dir / "flag.txt"
             flag_path.write_text((result.flag or "") + "\n", encoding="utf-8")
@@ -1591,7 +1849,7 @@ class ChallengeSwarm:
                 "flag": result.flag,
                 "step_count": result.step_count,
                 "winner_model": model_spec,
-                "confirmation_source": self.winner_confirmation_source or "ctfd",
+                "confirmation_source": self.winner_confirmation_source or self._remote_platform(),
                 "findings_summary": result.findings_summary,
                 "advisor_note": self.last_advisor_note,
                 "coordinator_advisor_note": self.last_coordinator_advisor_note,
@@ -1602,6 +1860,9 @@ class ChallengeSwarm:
                 },
                 "trace_path": trace_path,
                 "workspace_path": workspace_path,
+                "workspace_snapshot_kind": "selected_export" if workspace_path else "none",
+                "workspace_export_manifest_path": workspace_manifest_path,
+                "exported_workspace_files": exported_workspace_files,
                 "shared_artifacts_path": str(self.shared_artifacts_dir.resolve()),
                 "flag_candidates": {
                     flag: record.snapshot()
@@ -1622,6 +1883,7 @@ class ChallengeSwarm:
                     result=result,
                     trace_path=trace_path,
                     workspace_path=workspace_path,
+                    workspace_manifest_path=workspace_manifest_path,
                     shared_artifacts_path=str(self.shared_artifacts_dir.resolve()),
                 ),
                 encoding="utf-8",
@@ -1633,9 +1895,13 @@ class ChallengeSwarm:
                 "result_path": str(result_path),
                 "trace_path": trace_path,
                 "workspace_path": workspace_path,
+                "workspace_manifest_path": workspace_manifest_path,
                 "shared_artifacts_path": str(self.shared_artifacts_dir.resolve()),
                 "saved_at": saved_at,
             }
+
+    def prepare_for_shutdown(self, *, preserve_solver_state: bool) -> None:
+        self._preserve_solver_state_on_cancel = preserve_solver_state
 
     def _create_solver(
         self,
@@ -1684,7 +1950,7 @@ class ChallengeSwarm:
                 notify_coordinator=_notify,
                 initial_step_count=initial_step_count,
                 sandbox=sandbox,
-                warm_container_id="" if sandbox is not None else self._warm_container_ids.get(model_spec, ""),
+                warm_container_id="",
             )
 
         if provider in ("gemini", "google"):
@@ -1703,7 +1969,7 @@ class ChallengeSwarm:
                 notify_coordinator=_notify,
                 initial_step_count=initial_step_count,
                 sandbox=sandbox,
-                warm_container_id="" if sandbox is not None else self._warm_container_ids.get(model_spec, ""),
+                warm_container_id="",
             )
 
         raise ValueError(f"Unsupported solver provider in model spec: {model_spec}")
@@ -1831,7 +2097,7 @@ class ChallengeSwarm:
         if normalized_status == "rejected":
             return "previously rejected for this challenge"
         if normalized_status == "incorrect":
-            return "previously rejected by CTFd for this challenge"
+            return "previously rejected by the remote platform for this challenge"
         return ""
 
     def candidate_resubmission_block_reason(self, flag: str) -> str:
@@ -1975,7 +2241,8 @@ class ChallengeSwarm:
             return normalized_display
         if status == "incorrect":
             return (
-                f'Candidate "{normalized}" auto-submitted to CTFd: {normalized_display} '
+                f'Candidate "{normalized}" auto-submitted to {self._remote_platform_label()}: '
+                f"{normalized_display} "
                 "Operator review can still confirm it manually if you have independent evidence."
             )
         return (
@@ -2021,6 +2288,7 @@ class ChallengeSwarm:
             return
 
         evidence = "\n".join(candidate.evidence_snippets[-3:])
+        flag_value = candidate.raw_flag
         review = await self._run_advisor_call(
             source_model,
             timeout_seconds=ADVISOR_COORDINATOR_TIMEOUT_SECONDS,
@@ -2028,7 +2296,7 @@ class ChallengeSwarm:
             call=lambda advisor: advisor.review_flag_candidate(
                 source_model=source_model,
                 challenge_brief=self._advisor_challenge_brief(),
-                flag=candidate.raw_flag,
+                flag=flag_value,
                 evidence=evidence,
                 sibling_insights=self._gather_sibling_insights(source_model),
             ),
@@ -2098,11 +2366,11 @@ class ChallengeSwarm:
         candidate.last_seen_at = now
         if status in {"correct", "already_solved"}:
             candidate.status = "confirmed"
-            candidate.confirmation_source = "ctfd"
+            candidate.confirmation_source = self._remote_platform()
             self.paused_candidate_flag = ""
             self.clear_requeue_request()
             self.confirmed_flag = normalized
-            self.winner_confirmation_source = "ctfd"
+            self.winner_confirmation_source = self._remote_platform()
             self.winner = SolverResult(
                 flag=normalized,
                 status=FLAG_FOUND,
@@ -2121,13 +2389,17 @@ class ChallengeSwarm:
         if status in {"correct", "already_solved"}:
             if solver is None:
                 solver = SimpleNamespace(sandbox=None)
+            result = self.winner
+            if result is None:
+                await self._persist_runtime_state()
+                return
             await self._persist_solved_artifacts(
-                model_spec=self.winner_model_spec or "ctfd/confirm",
-                solver=solver,
-                result=self.winner,
+                model_spec=self.winner_model_spec or f"{self._remote_platform()}/confirm",
+                solver=cast(SolverProtocol, solver),
+                result=result,
             )
             self._set_all_solver_stop_reasons(
-                f"flag confirmed by CTFd for {self.meta.name}",
+                f"flag confirmed by {self._remote_platform_label()} for {self.meta.name}",
             )
             await self._stop_solver_processes()
             self.cancel_event.set()
@@ -2141,7 +2413,7 @@ class ChallengeSwarm:
             advisory = (
                 f'Candidate rejected by coordinator: "{candidate.raw_flag}". '
                 "Do not retry the same flag automatically. Keep exploring other hypotheses, "
-                "but operator review may still confirm it manually if external evidence is stronger than the CTFd response."
+                "but operator review may still confirm it manually if external evidence is stronger than the remote-platform response."
             )
             self._broadcast_candidate_advisory(advisory)
             await self._finalize_candidate_requeue(normalized)
@@ -2175,7 +2447,7 @@ class ChallengeSwarm:
             else:
                 display = (
                     f'USER CONFIRMED MANUALLY — "{candidate.raw_flag}" marked solved '
-                    "without CTFd confirmation."
+                    "without automatic remote confirmation."
                 )
             candidate.status = "confirmed"
             candidate.confirmation_source = approved_by
@@ -2203,10 +2475,12 @@ class ChallengeSwarm:
 
         if solver is None:
             solver = SimpleNamespace(sandbox=None)
+        result = self.winner
+        assert result is not None
         await self._persist_solved_artifacts(
             model_spec=self.winner_model_spec or "operator/local",
-            solver=solver,
-            result=self.winner,
+            solver=cast(SolverProtocol, solver),
+            result=result,
         )
         self._set_all_solver_stop_reasons(
             f"flag approved locally for {self.meta.name}",
@@ -2285,10 +2559,12 @@ class ChallengeSwarm:
 
         if solver is None:
             solver = SimpleNamespace(sandbox=None)
+        result = self.winner
+        assert result is not None
         await self._persist_solved_artifacts(
             model_spec=self.winner_model_spec or "operator/external",
-            solver=solver,
-            result=self.winner,
+            solver=cast(SolverProtocol, solver),
+            result=result,
         )
         self._set_all_solver_stop_reasons(
             f"external solve reported for {self.meta.name}",
@@ -2757,12 +3033,12 @@ class ChallengeSwarm:
 
                     remaining_contexts: list[dict[str, object]] = []
                     for ctx in open_contexts:
-                        trigger_lineno = int(ctx["trigger_lineno"])
-                        remaining_after = int(ctx["remaining_after"])
+                        trigger_lineno = _int_from_object(ctx.get("trigger_lineno"))
+                        remaining_after = _int_from_object(ctx.get("remaining_after"))
                         if lineno > trigger_lineno and remaining_after > 0 and line_for_context:
                             lines_ref = ctx.get("lines")
-                            if isinstance(lines_ref, list):
-                                lines_ref.append(f"L{lineno}: {line_for_context}")
+                            if isinstance(lines_ref, list) and all(isinstance(item, str) for item in lines_ref):
+                                cast(list[str], lines_ref).append(f"L{lineno}: {line_for_context}")
                             remaining_after -= 1
                             ctx["remaining_after"] = remaining_after
                         if remaining_after > 0:
@@ -2946,7 +3222,13 @@ class ChallengeSwarm:
     ) -> tuple[str, str, int, int, str]:
         lifecycle = str(runtime.get("lifecycle") or "unknown")
         step_count = _int_from_object(runtime.get("step_count", 0))
-        last_completed_at = int(float(runtime.get("last_completed_at") or 0) or 0)
+        raw_last_completed_at = runtime.get("last_completed_at")
+        if isinstance(raw_last_completed_at, (int, float)):
+            last_completed_at = int(raw_last_completed_at)
+        elif isinstance(raw_last_completed_at, str) and raw_last_completed_at.strip():
+            last_completed_at = int(float(raw_last_completed_at))
+        else:
+            last_completed_at = 0
         last_exit_hint = self._truncate_text(str(runtime.get("last_exit_hint") or "").strip(), 120)
         return (model_spec, lifecycle, step_count, last_completed_at, last_exit_hint)
 
@@ -3205,6 +3487,107 @@ class ChallengeSwarm:
     def _safe_model_token(model_spec: str) -> str:
         return "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in model_spec)
 
+    def _restart_history_dir(self, model_spec: str) -> Path:
+        return self.shared_artifacts_dir / RESTART_HISTORY_DIRNAME / self._safe_model_token(model_spec)
+
+    def _restart_handoff_copy_path(self, model_spec: str) -> Path:
+        return self._restart_history_dir(model_spec) / "handoff.jsonl"
+
+    def _shared_artifact_container_path(self, host_path: Path) -> str:
+        relative = host_path.resolve().relative_to(self.shared_artifacts_dir.resolve())
+        return f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{relative.as_posix()}"
+
+    def _archive_restart_trace(self, model_spec: str, log_path: str) -> str:
+        if not log_path:
+            return ""
+        source = Path(log_path)
+        if not source.exists() or not source.is_file():
+            return ""
+        history_dir = self._restart_history_dir(model_spec)
+        history_dir.mkdir(parents=True, exist_ok=True)
+        destination = history_dir / source.name
+        try:
+            if source.resolve() != destination.resolve():
+                shutil.copy2(source, destination)
+        except OSError:
+            return ""
+        return self._shared_artifact_container_path(destination)
+
+    def _restart_history_trace_paths(self, model_spec: str) -> list[Path]:
+        history_dir = self._restart_history_dir(model_spec)
+        if not history_dir.exists():
+            return []
+        traces = [
+            path
+            for path in history_dir.glob("*.jsonl")
+            if path.name != "handoff.jsonl" and path.is_file()
+        ]
+        return sorted(
+            traces,
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
+
+    def _prune_restart_history(self, model_spec: str) -> None:
+        traces = self._restart_history_trace_paths(model_spec)
+        if len(traces) <= MAX_RESTART_TRACE_COPIES:
+            return
+        for path in traces[:-MAX_RESTART_TRACE_COPIES]:
+            path.unlink(missing_ok=True)
+
+    def _write_restart_handoff_copy(self, model_spec: str) -> Path:
+        handoff_copy_path = self._restart_handoff_copy_path(model_spec)
+        recent_entries = self._recent_handoff_entries(model_spec, limit=MAX_RESTART_HANDOFF_COPY_ENTRIES)
+        lines = [
+            json.dumps(entry, ensure_ascii=True)
+            for entry in recent_entries
+        ]
+        handoff_copy_path.write_text(
+            ("\n".join(lines) + "\n") if lines else "",
+            encoding="utf-8",
+        )
+        return handoff_copy_path
+
+    def _recorded_restart_files(self, model_spec: str) -> list[str]:
+        files: list[str] = []
+        handoff_copy = self._restart_handoff_copy_path(model_spec)
+        if handoff_copy.exists():
+            files.append(self._shared_artifact_container_path(handoff_copy))
+        for trace_path in self._restart_history_trace_paths(model_spec):
+            files.append(self._shared_artifact_container_path(trace_path))
+        return files
+
+    def _recorded_restart_commands(self, model_spec: str, *, limit: int = 12) -> list[str]:
+        commands: list[str] = []
+        seen: set[str] = set()
+        for trace_path in reversed(self._restart_history_trace_paths(model_spec)):
+            for command in self._recent_trace_commands(str(trace_path), limit=limit):
+                normalized = command.removeprefix("- ").strip()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                commands.append(normalized)
+                if len(commands) >= limit:
+                    return commands
+        return commands
+
+    def _recorded_restart_artifact_paths(self, model_spec: str, *, limit: int = 12) -> list[str]:
+        artifact_paths: list[str] = []
+        seen: set[str] = set()
+        for trace_path in reversed(self._restart_history_trace_paths(model_spec)):
+            for artifact_path in self._recent_trace_artifact_candidates(str(trace_path), limit=limit):
+                normalized = artifact_path.strip()
+                if (
+                    not normalized
+                    or normalized in seen
+                    or not self._is_shareable_artifact_path(normalized)
+                ):
+                    continue
+                seen.add(normalized)
+                artifact_paths.append(normalized)
+                if len(artifact_paths) >= limit:
+                    return artifact_paths
+        return artifact_paths
+
     def _collect_handoff_entry(
         self,
         model_spec: str,
@@ -3230,7 +3613,7 @@ class ChallengeSwarm:
             "last_command": str(runtime.get("last_command") or runtime.get("current_command") or ""),
             "last_exit_hint": str(runtime.get("last_exit_hint") or ""),
             "findings_summary": result.findings_summary[:1000],
-            "shared_artifacts_path": str(self.shared_artifacts_dir.resolve()),
+            "shared_artifacts_path": SHARED_ARTIFACTS_CONTAINER_ROOT,
             "log_path": result.log_path,
             "restart_reason": restart_reason,
             "restart_count": restart_count,
@@ -3238,8 +3621,17 @@ class ChallengeSwarm:
 
     def _append_handoff_entry(self, model_spec: str, entry: dict[str, object]) -> Path:
         path = self._handoff_log_path(model_spec)
+        trace_copy_path = self._archive_restart_trace(model_spec, str(entry.get("log_path") or ""))
+        if trace_copy_path:
+            entry["trace_copy_path"] = trace_copy_path
+        history_dir = self._restart_history_dir(model_spec)
+        history_dir.mkdir(parents=True, exist_ok=True)
+        handoff_copy_path = self._restart_handoff_copy_path(model_spec)
+        entry["handoff_copy_path"] = self._shared_artifact_container_path(handoff_copy_path)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=True) + "\n")
+        self._prune_restart_history(model_spec)
+        self._write_restart_handoff_copy(model_spec)
         return path
 
     def _recent_handoff_entries(self, model_spec: str, limit: int = 4) -> list[dict[str, object]]:
@@ -3260,6 +3652,7 @@ class ChallengeSwarm:
         resume_path = self._resume_file_path(model_spec)
         manifest_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/manifest.md"
         recent_entries = self._recent_handoff_entries(model_spec, limit=4)
+        recorded_files = self._recorded_restart_files(model_spec)
 
         repeated_commands: list[str] = []
         repeated_notes: list[str] = []
@@ -3274,31 +3667,47 @@ class ChallengeSwarm:
             finding = str(entry.get("findings_summary") or "").strip()
             if finding and finding not in findings:
                 findings.append(finding)
+        for command in self._recorded_restart_commands(model_spec):
+            if command and command not in repeated_commands:
+                repeated_commands.append(command)
+
+        artifact_paths = self._recorded_restart_artifact_paths(model_spec)
 
         restart_reason = str(latest_entry.get("restart_reason") or "").strip() or "- none recorded"
-        shared_artifacts_path = str(latest_entry.get("shared_artifacts_path") or "").strip() or "-"
+        shared_artifacts_path = (
+            str(latest_entry.get("shared_artifacts_path") or "").strip()
+            or SHARED_ARTIFACTS_CONTAINER_ROOT
+        )
 
         command_lines = "\n".join(f"- {command}" for command in repeated_commands[:4]) or "- none captured"
         note_lines = "\n".join(f"- {note}" for note in repeated_notes[:4]) or "- none captured"
         finding_lines = "\n".join(f"- {finding}" for finding in findings[:4]) or "- none captured"
+        recorded_file_lines = "\n".join(f"- {path}" for path in recorded_files) or "- none captured"
+        artifact_lines = "\n".join(f"- {path}" for path in artifact_paths[:8]) or "- none captured"
 
         content = "\n".join(
             [
-                f"# Lane Resume: {self.meta.name} / {model_spec}",
+                f"# Lane Restart Context: {self.meta.name} / {model_spec}",
                 "",
-                "Use this file to continue from the same sandbox/workspace after a lane restart.",
-                "Read this summary first, then choose a different approach. Do not repeat the same dead-end.",
+                "This restart is fresh. The previous container, workspace, and provider session were discarded.",
+                "Read every recorded file below before issuing new exploration commands, then choose a different path from the dead-end.",
                 "",
                 "## Shared Artifact Manifest",
                 f"- Read {manifest_container_path} before broad exploration if it exists.",
                 f"- If manifest entries include digest paths under {SHARED_ARTIFACTS_CONTAINER_ROOT}/{ADVISOR_DIGEST_DIRNAME}/, read the digest before opening the raw artifact.",
                 "- Treat manifest entries as evidence only; choose strategy independently.",
                 "",
+                "## Recorded Files To Read First",
+                recorded_file_lines,
+                "",
                 "## Latest Restart Reason",
                 restart_reason,
                 "",
-                "## Recent Commands To Avoid Repeating Blindly",
+                "## Recorded Commands Already Tried",
                 command_lines,
+                "",
+                "## Recorded Artifact Paths Worth Rechecking",
+                artifact_lines,
                 "",
                 "## Recent Failure Notes",
                 note_lines,
@@ -3310,10 +3719,11 @@ class ChallengeSwarm:
                 shared_artifacts_path,
                 "",
                 "## Next-Step Guidance",
-                "- Continue from the same sandbox/workspace; do not restart from scratch.",
+                "- Treat this as a fresh restart, not a warm resume.",
+                "- Rebuild context from the recorded files above before running new discovery.",
                 "- If a command may print more than about 100 lines, redirect it to /challenge/shared-artifacts/<name>.txt first. Large saved output may return only a path, so inspect a targeted range next.",
                 "- Prefer narrower follow-up commands over repeating broad grep/find/strings output.",
-                "- Try a different path from the failed one above.",
+                "- Reuse the saved evidence and try a different path from the failed one above.",
                 "",
             ]
         )
@@ -3329,8 +3739,9 @@ class ChallengeSwarm:
         manifest_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/manifest.md"
 
         parts = [
-            "Previous lane job stalled in a dead-end. Continue from the same sandbox/workspace, but do not repeat the same approach.",
-            f"First, read this resume file and use it as your working context: {resume_container_path}",
+            "Previous lane job stalled in a dead-end. This is a fresh restart, not a warm resume.",
+            f"First, read this restart context file and use it as your working context: {resume_container_path}",
+            "- Then read every file listed under `Recorded Files To Read First` in that context file.",
             f"Also read {manifest_container_path} first if it exists. Treat manifest entries as evidence only and choose strategy independently.",
             f"If manifest entries include digest paths under {SHARED_ARTIFACTS_CONTAINER_ROOT}/{ADVISOR_DIGEST_DIRNAME}/, read the digest before opening the raw artifact.",
             "",
@@ -3340,40 +3751,17 @@ class ChallengeSwarm:
             f"Shared artifacts root: {shared_artifacts_path or '-'}",
             "",
             "Recovery instructions:",
+            "- Do not repeat the same approach.",
             "- Do not repeat the same command or the same dead-end.",
+            "- Rebuild context from the saved trace and handoff files before exploring again.",
             "- If a command may print more than about 100 lines, redirect it to /challenge/shared-artifacts/<name>.txt first, then inspect only a targeted range with sed/head/tail/rg.",
             "- Prefer narrower follow-up commands over broad grep/find/strings output in the terminal.",
         ]
         return "\n".join(parts)
 
-    def _latest_resume_packet(self, entry: dict[str, object], resume_path: Path) -> str:
-        last_command = str(entry.get("last_command") or "").strip()
-        last_exit_hint = str(entry.get("last_exit_hint") or "").strip()
-        findings = str(entry.get("findings_summary") or "").strip()
-        shared_artifacts_path = str(entry.get("shared_artifacts_path") or "").strip()
-        resume_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/{resume_path.name}"
-        manifest_container_path = f"{SHARED_ARTIFACTS_CONTAINER_ROOT}/manifest.md"
-
-        parts = [
-            "Previous challenge run was paused before completion. Continue from the prior work, not from scratch.",
-            f"First, read this resume file and use it as your working context: {resume_container_path}",
-            f"Then read {manifest_container_path} if it exists to recover the latest shared evidence.",
-            "",
-            f"Last command: {last_command or '-'}",
-            f"Last note: {last_exit_hint or '-'}",
-            f"Findings summary: {findings or '-'}",
-            f"Shared artifacts root: {shared_artifacts_path or '-'}",
-            "",
-            "Resume instructions:",
-            "- Continue from the previous run's evidence and partial progress.",
-            "- Do not restart broad exploration from zero unless the resume file shows no useful progress.",
-            "- Read targeted artifact ranges first before running new broad commands.",
-        ]
-        return "\n".join(parts)
-
-    def snapshot_requeue_resume_packets(self) -> dict[str, str]:
+    def snapshot_requeue_restart_packets(self) -> dict[str, str]:
         packets: dict[str, str] = {}
-        resume_reason = str(self.requeue_reason or "queued").strip() or "queued"
+        restart_request_reason = str(self.requeue_reason or "queued").strip() or "queued"
         for model_spec, solver in self.solvers.items():
             result = self.agent_results.get(model_spec)
             if result is None:
@@ -3390,13 +3778,13 @@ class ChallengeSwarm:
                 model_spec,
                 solver,
                 result,
-                restart_reason=f"resume after {resume_reason}",
+                restart_reason=f"restart after {restart_request_reason}",
                 restart_count=0,
             )
             self._append_handoff_entry(model_spec, entry)
             resume_path = self._write_resume_file(model_spec, entry)
-            packets[model_spec] = self._latest_resume_packet(entry, resume_path)
-        self._resume_packets = dict(packets)
+            packets[model_spec] = self._latest_restart_packet(entry, resume_path)
+        self._restart_packets = dict(packets)
         return packets
 
     def _fingerprint_text(self, value: str) -> str:
@@ -3600,7 +3988,24 @@ class ChallengeSwarm:
         )
         return replacement
 
+    def _clear_restart_runtime_state(self, model_spec: str) -> None:
+        lane_root = Path(self.challenge_dir).resolve() / ".lane-state" / self._safe_model_token(model_spec)
+        if not lane_root.exists():
+            return
+        try:
+            shutil.rmtree(lane_root)
+        except OSError:
+            logger.warning(
+                "[%s/%s] Could not clear lane state for fresh restart",
+                self.meta.name,
+                model_spec,
+                exc_info=True,
+            )
+
     async def _run_solver(self, model_spec: str) -> SolverResult | None:
+        pending_restart_packet = self._restart_packets.get(model_spec, "").strip()
+        if pending_restart_packet:
+            self._clear_restart_runtime_state(model_spec)
         solver = self._create_solver(model_spec)
         self.solvers[model_spec] = solver
         self._stopped_process_models.discard(model_spec)
@@ -3647,18 +4052,14 @@ class ChallengeSwarm:
                     model_spec,
                     exc_info=True,
                 )
-            sandbox = getattr(latest_solver, "sandbox", None)
-            container_id = str(getattr(sandbox, "resume_container_id", "") or "").strip()
-            if container_id:
-                self._warm_container_ids[model_spec] = container_id
-            else:
-                self._warm_container_ids.pop(model_spec, None)
 
     def _should_preserve_solver_container(self, result: SolverResult) -> bool:
         if self.confirmed_flag or result.status == FLAG_FOUND:
             return False
         if self.requeue_requested:
-            return True
+            return False
+        if not self._preserve_solver_state_on_cancel:
+            return False
         return bool(self.cancel_event.is_set())
 
     async def _run_solver_loop(self, solver, model_spec: str) -> tuple[SolverResult, SolverProtocol]:
@@ -3668,9 +4069,9 @@ class ChallengeSwarm:
             step_count=0, cost_usd=0.0, log_path="",
         )
         await solver.start()
-        resume_packet = self._resume_packets.pop(model_spec, "").strip()
-        if resume_packet:
-            solver.bump(resume_packet)
+        restart_packet = self._restart_packets.pop(model_spec, "").strip()
+        if restart_packet:
+            solver.bump(restart_packet)
 
         while not self.cancel_event.is_set():
             result = await solver.run_until_done_or_gave_up()
@@ -3703,7 +4104,7 @@ class ChallengeSwarm:
                 await self._cancel_solver_tasks()
                 self.winner = result
                 self.winner_model_spec = model_spec
-                self.winner_confirmation_source = self.winner_confirmation_source or "ctfd"
+                self.winner_confirmation_source = self.winner_confirmation_source or self._remote_platform()
                 logger.info(
                     f"[{self.meta.name}] Flag found by {model_spec}: {result.flag}"
                 )

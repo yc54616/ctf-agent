@@ -29,7 +29,9 @@ from backend.agents.coordinator_core import (
 )
 from backend.agents.coordinator_loop import build_deps, cleanup_coordinator_runtime
 from backend.auth import AuthValidationError, validate_claude_auth, validate_required_auth
+from backend.challenge_config import discover_challenge_dirs
 from backend.config import Settings
+from backend.cookie_file import load_cookie_header
 from backend.models import DEFAULT_MODELS, provider_from_spec
 from backend.tracing import _sanitize as _sanitize_trace_component
 
@@ -126,18 +128,7 @@ def _memory_budget_summary(
 
 
 def _discover_challenge_dirs(root: str | Path) -> list[Path]:
-    base = Path(root).resolve()
-    if (base / "metadata.yml").exists():
-        return [base]
-    if not base.exists():
-        return []
-    challenge_dirs: list[Path] = []
-    for entry in sorted(base.iterdir()):
-        if not entry.is_dir():
-            continue
-        if (entry / "metadata.yml").exists():
-            challenge_dirs.append(entry.resolve())
-    return challenge_dirs
+    return discover_challenge_dirs(root)
 
 
 @dataclass
@@ -488,10 +479,13 @@ def _format_agent_activity(agent: dict[str, object]) -> str:
     if runtime_health and runtime_health not in {"healthy", lifecycle}:
         parts.append(f"health: {runtime_health}")
     if heartbeat_age is not None and runtime_health in {"stale", "resetting"}:
-        try:
+        if isinstance(heartbeat_age, (int, float)):
             parts.append(f"heartbeat: {float(heartbeat_age):.1f}s")
-        except (TypeError, ValueError):
-            pass
+        elif isinstance(heartbeat_age, str):
+            try:
+                parts.append(f"heartbeat: {float(heartbeat_age):.1f}s")
+            except ValueError:
+                pass
 
     if exit_hint and exit_hint not in {lifecycle, current_command, last_command}:
         parts.append(f"note: {exit_hint}")
@@ -1132,32 +1126,38 @@ def _validate_runtime_auth(
 
 
 @click.command()
-@click.option("--ctfd-url", default=None, help="CTFd URL (overrides .env)")
-@click.option("--ctfd-token", default=None, help="CTFd API token (overrides .env)")
+@click.option("--ctfd-url", default=None, help="Advanced/compatibility only: explicit CTFd URL override")
+@click.option("--ctfd-token", default=None, help="Advanced/compatibility only: explicit CTFd API token override")
+@click.option(
+    "--cookie-file",
+    default=None,
+    help="Advanced/compatibility only: file containing a raw HTTP Cookie header value",
+)
 @click.option("--image", default="ctf-sandbox", help="Docker sandbox image name")
 @click.option("--models", multiple=True, help="Model specs (default: all configured)")
-@click.option("--challenges-dir", default="challenges", help="Directory for challenge files")
-@click.option("--no-submit", is_flag=True, help="Disable flag submission while still using CTFd challenge sync")
+@click.option("--challenges-dir", default="challenges", help="Directory containing imported/local challenge folders")
+@click.option("--no-submit", is_flag=True, help="Advanced/compatibility only: disable automatic remote flag submission")
 @click.option(
     "--local",
     "local_mode",
     is_flag=True,
-    help="Run from local challenge dirs only; skip all CTFd fetch/submit operations",
+    help="Advanced/compatibility only: skip all remote fetch/submit operations",
 )
 @click.option("--coordinator-model", default=None, help="Model for coordinator (default: backend-specific)")
 @click.option("--coordinator", default="codex", type=click.Choice(["codex"]), help="Coordinator backend")
 @click.option("--max-challenges", default=10, type=int, help="Max challenges solved concurrently")
 @click.option(
-    "--resume",
-    "resume_mode",
+    "--restore",
+    "restore_mode",
     is_flag=True,
-    help="Resume paused/requeueable challenge work from saved runtime state instead of clearing it first",
+    help="Restore queued challenge state from saved runtime notes instead of clearing it first",
 )
 @click.option("--msg-port", default=9400, type=int, help="Operator message port (use 0 for auto)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose logging")
 def main(
     ctfd_url: str | None,
     ctfd_token: str | None,
+    cookie_file: str | None,
     image: str,
     models: tuple[str, ...],
     challenges_dir: str,
@@ -1166,7 +1166,7 @@ def main(
     coordinator_model: str | None,
     coordinator: str,
     max_challenges: int,
-    resume_mode: bool,
+    restore_mode: bool,
     msg_port: int,
     verbose: bool,
 ) -> None:
@@ -1178,6 +1178,8 @@ def main(
         settings.ctfd_url = ctfd_url
     if ctfd_token:
         settings.ctfd_token = ctfd_token
+    cookie_header, cookie_path = load_cookie_header(cookie_file)
+    settings.remote_cookie_header = cookie_header
     settings.max_concurrent_challenges = max_challenges
     effective_no_submit = no_submit or local_mode
 
@@ -1192,8 +1194,10 @@ def main(
         sys.exit(1)
 
     console.print("[bold]CTF Agent v2[/bold]")
-    console.print(f"  Mode: {'local' if local_mode else 'ctfd'}")
-    console.print(f"  CTFd: {'disabled' if local_mode else settings.ctfd_url}")
+    console.print(f"  Mode: {'local' if local_mode else 'remote'}")
+    console.print(f"  CTFd sync: {'disabled' if local_mode else settings.ctfd_url}")
+    if cookie_header:
+        console.print(f"  Cookie auth: {cookie_path}")
     if local_mode:
         console.print("  Submission: operator approval only")
     elif no_submit:
@@ -1204,7 +1208,7 @@ def main(
     console.print(f"  Challenges dir: {Path(challenges_dir).resolve()}")
     console.print(f"  Image: {settings.sandbox_image}")
     console.print(f"  Max challenges: {max_challenges}")
-    console.print(f"  Startup: {'resume previous work' if resume_mode else 'fresh runtime reset'}")
+    console.print(f"  Startup: {'restore saved notes' if restore_mode else 'fresh runtime reset'}")
     if run_log_path is not None:
         console.print(f"  Run log: {run_log_path}")
     memory_budget = _memory_budget_summary(
@@ -1242,8 +1246,9 @@ def main(
                 coordinator_model,
                 coordinator,
                 max_challenges,
-                resume_mode,
+                restore_mode,
                 msg_port,
+                cookie_header=cookie_header,
             )
         )
     except KeyboardInterrupt:
@@ -1259,17 +1264,18 @@ async def _run_coordinator(
     coordinator_model: str | None,
     coordinator_backend: str,
     max_challenges: int,
-    resume_mode: bool = False,
+    restore_mode: bool = False,
     msg_port: int = 0,
+    cookie_header: str = "",
 ) -> None:
     """Run the full coordinator (continuous until Ctrl+C)."""
     from backend.sandbox import cleanup_orphan_containers, configure_semaphore
 
     max_containers = max_challenges * len(model_specs)
     configure_semaphore(max_containers)
-    if resume_mode:
+    if restore_mode:
         logging.getLogger(__name__).info(
-            "Resume mode enabled; preserving runtime state and warm sandboxes under %s",
+            "Restore mode enabled; keeping saved queue/runtime notes under %s while restarted lanes begin fresh",
             Path(challenges_dir).resolve(),
         )
     else:
@@ -1286,14 +1292,24 @@ async def _run_coordinator(
             )
     resolved_backend = "codex"
     console.print(f"[bold]Starting coordinator ({resolved_backend}, Ctrl+C to stop)...[/bold]\n")
-    ctfd, cost_tracker, deps = build_deps(
-        settings,
-        model_specs,
-        challenges_dir,
-        no_submit,
-        local_mode,
-    )
-    if resume_mode:
+    if cookie_header:
+        ctfd, cost_tracker, deps = build_deps(
+            settings,
+            model_specs,
+            challenges_dir,
+            no_submit,
+            local_mode,
+            cookie_header,
+        )
+    else:
+        ctfd, cost_tracker, deps = build_deps(
+            settings,
+            model_specs,
+            challenges_dir,
+            no_submit,
+            local_mode,
+        )
+    if restore_mode:
         restored = restore_pending_swarms_from_results(deps)
         if restored:
             held = sum(
@@ -1303,12 +1319,12 @@ async def _run_coordinator(
                 == PENDING_REASON_PRIORITY_WAITING
             )
             logging.getLogger(__name__).info(
-                "Restored %d queued challenge(s) from saved runtime state (%d held in priority waiting)",
+                "Restored %d queued challenge(s) from saved runtime notes (%d held in priority waiting)",
                 len(restored),
                 held,
             )
         else:
-            logging.getLogger(__name__).info("Resume mode found no queued challenge state to restore")
+            logging.getLogger(__name__).info("Restore mode found no queued challenge notes to restore")
     results: dict[str, object] = {}
     installed_signals = _install_shutdown_signal_handlers(deps)
 

@@ -79,7 +79,7 @@ async def report_flag_candidate(
 ) -> str:
     """Run the guarded candidate path.
 
-    In CTFd mode this applies simple placeholder guardrails and then submits the
+    In remote-submit mode this applies simple placeholder guardrails and then submits the
     candidate remotely. In local / --no-submit mode it queues the candidate for
     operator confirmation instead.
     """

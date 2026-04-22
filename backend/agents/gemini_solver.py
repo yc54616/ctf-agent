@@ -16,8 +16,8 @@ from typing import Any, cast
 from backend.auth import refresh_gemini_oauth, resolve_home_auth_paths
 from backend.config import Settings
 from backend.cost_tracker import CostTracker
-from backend.ctfd import CTFdClient
 from backend.models import model_id_from_spec
+from backend.platforms import PlatformClient
 from backend.prompts import (
     ChallengeMeta,
     build_lane_bump_prompt,
@@ -67,7 +67,7 @@ class GeminiSolver:
         model_spec: str,
         challenge_dir: str,
         meta: ChallengeMeta,
-        ctfd: CTFdClient,
+        ctfd: PlatformClient,
         cost_tracker: CostTracker,
         settings: object,
         cancel_event: asyncio.Event | None = None,

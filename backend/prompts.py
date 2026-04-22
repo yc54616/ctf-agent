@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
-
+from backend.challenge_config import load_effective_metadata
 from backend.tools.core import IMAGE_EXTS_FOR_VISION as IMAGE_EXTS
 
 _BINARY_CATEGORIES = {"reverse", "reversing", "re", "pwn", "binary"}
@@ -70,10 +70,23 @@ _TEXTISH_EXTS = {
 }
 _BINARY_FILENAMES = {"a.out", "chal", "challenge", "binary", "vuln", "exploitme"}
 _WEB_CATEGORIES = {"web", "osint", "cloud", "api"}
+_PWN_CATEGORIES = {"pwn", "binary"}
+_REVERSE_CATEGORIES = {"reverse", "reversing", "re"}
+_CRYPTO_CATEGORIES = {"crypto", "cryptography"}
+_FORENSICS_CATEGORIES = {"forensics", "stego", "steganography"}
+_MALWARE_CATEGORIES = {"malware"}
+_OSINT_CATEGORIES = {"osint"}
+_MISC_CATEGORIES = {"misc", "jail", "pyjail", "encoding", "programming"}
+_AI_ML_CATEGORIES = {"ai", "ml", "ai/ml", "machine-learning", "machine learning"}
 _WINDOWS_CATEGORIES = {"windows", "active-directory", "ad"}
 _MOBILE_CATEGORIES = {"mobile", "android"}
 _FIRMWARE_CATEGORIES = {"firmware", "hardware", "iot", "embedded", "forensics"}
 _BLOCKCHAIN_CATEGORIES = {"blockchain", "smart-contract", "smart contract", "solidity", "evm"}
+_CTF_SKILLS_CONTAINER_ROOT = "/challenge/agent-repo/ctf-skills"
+_CTF_SKILLS_HOST_ROOTS = (
+    Path(__file__).resolve().parents[1] / "ctf-skills" / "ctf-skills",
+    Path(__file__).resolve().parents[1] / "ctf-skills",
+)
 _FLAG_FORMAT_HINT_PATTERNS = (
     re.compile(
         r"(?im)^\s*(?:flag\s*(?:format|fmt)|expected\s+flag\s*format|submit\s+the\s+flag\s+as|submit\s+flag\s+as|플래그\s*(?:형식|포맷))\s*[:=-]?\s*`?([A-Za-z0-9_.:-]+\{[^`\n]{0,120}\})`?\s*$"
@@ -139,10 +152,16 @@ class ChallengeMeta:
     description: str = ""
     tags: list[str] = field(default_factory=list)
     connection_info: str = ""
+    connection: dict[str, Any] = field(default_factory=dict)
     hints: list[dict[str, Any]] = field(default_factory=list)
     solves: int = 0
     flag_format: str = ""
     flag_regex: str = ""
+    source: dict[str, Any] = field(default_factory=dict)
+    priority: bool = False
+    no_submit: bool = False
+    needs_instance: bool = False
+    notes: str = ""
 
     def __post_init__(self) -> None:
         self.flag_format = _strip_wrapping_ticks(self.flag_format)
@@ -158,21 +177,31 @@ class ChallengeMeta:
             self.flag_regex = inferred_regex
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> ChallengeMeta:
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
+    def from_dict(cls, data: dict[str, Any]) -> ChallengeMeta:
+        payload = data if isinstance(data, dict) else {}
         return cls(
-            name=data.get("name", "Unknown"),
-            category=data.get("category", ""),
-            value=data.get("value", 0),
-            description=data.get("description", ""),
-            tags=data.get("tags", []),
-            connection_info=data.get("connection_info", ""),
-            hints=data.get("hints", []),
-            solves=data.get("solves", 0),
-            flag_format=data.get("flag_format", ""),
-            flag_regex=data.get("flag_regex", ""),
+            name=payload.get("name", "Unknown"),
+            category=payload.get("category", ""),
+            value=payload.get("value", 0),
+            description=payload.get("description", ""),
+            tags=payload.get("tags", []),
+            connection_info=payload.get("connection_info", ""),
+            connection=payload.get("connection", {}),
+            hints=payload.get("hints", []),
+            solves=payload.get("solves", 0),
+            flag_format=payload.get("flag_format", ""),
+            flag_regex=payload.get("flag_regex", ""),
+            source=payload.get("source", {}),
+            priority=bool(payload.get("priority", False)),
+            no_submit=bool(payload.get("no_submit", False)),
+            needs_instance=bool(payload.get("needs_instance", False)),
+            notes=str(payload.get("notes", "") or ""),
         )
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> ChallengeMeta:
+        data = load_effective_metadata(Path(path).resolve().parent)
+        return cls.from_dict(data)
 
 
 def list_distfiles(challenge_dir: str) -> list[str]:
@@ -203,15 +232,13 @@ def build_named_tool_sandbox_preamble(tool_names: list[str]) -> str:
 def build_shell_solver_preamble() -> str:
     return (
         "IMPORTANT: You are running inside a Docker sandbox. "
-        "All files are under /challenge/ — distfiles at /challenge/distfiles/, "
-        "workspace at /challenge/workspace/. Do NOT use any paths outside /challenge/. "
+        "All files are under /challenge/ — distfiles in /challenge/distfiles/, "
+        "workspace in /challenge/workspace/. Stay inside /challenge/. "
         "Use shell commands for all work. "
-        "Large bash output may be saved to a path without inline preview; inspect it with "
-        "targeted follow-up commands. "
-        "Do not reread /challenge/agent-repo, /challenge/host-logs, prior solve/ output, "
-        "or challenge-src/.shared-artifacts history. "
-        "Use `report_flag_candidate 'FLAG' ['EVIDENCE'] ['CONFIDENCE']` for the guarded flag path "
-        "(remote submit on CTFd, operator review when submission is disabled). "
+        "Large bash output may be saved without preview; inspect saved paths with targeted commands. "
+        "Do not reread /challenge/agent-repo except targeted /challenge/agent-repo/ctf-skills/ docs, "
+        "/challenge/host-logs, prior solve/ output, or challenge-src/.shared-artifacts history. "
+        "Use `report_flag_candidate 'FLAG' ['EVIDENCE'] ['CONFIDENCE']` for guarded flag review/submission. "
         "Use `notify_coordinator 'MSG'` to send a note upstream.\n\n"
     )
 
@@ -267,6 +294,108 @@ def _category_tokens(meta: ChallengeMeta) -> set[str]:
     return {token for token in candidates if token}
 
 
+@lru_cache(maxsize=1)
+def _available_ctf_skills() -> set[str]:
+    for root in _CTF_SKILLS_HOST_ROOTS:
+        if not root.exists():
+            continue
+        available = {
+            path.parent.name
+            for path in root.glob("*/SKILL.md")
+            if path.is_file()
+        }
+        if available:
+            return available
+    return set()
+
+
+def _ctf_skill_path(skill_name: str) -> str:
+    return f"{_CTF_SKILLS_CONTAINER_ROOT}/{skill_name}/SKILL.md"
+
+
+def _recommended_ctf_skill(meta: ChallengeMeta, distfile_names: list[str]) -> str | None:
+    tokens = _category_tokens(meta)
+    if tokens & _WEB_CATEGORIES:
+        return "ctf-web"
+    if tokens & _PWN_CATEGORIES:
+        return "ctf-pwn"
+    if tokens & _REVERSE_CATEGORIES:
+        return "ctf-reverse"
+    if tokens & _CRYPTO_CATEGORIES or tokens & _BLOCKCHAIN_CATEGORIES:
+        return "ctf-crypto"
+    if tokens & _FORENSICS_CATEGORIES or tokens & _FIRMWARE_CATEGORIES:
+        return "ctf-forensics"
+    if tokens & _MALWARE_CATEGORIES:
+        return "ctf-malware"
+    if tokens & _OSINT_CATEGORIES:
+        return "ctf-osint"
+    if tokens & _AI_ML_CATEGORIES:
+        return "ctf-ai-ml"
+    if tokens & _MISC_CATEGORIES:
+        return "ctf-misc"
+    if _should_include_binary_analysis(meta, distfile_names):
+        return "ctf-reverse"
+    return None
+
+
+def build_ctf_skills_guidance(
+    meta: ChallengeMeta | None = None,
+    distfile_names: list[str] | None = None,
+    *,
+    compact: bool = False,
+    audience: str = "solver",
+) -> str:
+    available = _available_ctf_skills()
+    if not available:
+        return ""
+
+    dispatcher = (
+        _ctf_skill_path("solve-challenge")
+        if "solve-challenge" in available
+        else ""
+    )
+    primary = None
+    if meta is not None:
+        candidate = _recommended_ctf_skill(meta, distfile_names or [])
+        if candidate in available:
+            primary = candidate
+
+    if compact:
+        pivot_line = (
+            "For lane pivots, cite one exact `.../SKILL.md` path."
+            if audience == "coordinator"
+            else "For pivots, cite one exact `.../SKILL.md` path."
+        )
+        parts = [
+            f"Local skills: `{_CTF_SKILLS_CONTAINER_ROOT}/`.",
+            pivot_line,
+        ]
+        if dispatcher:
+            parts.append(f"If unclear, use `{dispatcher}`.")
+        return " ".join(parts)
+
+    lines = [
+        "## Local CTF Skills",
+        f"A local skill library is mounted at `{_CTF_SKILLS_CONTAINER_ROOT}/`.",
+    ]
+    if primary:
+        lines.append(
+            f"- Start with `{_ctf_skill_path(primary)}` for category-specific triage, commands, and pivot guidance."
+        )
+    if dispatcher:
+        lines.append(
+            f"- If the category is unclear, use `{dispatcher}` as the dispatcher before opening deeper category notes."
+        )
+    lines.extend(
+        [
+            "- After opening a `SKILL.md`, read only the linked technique notes you actually need.",
+            "- Do not bulk-read the whole skill library or grep the entire repo just because it is mounted.",
+            "- Targeted reads under this `ctf-skills` subtree are allowed even though other `/challenge/agent-repo` history stays off-limits.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _build_domain_hints(meta: ChallengeMeta) -> list[str]:
     tokens = _category_tokens(meta)
     hints: list[str] = []
@@ -314,6 +443,7 @@ def build_prompt(
     use pseudo-commands routed through bash hooks.
     """
     conn_info = _rewrite_connection_info(meta.connection_info.strip())
+    ctf_skills_guidance = build_ctf_skills_guidance(meta, distfile_names)
 
     lines: list[str] = [
         "You are an expert CTF solver. Find the real flag for the challenge below.",
@@ -325,6 +455,19 @@ def build_prompt(
             "> **FIRST ACTION REQUIRED**: Your very first tool call MUST connect to the service.",
             f"> Run: `{conn_info}` (use a heredoc or pwntools script as shown below).",
             "> Do NOT explore the sandbox filesystem first. The flag is on the service, not in the container.",
+            "",
+        ]
+        if meta.needs_instance:
+            lines.extend(
+                [
+                    "> If the endpoint is unavailable and this challenge uses a deploy-on-demand instance, "
+                    "assume the instance may need to be started or refreshed instead of looping on dead connections.",
+                    "",
+                ]
+            )
+    elif meta.needs_instance:
+        lines += [
+            "> **INSTANCE NOTE**: This challenge may require the operator to deploy/start a lab instance before live service details appear.",
             "",
         ]
 
@@ -392,6 +535,9 @@ def build_prompt(
             "",
         ]
 
+    if ctf_skills_guidance:
+        lines += [ctf_skills_guidance, ""]
+
     if has_named_tools:
         image_hint = "**Images: call `view_image` FIRST, before any other analysis.**"
         web_hint = "Web: check routes, params, JS source, cookies, robots.txt, and use `bash` for curl, requests, and fuzzing."
@@ -419,7 +565,15 @@ def build_prompt(
         "- Try the obvious path first, then widen the search: hidden files, env vars, backups, headers, errors, timing, and encoding tricks.",
         "- Treat `/challenge/shared-artifacts/` as shared evidence. If a lane message or advisory points to a digest or artifact, inspect that evidence before repeating the same search.",
         "- If you see `Artifact path: /challenge/shared-artifacts/...`, treat it as high-priority evidence. Prefer the digest when one is available, then inspect the raw artifact.",
-        "- Never reread `/challenge/agent-repo`, `/challenge/host-logs`, prior `solve/` output, or `challenge-src/.shared-artifacts/` history. Work from distfiles, challenge-src, workspace, metadata, and current shared artifacts instead.",
+        (
+            "- Do not reread `/challenge/agent-repo`, `/challenge/host-logs`, prior `solve/` output, or "
+            "`challenge-src/.shared-artifacts/` history. The only `agent-repo` exception is targeted reads under "
+            f"`{_CTF_SKILLS_CONTAINER_ROOT}/` when you need the local CTF skill references."
+            if ctf_skills_guidance
+            else "- Never reread `/challenge/agent-repo`, `/challenge/host-logs`, prior `solve/` output, or "
+            "`challenge-src/.shared-artifacts/` history. Work from distfiles, challenge-src, workspace, metadata, "
+            "and current shared artifacts instead."
+        ),
         "- Do not dump huge output into the conversation. If `grep -R`, `rg`, `find`, `strings`, `objdump`, `binwalk`, `ffuf`, or large HTML/JS searches may exceed about 100 lines, redirect to `/challenge/shared-artifacts/<name>.txt` first.",
         "- Large saved output may come back with only a path, not a preview. Inspect `/challenge/shared-artifacts/` with `sed -n`, `head`, `tail`, targeted `rg`, `strings`, or `xxd` instead of re-printing giant blobs.",
         "- Do not `cat` or `python read_text()` generated `stdout-*.log` / `stderr-*.log` artifacts wholesale. Use narrow `sed/head/tail/rg` slices, or rerun the original command with a tighter filter.",

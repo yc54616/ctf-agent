@@ -1,10 +1,10 @@
-"""Background CTFd poller — detects new and solved challenges with quiet retries."""
+"""Background platform poller — detects new and solved challenges with quiet retries."""
 
 import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from backend.ctfd import CTFdClient
+from backend.platforms import PlatformClient, platform_label
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +21,10 @@ class PollEvent:
 
 
 @dataclass
-class CTFdPoller:
-    """Polls CTFd every interval_s seconds, emits events for new/solved challenges."""
+class PlatformPoller:
+    """Polls the active remote platform every interval_s seconds, emits events for new/solved challenges."""
 
-    ctfd: CTFdClient
+    ctfd: PlatformClient
     interval_s: float = 5.0
 
     _known_challenges: set[str] = field(default_factory=set)
@@ -42,11 +42,12 @@ class CTFdPoller:
         self._current_interval_s = float(self.interval_s)
         await self._seed()
         logger.info(
-            "Poller initialized: %d challenges, %d solved",
+            "%s poller initialized: %d challenges, %d solved",
+            platform_label(self.ctfd),
             len(self._known_challenges),
             len(self._known_solved),
         )
-        self._task = asyncio.create_task(self._loop(), name="ctfd-poller")
+        self._task = asyncio.create_task(self._loop(), name="platform-poller")
 
     async def _seed(self) -> None:
         """Initial fetch — just populate known state, no events."""
@@ -142,7 +143,8 @@ class CTFdPoller:
     def _mark_poll_success(self) -> None:
         if self._failure_count > 0:
             logger.info(
-                "CTFd poll recovered after %d failures",
+                "%s poll recovered after %d failures",
+                platform_label(self.ctfd),
                 self._failure_count,
             )
         self._failure_count = 0
@@ -195,3 +197,6 @@ class CTFdPoller:
                 await self._poll_once()
         except asyncio.CancelledError:
             return
+
+
+CTFdPoller = PlatformPoller

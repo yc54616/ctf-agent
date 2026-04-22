@@ -68,7 +68,7 @@ async def test_run_coordinator_uses_codex_only(monkeypatch) -> None:
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
-        resume_mode=False,
+        restore_mode=False,
         msg_port=9400,
     )
 
@@ -114,7 +114,7 @@ async def test_run_coordinator_ignores_non_codex_backend_argument(monkeypatch) -
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
-        resume_mode=False,
+        restore_mode=False,
         msg_port=9400,
     )
 
@@ -175,7 +175,7 @@ async def test_run_coordinator_reuses_active_runtime(monkeypatch) -> None:
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
-        resume_mode=False,
+        restore_mode=False,
         msg_port=9400,
     )
 
@@ -219,6 +219,7 @@ def test_coordinator_prompts_require_artifact_inspection_before_rebroadcast() ->
         assert "Artifact path: /challenge/shared-artifacts/..." in prompt
         assert "/challenge/shared-artifacts/manifest.md" in prompt
         assert "Do not rebroadcast advisor or artifact messages blindly" in prompt
+        assert "/challenge/agent-repo/ctf-skills/" in prompt
         assert len(prompt) < 2200
 
 
@@ -294,7 +295,7 @@ async def test_run_codex_coordinator_defaults_to_gpt_54(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_coordinator_skips_runtime_reset_in_resume_mode(monkeypatch) -> None:
+async def test_run_coordinator_skips_runtime_reset_in_restore_mode(monkeypatch) -> None:
     startup_cleanup_called = {"value": False}
 
     async def fake_cleanup() -> None:
@@ -307,7 +308,7 @@ async def test_run_coordinator_skips_runtime_reset_in_resume_mode(monkeypatch) -
 
     def fake_reset_runtime_state_dirs(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         reset_called["value"] = True
-        raise AssertionError("runtime reset should not run in resume mode")
+        raise AssertionError("runtime reset should not run in restore mode")
 
     monkeypatch.setattr("backend.sandbox.cleanup_orphan_containers", fake_cleanup)
     monkeypatch.setattr("backend.sandbox.configure_semaphore", fake_configure)
@@ -350,7 +351,7 @@ async def test_run_coordinator_skips_runtime_reset_in_resume_mode(monkeypatch) -
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
-        resume_mode=True,
+        restore_mode=True,
         msg_port=9400,
     )
 
@@ -359,7 +360,7 @@ async def test_run_coordinator_skips_runtime_reset_in_resume_mode(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_run_coordinator_restores_saved_pending_queue_in_resume_mode(monkeypatch) -> None:
+async def test_run_coordinator_restores_saved_pending_queue_in_restore_mode(monkeypatch) -> None:
     async def fake_cleanup() -> None:
         return None
 
@@ -400,7 +401,7 @@ async def test_run_coordinator_restores_saved_pending_queue_in_resume_mode(monke
     async def run_codex(**kwargs):  # type: ignore[no-untyped-def]
         captured["pending"] = list(kwargs["deps"].pending_swarm_queue)
         captured["hold_reason"] = kwargs["deps"].pending_swarm_meta["hold-me"]["reason"]
-        captured["resume_reason"] = kwargs["deps"].pending_swarm_meta["resume-me"]["reason"]
+        captured["restart_reason"] = kwargs["deps"].pending_swarm_meta["resume-me"]["reason"]
         return {"results": {}, "total_cost_usd": 0.0}
 
     monkeypatch.setattr("backend.cli.run_codex_coordinator", run_codex)
@@ -414,13 +415,13 @@ async def test_run_coordinator_restores_saved_pending_queue_in_resume_mode(monke
         coordinator_model=None,
         coordinator_backend="claude",
         max_challenges=2,
-        resume_mode=True,
+        restore_mode=True,
         msg_port=9400,
     )
 
     assert captured["pending"] == ["hold-me", "resume-me"]
     assert captured["hold_reason"] == "priority_waiting"
-    assert captured["resume_reason"] == "resume_requested"
+    assert captured["restart_reason"] == "restart_requested"
 
 
 @pytest.mark.asyncio
@@ -457,8 +458,12 @@ async def test_codex_coordinator_read_loop_handles_oversized_jsonrpc_line() -> N
 @pytest.mark.asyncio
 async def test_cleanup_coordinator_runtime_propagates_shutdown_reason() -> None:
     recorded: list[str] = []
+    preserve_modes: list[bool] = []
 
     class _FakeSwarm:
+        def prepare_for_shutdown(self, *, preserve_solver_state: bool) -> None:
+            preserve_modes.append(preserve_solver_state)
+
         def kill(self, reason: str = "swarm cancelled") -> None:
             recorded.append(reason)
 
@@ -483,6 +488,94 @@ async def test_cleanup_coordinator_runtime_propagates_shutdown_reason() -> None:
     )
 
     assert recorded == ["KeyboardInterrupt"]
+    assert preserve_modes == [False]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_coordinator_runtime_waits_for_swarm_task_to_finish_after_kill() -> None:
+    killed = asyncio.Event()
+    finished = asyncio.Event()
+
+    class _FakeSwarm:
+        def kill(self, reason: str = "swarm cancelled") -> None:
+            killed.set()
+
+    class _FakeCTFd:
+        async def close(self) -> None:
+            return None
+
+    async def _swarm_task() -> None:
+        await killed.wait()
+        finished.set()
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    task = asyncio.create_task(_swarm_task())
+    deps.swarms["chal"] = cast(Any, _FakeSwarm())
+    deps.swarm_tasks["chal"] = task
+
+    await cleanup_coordinator_runtime(
+        deps,
+        cast(Any, _FakeCTFd()),
+        deps.cost_tracker,
+        reason="graceful stop",
+    )
+
+    assert killed.is_set() is True
+    assert finished.is_set() is True
+    assert task.done() is True
+    assert task.cancelled() is False
+
+
+@pytest.mark.asyncio
+async def test_cleanup_coordinator_runtime_cancels_lingering_swarm_task_after_grace_period(
+    monkeypatch,
+    caplog,
+) -> None:
+    cancelled = asyncio.Event()
+
+    class _FakeSwarm:
+        def kill(self, reason: str = "swarm cancelled") -> None:
+            return None
+
+    class _FakeCTFd:
+        async def close(self) -> None:
+            return None
+
+    async def _swarm_task() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr("backend.agents.coordinator_loop.SHUTDOWN_SWARM_GRACE_SECONDS", 0.01)
+
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=cast(Any, object()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    task = asyncio.create_task(_swarm_task())
+    deps.swarms["chal"] = cast(Any, _FakeSwarm())
+    deps.swarm_tasks["chal"] = task
+
+    with caplog.at_level("WARNING"):
+        await cleanup_coordinator_runtime(
+            deps,
+            cast(Any, _FakeCTFd()),
+            deps.cost_tracker,
+            reason="timeout stop",
+        )
+
+    assert cancelled.is_set() is True
+    assert task.cancelled() is True
+    assert "force-cancelling 1 swarm task" in caplog.text
 
 
 @pytest.mark.asyncio

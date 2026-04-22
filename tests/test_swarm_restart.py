@@ -7,7 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-from backend.agents.swarm import ChallengeSwarm, LaneRestartState
+from backend.agents.swarm import (
+    MAX_RESTART_HANDOFF_COPY_ENTRIES,
+    MAX_RESTART_TRACE_COPIES,
+    ChallengeSwarm,
+    LaneRestartState,
+)
 from backend.message_bus import SharedFindingRef
 from backend.prompts import ChallengeMeta, build_prompt
 from backend.solver_base import CANCELLED, ERROR, GAVE_UP, SolverResult
@@ -112,7 +117,8 @@ def test_build_prompt_pushes_noisy_output_to_shared_artifacts() -> None:
     assert "grep -R" in prompt
     assert "ffuf" in prompt
     assert "you may run build or compose commands early" in prompt
-    assert "Never reread `/challenge/agent-repo`, `/challenge/host-logs`, prior `solve/` output" in prompt
+    assert "The only `agent-repo` exception is targeted reads under `/challenge/agent-repo/ctf-skills/`" in prompt
+    assert "/challenge/agent-repo/ctf-skills/ctf-web/SKILL.md" in prompt
     assert "Large saved output may come back with only a path, not a preview." in prompt
     assert "`docker compose`" in prompt
     assert "`docker-compose`" in prompt
@@ -244,8 +250,11 @@ def test_stalled_lane_restart_reuses_same_sandbox_and_writes_handoff(tmp_path: P
 
     resume_path = challenge_dir / ".shared-artifacts" / "lane-resume-codex-gpt-5.4.md"
     resume_text = resume_path.read_text(encoding="utf-8")
-    assert "Lane Resume: Midnight Roulette / codex/gpt-5.4" in resume_text
-    assert "Recent Commands To Avoid Repeating Blindly" in resume_text
+    assert "Lane Restart Context: Midnight Roulette / codex/gpt-5.4" in resume_text
+    assert "Recorded Files To Read First" in resume_text
+    assert "/challenge/shared-artifacts/restart-history/codex-gpt-5.4/handoff.jsonl" in resume_text
+    assert "/challenge/shared-artifacts/restart-history/codex-gpt-5.4/trace.jsonl" in resume_text
+    assert "Recorded Commands Already Tried" in resume_text
     assert "grep -nE 'script|k8s'" in resume_text
     assert "Recent Trace Tail" not in resume_text
     assert "/challenge/shared-artifacts/<name>.txt" in resume_text
@@ -317,6 +326,70 @@ def test_in_turn_stall_restarts_on_first_occurrence(tmp_path: Path) -> None:
     assert "find /challenge/distfiles/b440add5 -maxdepth 6 -type f | sed -n '1,400p'" in resume_text
     assert "/challenge/shared-artifacts/manifest.md" in resume_text
     assert "/challenge/shared-artifacts/.advisor/" in resume_text
+    assert "/challenge/shared-artifacts/restart-history/codex-gpt-5.4/handoff.jsonl" in resume_text
+
+
+def test_restart_history_prunes_old_trace_copies_and_handoff_copy(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "challenge"
+    challenge_dir.mkdir()
+
+    swarm = ChallengeSwarm(
+        challenge_dir=str(challenge_dir),
+        meta=ChallengeMeta(name="Midnight Roulette", category="web"),
+        ctfd=cast(Any, object()),
+        cost_tracker=cast(Any, object()),
+        settings=cast(Any, SimpleNamespace()),
+        model_specs=["codex/gpt-5.4"],
+    )
+    model_spec = "codex/gpt-5.4"
+    solver = _FakeSolver(
+        model_spec=model_spec,
+        sandbox=_FakeSandbox(),
+        runtime_status={"lifecycle": "idle", "step_count": 0},
+    )
+
+    for idx in range(10):
+        trace_path = tmp_path / f"trace-{idx}.jsonl"
+        trace_path.write_text(
+            json.dumps(
+                {
+                    "type": "tool_call",
+                    "tool": "bash",
+                    "step": idx,
+                    "args": f"sed -n '1,40p' /challenge/shared-artifacts/restart-{idx}.txt",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        result = SolverResult(
+            flag=None,
+            status=GAVE_UP,
+            findings_summary=f"restart attempt {idx}",
+            step_count=idx,
+            cost_usd=0.01,
+            log_path=str(trace_path),
+        )
+        solver._runtime_status["step_count"] = idx
+        entry = swarm._collect_handoff_entry(model_spec, solver, result)
+        swarm._append_handoff_entry(model_spec, entry)
+
+    history_dir = challenge_dir / ".shared-artifacts" / "restart-history" / "codex-gpt-5.4"
+    trace_names = sorted(path.name for path in history_dir.glob("trace-*.jsonl"))
+    assert trace_names == [
+        f"trace-{idx}.jsonl" for idx in range(10 - MAX_RESTART_TRACE_COPIES, 10)
+    ]
+
+    handoff_copy = history_dir / "handoff.jsonl"
+    handoff_lines = [
+        json.loads(line)
+        for line in handoff_copy.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(handoff_lines) == MAX_RESTART_HANDOFF_COPY_ENTRIES
+    assert [line["step_count"] for line in handoff_lines] == list(
+        range(10 - MAX_RESTART_HANDOFF_COPY_ENTRIES, 10)
+    )
 
 
 def test_high_step_lane_gets_context_refresh_restart(tmp_path: Path) -> None:
@@ -865,15 +938,15 @@ def test_lane_digest_updates_only_on_change(tmp_path: Path) -> None:
     assert "/api/auth" in digest_text
 
 
-def test_requeue_resume_packets_restore_into_next_swarm_run(tmp_path: Path) -> None:
+def test_requeue_restart_packets_restore_into_next_swarm_run(tmp_path: Path) -> None:
     challenge_dir = tmp_path / "challenge"
     challenge_dir.mkdir()
     model_spec = "codex/gpt-5.4"
-    result_store = {
+    result_store: dict[str, dict[str, object]] = {
         "Resume Me": {
             "status": "pending",
-            "resume_packets": {
-                model_spec: "Previous challenge run was paused before completion. Continue from the prior work.",
+            "restart_packets": {
+                model_spec: "Previous challenge run was paused before completion. Restart from the saved notes, not from a warm container.",
             },
         }
     }
@@ -914,14 +987,21 @@ def test_requeue_resume_packets_restore_into_next_swarm_run(tmp_path: Path) -> N
 
     assert result is not None
     assert solver.started == 1
-    assert solver.bumped == ["Previous challenge run was paused before completion. Continue from the prior work."]
-    assert model_spec not in swarm._resume_packets
+    assert solver.bumped == [
+        "Previous challenge run was paused before completion. Restart from the saved notes, not from a warm container."
+    ]
+    assert model_spec not in swarm._restart_packets
 
 
-def test_swarm_runtime_state_tracks_warm_container_ids(tmp_path: Path) -> None:
+def test_restart_packet_clears_lane_state_before_solver_creation(tmp_path: Path) -> None:
     challenge_dir = tmp_path / "challenge"
     challenge_dir.mkdir()
     model_spec = "codex/gpt-5.4"
+    lane_root = challenge_dir / ".lane-state" / "codex-gpt-5.4"
+    provider_home = lane_root / "provider-home"
+    provider_home.mkdir(parents=True, exist_ok=True)
+    marker = provider_home / "marker.txt"
+    marker.write_text("stale session", encoding="utf-8")
 
     swarm = ChallengeSwarm(
         challenge_dir=str(challenge_dir),
@@ -931,25 +1011,34 @@ def test_swarm_runtime_state_tracks_warm_container_ids(tmp_path: Path) -> None:
         settings=cast(Any, SimpleNamespace()),
         model_specs=[model_spec],
     )
-    solver = _FakeSolver(
+    swarm._restart_packets[model_spec] = "restart from saved notes"
+
+    solver = _QueuedSolver(
         model_spec=model_spec,
-        sandbox=SimpleNamespace(resume_container_id="warm-abc123"),
+        sandbox=_FakeSandbox(),
         runtime_status={"lifecycle": "idle", "step_count": 4},
-    )
-    swarm.solvers[model_spec] = solver
-
-    payload = swarm._runtime_result_payload()
-
-    assert payload["warm_container_ids"] == {model_spec: "warm-abc123"}
-
-    restored = ChallengeSwarm(
-        challenge_dir=str(challenge_dir),
-        meta=ChallengeMeta(name="Warm Resume", category="web"),
-        ctfd=cast(Any, object()),
-        cost_tracker=cast(Any, object()),
-        settings=cast(Any, SimpleNamespace()),
-        model_specs=[model_spec],
-        result_store={"Warm Resume": payload},
+        results=[
+            SolverResult(
+                flag=None,
+                status=CANCELLED,
+                findings_summary="fresh restart requested",
+                step_count=4,
+                cost_usd=0.0,
+                log_path="",
+            )
+        ],
     )
 
-    assert restored._warm_container_ids == {model_spec: "warm-abc123"}
+    def _fake_create_solver(spec: str, *, sandbox=None, initial_step_count: int = 0):
+        assert spec == model_spec
+        assert not marker.exists()
+        return solver
+
+    swarm._create_solver = cast(Any, _fake_create_solver)
+
+    result = asyncio.run(swarm._run_solver(model_spec))
+
+    assert result is not None
+    assert solver.started == 1
+    assert solver.bumped == ["restart from saved notes"]
+    assert not lane_root.exists()

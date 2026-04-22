@@ -38,12 +38,15 @@ class _FakeSwarm:
         self.external_solved: list[str] = []
         self.killed: list[str] = []
         self.requeue_requested: tuple[bool, str] | None = None
+        self.status_agents: dict[str, dict[str, str]] = {
+            model_spec: {"lifecycle": "idle"},
+        }
 
     async def approve_flag_candidate(self, flag: str, *, approved_by: str = "operator_local") -> str:
         self.approved.append(f"{approved_by}:{flag}")
         if approved_by == "operator_local":
             return f'USER CONFIRMED LOCALLY — "{flag}" marked solved in local mode.'
-        return f'USER CONFIRMED MANUALLY — "{flag}" marked solved without CTFd confirmation.'
+        return f'USER CONFIRMED MANUALLY — "{flag}" marked solved without automatic remote confirmation.'
 
     async def reject_flag_candidate(self, flag: str, *, rejected_by: str = "operator_local") -> str:
         self.rejected.append(f"{rejected_by}:{flag}")
@@ -72,6 +75,9 @@ class _FakeSwarm:
 
     def kill(self, reason: str = "swarm cancelled") -> None:
         self.killed.append(reason)
+
+    def get_status(self) -> dict[str, dict[str, dict[str, str]]]:
+        return {"agents": self.status_agents}
 
 
 async def _get_json(port: int, path: str) -> tuple[str, dict]:
@@ -143,6 +149,47 @@ async def _post_json(port: int, path: str, payload: dict[str, object]) -> tuple[
         "Connection: close\r\n"
         "\r\n"
     ).encode() + body
+    writer.write(request)
+    await writer.drain()
+    raw = await reader.read()
+    writer.close()
+    await writer.wait_closed()
+
+    header, response_body = raw.split(b"\r\n\r\n", 1)
+    status_line = header.splitlines()[0].decode()
+    return status_line, json.loads(response_body.decode())
+
+
+async def _patch_json(port: int, path: str, payload: dict[str, object]) -> tuple[str, dict]:
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    body = json.dumps(payload).encode()
+    request = (
+        f"PATCH {path} HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).encode() + body
+    writer.write(request)
+    await writer.drain()
+    raw = await reader.read()
+    writer.close()
+    await writer.wait_closed()
+
+    header, response_body = raw.split(b"\r\n\r\n", 1)
+    status_line = header.splitlines()[0].decode()
+    return status_line, json.loads(response_body.decode())
+
+
+async def _delete_json(port: int, path: str) -> tuple[str, dict]:
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    request = (
+        f"DELETE {path} HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).encode()
     writer.write(request)
     await writer.drain()
     raw = await reader.read()
@@ -324,7 +371,7 @@ def test_approve_candidate_endpoint_marks_no_submit_candidate_solved() -> None:
     assert status_line.startswith("HTTP/1.1 200")
     assert payload == {
         "ok": True,
-        "result": 'USER CONFIRMED MANUALLY — "flag{manual}" marked solved without CTFd confirmation.',
+        "result": 'USER CONFIRMED MANUALLY — "flag{manual}" marked solved without automatic remote confirmation.',
     }
     assert swarm.approved == ["operator_manual:flag{manual}"]
 
@@ -363,7 +410,7 @@ def test_approve_candidate_endpoint_marks_normal_ctfd_candidate_solved() -> None
     assert status_line.startswith("HTTP/1.1 200")
     assert payload == {
         "ok": True,
-        "result": 'USER CONFIRMED MANUALLY — "flag{local}" marked solved without CTFd confirmation.',
+        "result": 'USER CONFIRMED MANUALLY — "flag{local}" marked solved without automatic remote confirmation.',
     }
     assert swarm.approved == ["operator_manual:flag{local}"]
 
@@ -408,7 +455,7 @@ def test_approve_candidate_endpoint_uses_stored_candidate_without_active_swarm()
     assert status_line.startswith("HTTP/1.1 200")
     assert payload == {
         "ok": True,
-        "result": 'USER CONFIRMED MANUALLY — "flag{stored}" marked solved without CTFd confirmation.',
+        "result": 'USER CONFIRMED MANUALLY — "flag{stored}" marked solved without automatic remote confirmation.',
     }
     assert deps.results["Stored Candidate"]["status"] == "flag_found"
     assert deps.results["Stored Candidate"]["confirmation_source"] == "operator_manual"
@@ -455,7 +502,7 @@ def test_approve_candidate_endpoint_uses_stored_incorrect_candidate_without_acti
     assert status_line.startswith("HTTP/1.1 200")
     assert payload == {
         "ok": True,
-        "result": 'USER CONFIRMED MANUALLY — "flag{stored}" marked solved without CTFd confirmation.',
+        "result": 'USER CONFIRMED MANUALLY — "flag{stored}" marked solved without automatic remote confirmation.',
     }
     assert deps.results["Stored Candidate"]["status"] == "flag_found"
     assert deps.results["Stored Candidate"]["confirmation_source"] == "operator_manual"
@@ -828,7 +875,7 @@ def test_restart_challenge_endpoint_requeues_active_swarm() -> None:
         try:
             return await _post_json(
                 port,
-                "/api/runtime/resume-challenge",
+                "/api/runtime/restart-challenge",
                 {"challenge_name": "Restart Me"},
             )
         finally:
@@ -838,9 +885,9 @@ def test_restart_challenge_endpoint_requeues_active_swarm() -> None:
     status_line, payload = asyncio.run(_exercise())
 
     assert status_line.startswith("HTTP/1.1 200")
-    assert payload["result"] == 'Resuming "Restart Me" after the current run stops.'
-    assert swarm.requeue_requested == (True, "resume_requested")
-    assert swarm.killed == ["operator resuming Restart Me"]
+    assert payload["result"] == 'Restarting "Restart Me" after the current run stops.'
+    assert swarm.requeue_requested == (True, "restart_requested")
+    assert swarm.killed == ["operator restarting Restart Me"]
 
 
 def test_ui_endpoint_serves_browser_console() -> None:
@@ -900,11 +947,9 @@ def test_runtime_challenge_bump_fans_out_to_non_final_lanes() -> None:
     won = _FakeSolver()
     swarm = _FakeSwarm("codex/gpt-5.4", busy)
     swarm.solvers["gemini/gemini-2.5-flash"] = won
-    swarm.get_status = lambda: {
-        "agents": {
-            "codex/gpt-5.4": {"lifecycle": "busy"},
-            "gemini/gemini-2.5-flash": {"lifecycle": "won"},
-        }
+    swarm.status_agents = {
+        "codex/gpt-5.4": {"lifecycle": "busy"},
+        "gemini/gemini-2.5-flash": {"lifecycle": "won"},
     }
     deps.swarms["Midnight Roulette"] = swarm
 
@@ -1264,3 +1309,176 @@ def test_legacy_operator_endpoints_are_rejected() -> None:
     for status_line, payload in (status_resp, traces_resp, bump_resp):
         assert status_line.startswith("HTTP/1.1 400")
         assert payload["error"] == "Unsupported request"
+
+
+def test_challenge_config_endpoints_get_patch_and_delete_override(tmp_path: Path) -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    challenge_dir = tmp_path / "aeBPF"
+    challenge_dir.mkdir()
+    (challenge_dir / "metadata.yml").write_text(
+        "\n".join(
+            [
+                "name: aeBPF",
+                "category: pwn",
+                "description: |-",
+                "  aeBPF challenge",
+                "  Host: host1.dreamhack.games",
+                "  Port: 12345/tcp -> 31337/tcp",
+                "  nc host1.dreamhack.games 12345",
+                "connection_info: ''",
+                "source:",
+                "  platform: dreamhack",
+                "  competition:",
+                "    title: 2026 GMDSOFT",
+                "    url: https://dreamhack.io/career/competitions/2026-GMDSOFT",
+                "  challenge_url: https://dreamhack.io/career/competitions/2026-GMDSOFT/challenges/aebpf",
+                "  status:",
+                "    solved: false",
+                "    writeup_submitted: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    deps.challenge_dirs["aeBPF"] = str(challenge_dir)
+
+    async def _exercise() -> tuple[tuple[str, dict], tuple[str, dict], tuple[str, dict]]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            get_resp = await _get_json(port, "/api/runtime/challenge-config?challenge_name=aeBPF")
+            patch_resp = await _patch_json(
+                port,
+                "/api/runtime/challenge-config",
+                {
+                    "challenge_name": "aeBPF",
+                    "replace": True,
+                    "override": {
+                        "connection": {
+                            "scheme": "tcp",
+                            "host": "host3.dreamhack.games",
+                            "port": 16377,
+                            "raw_command": "nc host3.dreamhack.games 16377",
+                        },
+                        "priority": True,
+                        "no_submit": True,
+                        "notes": "operator-fixed endpoint",
+                    },
+                },
+            )
+            delete_resp = await _delete_json(
+                port,
+                "/api/runtime/challenge-config?challenge_name=aeBPF",
+            )
+            return get_resp, patch_resp, delete_resp
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    get_resp, patch_resp, delete_resp = asyncio.run(_exercise())
+
+    get_status, get_payload = get_resp
+    assert get_status.startswith("HTTP/1.1 200")
+    assert get_payload["effective"]["connection"]["host"] == "host1.dreamhack.games"
+    assert get_payload["effective"]["source"]["status"]["writeup_submitted"] is True
+    assert get_payload["effective"]["source"]["capabilities"]["submit_flag"] == "confirmed"
+    assert get_payload["runtime_mode"] == "full_remote"
+    assert get_payload["automatic_submit"] is True
+    assert get_payload["override_present"] is False
+
+    patch_status, patch_payload = patch_resp
+    assert patch_status.startswith("HTTP/1.1 200")
+    assert patch_payload["override_present"] is True
+    assert patch_payload["effective"]["connection"]["host"] == "host3.dreamhack.games"
+    assert patch_payload["effective"]["no_submit"] is True
+    assert patch_payload["runtime_mode"] == "operator_only"
+    assert patch_payload["automatic_submit"] is False
+
+    delete_status, delete_payload = delete_resp
+    assert delete_status.startswith("HTTP/1.1 200")
+    assert delete_payload["override_present"] is False
+    assert delete_payload["effective"]["connection"]["host"] == "host1.dreamhack.games"
+    assert delete_payload["runtime_mode"] == "full_remote"
+    assert delete_payload["automatic_submit"] is True
+    assert deps.challenge_metas["aeBPF"].no_submit is False
+    assert not (challenge_dir / ".runtime" / "override.json").exists()
+
+
+def test_check_instance_endpoint_reports_probe_and_optional_restart(monkeypatch, tmp_path: Path) -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    challenge_dir = tmp_path / "Ring_of_IO"
+    challenge_dir.mkdir()
+    (challenge_dir / "metadata.yml").write_text(
+        "\n".join(
+            [
+                "name: Ring of IO",
+                "description: deploy-on-demand",
+                "connection_info: ''",
+                "source:",
+                "  platform: dreamhack",
+                "  needs_vm: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    deps.challenge_dirs["Ring of IO"] = str(challenge_dir)
+
+    async def _fake_probe(_meta: dict[str, object], *, timeout: float = 5.0) -> dict[str, object]:
+        assert timeout == 5.0
+        return {
+            "ready": True,
+            "kind": "tcp",
+            "target": "ring.example:31337",
+            "detail": "Connected to ring.example:31337",
+            "needs_instance": True,
+        }
+
+    async def _fake_restart(_deps: CoordinatorDeps, challenge_name: str) -> str:
+        assert challenge_name == "Ring of IO"
+        return 'Restarted "Ring of IO" from saved notes.'
+
+    monkeypatch.setattr("backend.agents.coordinator_loop.probe_instance_connection", _fake_probe)
+    monkeypatch.setattr("backend.agents.coordinator_core.do_restart_challenge", _fake_restart)
+
+    async def _exercise() -> tuple[tuple[str, dict], tuple[str, dict]]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            check_resp = await _post_json(
+                port,
+                "/api/runtime/check-instance",
+                {"challenge_name": "Ring of IO"},
+            )
+            restart_resp = await _post_json(
+                port,
+                "/api/runtime/check-instance",
+                {"challenge_name": "Ring of IO", "restart_on_success": True},
+            )
+            return check_resp, restart_resp
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    check_resp, restart_resp = asyncio.run(_exercise())
+
+    check_status, check_payload = check_resp
+    assert check_status.startswith("HTTP/1.1 200")
+    assert check_payload["ready"] is True
+    assert check_payload["probe"]["target"] == "ring.example:31337"
+    assert check_payload["restart_requested"] is False
+    assert check_payload["challenge_config"]["effective"]["needs_instance"] is True
+
+    restart_status, restart_payload = restart_resp
+    assert restart_status.startswith("HTTP/1.1 200")
+    assert restart_payload["ready"] is True
+    assert restart_payload["restart_requested"] is True
+    assert restart_payload["restart_result"] == 'Restarted "Ring of IO" from saved notes.'

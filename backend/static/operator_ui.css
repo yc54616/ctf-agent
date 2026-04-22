@@ -486,6 +486,67 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.config-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  margin-bottom: 14px;
+}
+
+.config-fact {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(152, 185, 210, 0.12);
+  background: rgba(8, 17, 28, 0.52);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.config-fact strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.config-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.checkbox-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.instance-check-summary {
+  margin: 4px 0 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.instance-check-summary[data-state="ready"] {
+  color: var(--success);
+}
+
+.instance-check-summary[data-state="checking"] {
+  color: var(--busy);
+}
+
+.instance-check-summary[data-state="warn"] {
+  color: var(--warn);
+}
+
+.instance-check-summary[data-state="error"] {
+  color: var(--danger);
+}
+
 .trace-shell {
   overflow: auto;
   border-radius: 18px;

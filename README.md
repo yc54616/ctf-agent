@@ -1,14 +1,16 @@
 # CTF Agent
 
-Autonomous multi-model CTF solver with an operator console, per-challenge swarms, pause/resume controls, and manual review when you want a human in the loop.
+Autonomous multi-model CTF solver with an operator console, per-challenge swarms, pause/restart controls, and manual review when you want a human in the loop.
 
 This repository was originally built by [Veria Labs](https://verialabs.com) and used to win **1st place at BSidesSF 2026 CTF**. If you are reading this in a fork: thank you for forking it, adapting it, and pushing it further.
 
 ## What This Fork Does Well
 
 - Runs multiple models against multiple challenges in parallel
-- Lets you **pause**, **resume previous work**, and **prioritize** challenges from the browser
-- Supports **CTFd mode**, **CTFd sync with submission disabled**, and **fully local mode**
+- Imports a competition URL once, keeps a normalized challenge store on disk, and reuses it on later runs
+- Captures browser-backed auth state automatically and reattaches remote solved polling / flag submission from saved metadata
+- Lets you **pause**, **restart from saved notes**, and **prioritize** challenges from the browser
+- Handles deploy-on-demand labs with operator-managed instance checks and restart flow
 - Treats flag candidates as reviewable state instead of an all-or-nothing dead end
 - Saves winning artifacts automatically when a challenge is confirmed solved
 
@@ -18,6 +20,7 @@ This repository was originally built by [Veria Labs](https://verialabs.com) and 
 
 ```bash
 uv sync
+uv run playwright install chromium
 docker build -f sandbox/Dockerfile.sandbox -t ctf-sandbox .
 ```
 
@@ -30,70 +33,86 @@ docker build \
   -t ctf-sandbox .
 ```
 
-### 2. Configure CTFd credentials
+### 2. Import a competition URL
+
+The default flow is now:
+
+1. `ctf-import --url <competition-url>`
+2. `ctf-solve --challenges-dir ./challenges`
+
+If you do not pass `--cookie-file`, `ctf-import` opens Chromium through Playwright, waits for you to finish any required login, and saves browser state under `~/.config/ctf-agent/browser-sessions/`.
+
+That saved session reference is written into the imported metadata, so later `ctf-solve` runs can auto-reattach remote solved polling and flag submission without asking for the same auth again.
+
+Example:
 
 ```bash
-cp .env.example .env
+uv run ctf-import \
+  --url https://dreamhack.io/career/competitions/2026-GMDSOFT
 ```
 
-Then edit `.env`:
-
-```env
-CTFD_URL=https://ctf.example.com
-CTFD_TOKEN=ctfd_your_token
-```
-
-### 3. Start the coordinator
-
-Normal CTFd mode:
+### 3. Start the coordinator from the saved challenge store
 
 ```bash
 uv run ctf-solve \
-  --ctfd-url https://ctf.example.com \
-  --ctfd-token ctfd_your_token \
-  --challenges-dir challenges \
+  --challenges-dir ./challenges \
   --max-challenges 4 \
   -v
 ```
 
-Resume previous paused/requeueable work instead of clearing runtime state:
+Restore previous paused/requeueable work from saved notes instead of clearing runtime state:
 
 ```bash
 uv run ctf-solve \
-  --ctfd-url https://ctf.example.com \
-  --ctfd-token ctfd_your_token \
-  --challenges-dir challenges \
+  --challenges-dir ./challenges \
   --max-challenges 4 \
-  --resume \
+  --restore \
   -v
 ```
 
-Local-only mode:
+Stopping `ctf-solve` is graceful by default: the first `Ctrl+C` or `SIGTERM` asks the coordinator to stop swarms cleanly and close the operator runtime. A second `Ctrl+C` forces the process to exit if shutdown is stuck. During coordinator shutdown, unsolved lane containers/workspaces are cleaned up by default instead of being preserved as stopped snapshots.
+
+Refresh imported source metadata later without deleting overrides or solve artifacts:
 
 ```bash
-uv run ctf-solve \
-  --local \
-  --challenges-dir challenges \
-  --max-challenges 4 \
-  -v
+uv run ctf-import \
+  --url https://dreamhack.io/career/competitions/2026-GMDSOFT \
+  --refresh
 ```
 
-CTFd sync, but no automatic flag submission:
+Imported competitions create a layout like:
 
-```bash
-uv run ctf-solve \
-  --ctfd-url https://ctf.example.com \
-  --ctfd-token ctfd_your_token \
-  --challenges-dir challenges \
-  --max-challenges 4 \
-  --no-submit \
-  -v
+```text
+challenges/
+└─ <competition>/
+   ├─ competition.yml
+   ├─ .remote/
+   │  └─ automation-profile.json
+   ├─ .source-cache/
+   └─ <challenge>/
+      ├─ metadata.yml
+      ├─ distfiles/
+      └─ .runtime/
+         └─ override.json
 ```
+
+`competition.yml` stores the competition-level auth reference and remote automation profile reference. Each challenge `metadata.yml` stores source metadata, per-challenge status, and the same remote profile reference so runtime auto-attach can happen from local files alone.
+
+Compatibility/debugging flags still exist:
+
+- `ctf-import --cookie-file ...`: reuse a raw Cookie header file instead of opening Playwright
+- `ctf-import --platform-spec ...`: load extra declarative import specs when the heuristic parser is not enough
+- `ctf-solve --cookie-file ...`: override saved imported auth for the current run
+- `ctf-solve --models ...`: add or replace lane models for the current run
+- `ctf-solve --no-submit`: disable automatic remote submit
+- `ctf-solve --local`: skip all remote fetch/submit logic
+- `ctf-solve --ctfd-url/--ctfd-token`: direct legacy CTFd mode
 
 ### 4. Open the operator console
 
 ```bash
 uv run ctf-status
+# opens http://127.0.0.1:9400/ui by default
 ```
 
 Other useful views:
@@ -145,8 +164,8 @@ Think of the system as three layers:
 │ Challenge Swarms                                            │
 │  each challenge gets one swarm, each swarm runs many lanes  │
 │                                                              │
-│  challenge A: gpt-5.4 | gpt-5.4-mini | gemini | ...         │
-│  challenge B: gpt-5.4 | gpt-5.4-mini | gemini | ...         │
+│  challenge A: 5.4 | 5.4-mini | 5.3-spark | extra lanes ... │
+│  challenge B: 5.4 | 5.4-mini | 5.3-spark | extra lanes ... │
 └──────────────────────────────┬───────────────────────────────┘
                                │
                                ▼
@@ -183,7 +202,7 @@ What they mean:
 
 - `queued`: normal waiting
 - `priority_waiting`: held on purpose; do not auto-run until restored
-- `ctfd_retry`: waiting for CTFd refresh/pull to recover
+- `ctfd_retry`: historical state name for waiting on remote solved-state refresh/pull to recover
 - `candidate_retry`: a candidate was rejected or came back incorrect, so the challenge re-enters the queue
 - `candidate_pending`: challenge is paused because a serious candidate is under review
 - `flag_found`: solved and done
@@ -209,15 +228,15 @@ confirm/correct         reject/incorrect
 
 More concretely:
 
-- In normal CTFd mode:
-  - a serious candidate may be auto-submitted
-  - if CTFd says `correct` or `already solved`, the challenge stops
-  - if CTFd says `incorrect`, the candidate stays manually reviewable and the challenge can go back to waiting
+- In normal remote mode:
+  - a serious candidate may be auto-submitted to the imported remote platform
+  - if the platform says `correct` or `already solved`, the challenge stops
+  - if the platform says `incorrect`, the candidate stays manually reviewable and the challenge can go back to waiting
 - In `--no-submit` or `--local`:
-  - candidates are not auto-confirmed through CTFd
+  - candidates are not auto-confirmed remotely
   - the operator can confirm or reject them from the UI
 
-### Pause, priority waiting, and resume
+### Pause, priority waiting, and restart
 
 The scheduler now distinguishes **hold** from **restart**:
 
@@ -231,28 +250,31 @@ priority_waiting
       └─ becomes normal queue entry again
 
 held or queued challenge
-   └─ Resume previous work
-      └─ new swarm starts with saved resume packet
+   └─ Restart from saved notes
+      └─ new swarm starts with saved restart notes
 ```
 
 Important detail:
 
-- `Resume previous work` does **not** resurrect the exact same container process.
+- `Restart from saved notes` does **not** resurrect the exact same container process.
 - It starts a fresh swarm and injects saved handoff context so lanes continue from prior work instead of starting blind.
+- Treat it as a fresh restart, not a warm resume: the previous container, workspace, and provider session are discarded.
 
 ## Modes and Semantics
 
 | Mode | Challenge source | Flag submission | Who confirms solves? |
 |------|------------------|-----------------|----------------------|
-| default CTFd mode | CTFd + local preload | enabled | CTFd or operator override |
-| `--no-submit` | CTFd + local preload | disabled | operator |
-| `--local` | local challenge dirs only | disabled | operator |
-| `--resume` | same as selected mode | same as selected mode | same as selected mode |
+| default remote mode | imported remote platform + local preload | enabled | remote platform or operator override |
+| `--no-submit` | imported remote platform + local preload | disabled | operator |
+| `--local` | local or imported challenge dirs only | disabled | operator |
 
 Notes:
 
-- `--resume` is a startup mode modifier, not a separate execution mode.
-- `--resume` skips runtime cleanup and restores pending/requeueable challenge work from saved runtime state.
+- `--ctfd-url` and `--ctfd-token` are compatibility overrides for legacy direct CTFd mode.
+- `--restore` is a startup mode modifier, not a separate execution mode.
+- `--restore` restores pending/requeueable challenge work from saved notes and restarts lanes fresh.
+- `--restore` is also **not** a warm resume of the old sandbox. It rebuilds fresh lanes from recorded runtime notes rather than reattaching to the previous container/session.
+- `--restore` keeps saved queue/runtime notes on disk for recovery, instead of doing the normal startup cleanup pass first.
 - `candidate_pending` entries are intentionally **not** auto-resumed at startup. They stay review-driven.
 
 ## Operator Console
@@ -268,10 +290,14 @@ The browser UI gives you:
 - live challenge and lane status
 - candidate confirm / reject
 - external solve reporting
+- challenge config editing for connection overrides, operator notes, and `needs_instance`
 - `max active challenges` runtime changes
+- `Prefer this challenge when queued`
 - `Pause to priority waiting`
 - `Restore waiting`
-- `Resume previous work`
+- `Restart from saved notes`
+- `Check instance`
+- `Check and restart`
 - trace browsing and artifact links
 
 ### Runtime max active changes
@@ -295,19 +321,37 @@ This is intentional. Lowering the cap does not abruptly kill active work.
 
 This is useful when you want to clear the deck, keep the work, and come back later.
 
+`Prefer this challenge when queued` is different:
+
+- it does **not** pause or hold the challenge
+- it only marks that challenge to sort ahead of normal queue entries the next time it is queued
+
+### Editing challenge connection info
+
+If a remote host, port, URL, or raw connect command changes while a challenge is in progress, you can update it from the operator UI instead of editing `metadata.yml` by hand.
+
+- Open `ctf-status`, select the challenge, and save a challenge config override.
+- Connection overrides are written to `.runtime/override.json` and reflected in `.runtime/effective-metadata.yml`.
+- The running swarm metadata is refreshed immediately, so the UI and future restart context see the new connection info.
+- For in-flight lanes, the safest workflow is: save the override, then use `Restart from saved notes` so fresh lanes start from the updated connection details.
+- For deploy-on-demand labs, mark `Manual instance step required`, let the user start/deploy the instance, then use `Check instance` or `Check and restart` after saving the new host/port/url.
+- Imported `source.needs_vm` now surfaces as `needs_instance` in effective metadata, and the operator override can still turn that workflow off if the challenge no longer needs a manual deploy step.
+- `needs_instance` is intentionally broad: use it both for "start the first VM before solving" and for "enter the portal, deploy/check another VM, then continue" style labs.
+
 ## Typical Workflows
 
 ### Fresh competition start
 
 ```bash
-uv run ctf-solve --ctfd-url ... --ctfd-token ... --challenges-dir challenges --max-challenges 4 -v
+uv run ctf-import --url https://...
+uv run ctf-solve --challenges-dir challenges --max-challenges 4 -v
 uv run ctf-status
 ```
 
-### Resume yesterday's paused work
+### Restore yesterday's paused work
 
 ```bash
-uv run ctf-solve --ctfd-url ... --ctfd-token ... --challenges-dir challenges --max-challenges 4 --resume -v
+uv run ctf-solve --challenges-dir challenges --max-challenges 4 --restore -v
 ```
 
 ### Work fully locally
@@ -316,10 +360,24 @@ uv run ctf-solve --ctfd-url ... --ctfd-token ... --challenges-dir challenges --m
 uv run ctf-solve --local --challenges-dir challenges --max-challenges 4 -v
 ```
 
-### Sync with CTFd, but keep human approval
+### Sync with the imported remote platform, but keep human approval
 
 ```bash
-uv run ctf-solve --ctfd-url ... --ctfd-token ... --challenges-dir challenges --no-submit -v
+uv run ctf-solve --challenges-dir challenges --max-challenges 4 --no-submit -v
+```
+
+### Deploy-on-demand lab with a manual instance step
+
+1. Import the challenge normally and start `ctf-solve`.
+2. In the operator UI, leave `Manual instance step required` enabled if the lab still needs a human deploy/check step.
+3. Start or deploy the instance from the competition site.
+4. Save the resulting host/port/url override in challenge config.
+5. Use `Check instance` to confirm the target is live, or `Check and restart` to both verify it and relaunch fresh lanes from saved notes.
+
+### Legacy direct CTFd compatibility
+
+```bash
+uv run ctf-solve --ctfd-url https://ctfd.example --ctfd-token ... --challenges-dir challenges --max-challenges 4 -v
 ```
 
 ### Solve outside the swarm, then tell the system
@@ -334,6 +392,7 @@ Use the operator UI:
 
 | Command | Purpose |
 |--------|---------|
+| `uv run ctf-import --url ...` | import a competition into the local challenge store |
 | `uv run ctf-solve ...` | start the coordinator |
 | `uv run ctf-status` | open browser operator UI |
 | `uv run ctf-status --once` | one-shot snapshot |
@@ -344,23 +403,54 @@ Use the operator UI:
 
 ## Directory Layout
 
-### Challenge working tree
+### Imported competition tree
 
 ```text
-challenges/<challenge>/
-├── metadata.yml
-├── distfiles/              # pulled files or local challenge data
-├── challenge-src/          # unpacked app/source when relevant
-├── workspace/              # active lane scratch space
-├── .lane-state/            # runtime lane control / handoff state
-├── .shared-artifacts/      # shared outputs, manifests, digests
-└── solve/
-    ├── result.json
-    ├── flag.txt
-    ├── writeup.md
-    ├── trace.jsonl
-    └── workspace/
+challenges/<competition>/
+├── competition.yml
+├── .remote/
+│   └── automation-profile.json
+├── .source-cache/
+└── <challenge>/
+    ├── metadata.yml
+    ├── distfiles/
+    ├── .runtime/
+    │   ├── effective-metadata.yml
+    │   └── override.json
+    ├── .lane-state/
+    ├── .shared-artifacts/
+    └── solve/
+        ├── result.json
+        ├── flag.txt
+        ├── writeup.md
+        ├── trace.jsonl
+        └── workspace/
 ```
+
+Notes:
+
+- `override.json` exists only when you save an operator override.
+- `--challenges-dir` can point at the whole imported tree or at a single challenge directory that contains `metadata.yml`.
+- `.lane-state/` and `.shared-artifacts/` are runtime state on disk; they are cleared on a fresh start and reused by `--restore`.
+
+### Inside the sandbox
+
+The lane sees these important container paths:
+
+```text
+/challenge/metadata.yml
+/challenge/distfiles/
+/challenge/challenge-src/
+/challenge/workspace/
+/challenge/shared-artifacts/
+/challenge/agent-repo/
+```
+
+Notes:
+
+- `/challenge/challenge-src/` is a read-only mount of the full challenge directory.
+- `/challenge/workspace/` is the writable scratch area for active lanes.
+- Local skill docs are available under `/challenge/agent-repo/ctf-skills/`.
 
 ### What gets saved when a challenge is solved
 
@@ -370,24 +460,32 @@ solve/
 ├── flag.txt      # confirmed flag
 ├── writeup.md    # draft writeup
 ├── trace.jsonl   # winning lane trace, when available
-└── workspace/    # winning workspace snapshot, when available
+└── export/       # selected exploit/scripts/notes export, when available
 ```
 
-If you confirm an external solve without a live winning workspace, `flag.txt` and `result.json` still exist, but `trace.jsonl`, `writeup.md`, or `workspace/` may be absent.
+Solved lanes no longer copy the entire scratch workspace by default. Instead, `solve/export/` keeps a small, heuristic selection of likely-important files such as referenced exploit scripts, recent text notes, executable helpers, and shebang scripts, plus `solve/export/MANIFEST.md` explaining why each file was kept.
+
+If you confirm an external solve without a live winning workspace, `flag.txt` and `result.json` still exist, but `trace.jsonl`, `writeup.md`, or `export/` may be absent.
 
 ## Code Structure
 
 | File | Role |
 |------|------|
+| `backend/import_cli.py` | `ctf-import` entry point |
+| `backend/importers/` | competition importers and heuristics |
+| `backend/platforms/` | imported remote platform clients and browser-backed automation |
+| `backend/challenge_config.py` | source metadata, overrides, effective metadata rendering |
+| `backend/instance_probe.py` | operator-side connection readiness checks |
 | `backend/cli.py` | CLI entry points: `ctf-solve`, `ctf-status`, `ctf-msg`, `ctf-bump` |
+| `backend/prompts.py` | challenge metadata model and solver system prompts |
 | `backend/agents/coordinator_loop.py` | shared coordinator event loop and operator API server |
 | `backend/agents/coordinator_core.py` | scheduler, queue logic, runtime actions |
 | `backend/agents/codex_coordinator.py` | Codex-backed coordinator |
-| `backend/agents/swarm.py` | one challenge swarm, candidate handling, pause/resume handoff |
+| `backend/agents/swarm.py` | one challenge swarm, candidate handling, restart handoff |
 | `backend/agents/codex_solver.py` | Codex lane runtime |
 | `backend/agents/gemini_solver.py` | Gemini lane runtime |
-| `backend/agents/solver.py` | Claude/Pydantic lane runtime |
-| `backend/ctfd.py` | challenge sync and flag submission |
+| `backend/agents/solver.py` | legacy Claude/Pydantic lane runtime |
+| `backend/ctfd.py` | legacy direct CTFd client |
 | `backend/sandbox.py` | Docker sandbox lifecycle |
 | `backend/operator_ui.py` | UI data assembly |
 | `backend/static/` | browser UI |
@@ -400,11 +498,15 @@ Current default lineup includes:
 
 - `codex/gpt-5.4`
 - `codex/gpt-5.4-mini`
-- `codex/gpt-5.3-codex`
 - `codex/gpt-5.3-codex-spark`
-- `gemini/gemini-2.5-flash`
-- `gemini/gemini-2.5-flash-lite`
-- `gemini/gemini-2.5-pro`
+
+This default is intentionally compact. If you want extra lanes such as Gemini, add them explicitly with `--models`.
+
+Notes:
+
+- Coordinator backend is currently `codex` only.
+- Gemini lanes are supported if Gemini home auth is present.
+- Claude solver lanes are intentionally disabled; Claude is advisor-only today.
 
 You can override the lineup at startup:
 
@@ -412,6 +514,7 @@ You can override the lineup at startup:
 uv run ctf-solve \
   --models codex/gpt-5.4 \
   --models codex/gpt-5.4-mini \
+  --models codex/gpt-5.3-codex-spark \
   --models gemini/gemini-2.5-flash
 ```
 
@@ -432,6 +535,8 @@ Run the smoke test after changing the image:
 docker run --rm ctf-sandbox sandbox-smoke-check
 ```
 
+The sandbox also mounts the local skill library at `/challenge/agent-repo/ctf-skills/`. Prompts point lanes at targeted `SKILL.md` reads there when a challenge category matches.
+
 ## Configuration Notes
 
 All runtime settings can come from CLI flags, `.env`, or `backend/config.py`.
@@ -441,7 +546,7 @@ Useful defaults:
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `--max-challenges` | `10` | max active challenges |
-| `container_memory_limit` | `16g` | per-container memory cap |
+| `container_memory_limit` | `4g` | per-container memory cap |
 | `sandbox_image` | `ctf-sandbox` | Docker image name |
 | `msg_port` | `9400` | operator UI / API port |
 
@@ -450,6 +555,11 @@ Authentication is expected through home auth:
 - `codex`: `~/.codex/auth.json`
 - `claude`: `~/.claude/.credentials.json`
 - `gemini`: `~/.gemini/oauth_creds.json`
+
+Remote platform auth can also come from:
+
+- saved Playwright browser sessions created by `ctf-import`
+- `--cookie-file` with a raw HTTP `Cookie:` header value
 
 ## Requirements
 

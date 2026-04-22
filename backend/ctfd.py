@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from backend.platforms.base import SubmitResult
+
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36"
@@ -19,14 +21,9 @@ def _timeout_detail(method: str, target: str) -> str:
 
 
 @dataclass
-class SubmitResult:
-    status: str  # "correct" | "already_solved" | "incorrect" | "unknown"
-    message: str
-    display: str
-
-
-@dataclass
 class CTFdClient:
+    platform: str = "ctfd"
+    label: str = "CTFd"
     base_url: str = "http://localhost:8000"
     token: str = ""
     username: str = "admin"

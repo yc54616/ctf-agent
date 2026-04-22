@@ -7,14 +7,11 @@ from pydantic_ai.settings import ModelSettings
 
 from backend.config import Settings
 
-# Default model specs — codex and gemini use custom solver backends
+# Default model specs — keep the default lane set compact and Codex-first.
+# Additional providers/models can still be added explicitly via --models.
 DEFAULT_MODELS: list[str] = [
-    "gemini/gemini-2.5-flash",
-    "gemini/gemini-2.5-flash-lite",
-    "gemini/gemini-2.5-pro",
     "codex/gpt-5.4",
     "codex/gpt-5.4-mini",
-    "codex/gpt-5.3-codex",
     "codex/gpt-5.3-codex-spark",
 ]
 

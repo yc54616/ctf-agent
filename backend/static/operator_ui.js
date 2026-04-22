@@ -4,9 +4,17 @@ const TERMINAL_CANDIDATE_STATUSES = new Set(["confirmed", "rejected"]);
 const state = {
   snapshot: null,
   snapshotReceived: false,
+  maxChallengesDraft: "",
+  maxChallengesDirty: false,
   selectedChallenge: null,
   selectedLane: null,
   selectedTrace: null,
+  challengeConfig: null,
+  challengeConfigFor: "",
+  challengeConfigLoading: false,
+  instanceProbeResult: null,
+  instanceProbeFor: "",
+  instanceProbeLoading: false,
   advisoryHistory: [],
   traceFiles: [],
   traceEvents: [],
@@ -60,6 +68,22 @@ const els = {
   externalSolveForm: document.getElementById("externalSolveForm"),
   externalSolveFlagInput: document.getElementById("externalSolveFlagInput"),
   externalSolveNoteInput: document.getElementById("externalSolveNoteInput"),
+  challengeConfigSummary: document.getElementById("challengeConfigSummary"),
+  challengeConfigFacts: document.getElementById("challengeConfigFacts"),
+  challengeConfigForm: document.getElementById("challengeConfigForm"),
+  challengeConfigSchemeInput: document.getElementById("challengeConfigSchemeInput"),
+  challengeConfigHostInput: document.getElementById("challengeConfigHostInput"),
+  challengeConfigPortInput: document.getElementById("challengeConfigPortInput"),
+  challengeConfigUrlInput: document.getElementById("challengeConfigUrlInput"),
+  challengeConfigRawCommandInput: document.getElementById("challengeConfigRawCommandInput"),
+  challengeConfigNotesInput: document.getElementById("challengeConfigNotesInput"),
+  challengeConfigPriorityInput: document.getElementById("challengeConfigPriorityInput"),
+  challengeConfigNoSubmitInput: document.getElementById("challengeConfigNoSubmitInput"),
+  challengeConfigNeedsInstanceInput: document.getElementById("challengeConfigNeedsInstanceInput"),
+  instanceCheckSummary: document.getElementById("instanceCheckSummary"),
+  instanceCheckBtn: document.getElementById("instanceCheckBtn"),
+  instanceCheckRestartBtn: document.getElementById("instanceCheckRestartBtn"),
+  challengeConfigResetBtn: document.getElementById("challengeConfigResetBtn"),
 };
 
 function pendingChallengeEntries(snapshot) {
@@ -331,9 +355,15 @@ function formatElapsed(secondsTotal) {
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;
   if (days > 0) {
-    return `${days}일 ${hours}시 ${minutes}분 ${seconds}초`;
+    return `${days}d ${hours}h ${minutes}m ${seconds}s`;
   }
-  return `${hours}시 ${minutes}분 ${seconds}초`;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
 }
 
 function formatTokenCount(value) {
@@ -409,8 +439,8 @@ function challengeSummary(name, challenge, bucket = "") {
   const pendingReason = String(challenge?.pending_reason || "").trim();
   if (pendingReason === "priority_waiting") {
     details.push("priority waiting");
-  } else if (pendingReason === "resume_requested") {
-    details.push("resume queued");
+  } else if (pendingReason === "restart_requested" || pendingReason === "resume_requested") {
+    details.push("restart queued");
   } else if (pendingReason === "candidate_retry") {
     details.push("candidate retry");
   } else if (pendingReason === "candidate_pending") {
@@ -453,6 +483,282 @@ function escapeHtml(text) {
 
 function escapeAttr(text) {
   return escapeHtml(text).replaceAll('"', "&quot;");
+}
+
+function challengeConfigSourceInfo(payload) {
+  const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
+  const source = effective?.source && typeof effective.source === "object"
+    ? effective.source
+    : (payload?.source?.source && typeof payload.source.source === "object" ? payload.source.source : {});
+  return source;
+}
+
+function prettyConfigState(value) {
+  const normalized = String(value || "").trim().replaceAll("_", " ");
+  if (!normalized) {
+    return "-";
+  }
+  return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function challengeConfigCapabilitiesLabel(payload) {
+  const sourceInfo = challengeConfigSourceInfo(payload);
+  const capabilities = sourceInfo?.capabilities && typeof sourceInfo.capabilities === "object"
+    ? sourceInfo.capabilities
+    : {};
+  const entries = [
+    ["import", capabilities.import],
+    ["poll", capabilities.poll_solved],
+    ["submit", capabilities.submit_flag],
+    ["pull", capabilities.pull_files],
+  ].filter(([, value]) => String(value || "").trim());
+  if (!entries.length) {
+    return "-";
+  }
+  return entries
+    .map(([label, value]) => `${label} ${String(value).replaceAll("_", "-")}`)
+    .join(" · ");
+}
+
+function challengeConfigRuntimeLabel(payload) {
+  const runtimeMode = String(payload?.runtime_mode || "").trim();
+  const automaticSubmit = Boolean(payload?.automatic_submit);
+  if (!runtimeMode) {
+    return "-";
+  }
+  const details = [prettyConfigState(runtimeMode)];
+  details.push(automaticSubmit ? "auto submit on" : "auto submit off");
+  return details.join(" · ");
+}
+
+function effectiveConnectionLabel(payload) {
+  const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
+  const connectionInfo = String(effective.connection_info || "").trim();
+  if (connectionInfo) {
+    return connectionInfo;
+  }
+  const connection = effective.connection && typeof effective.connection === "object" ? effective.connection : {};
+  const url = String(connection.url || "").trim();
+  if (url) {
+    return url;
+  }
+  const rawCommand = String(connection.raw_command || "").trim();
+  if (rawCommand) {
+    return rawCommand;
+  }
+  const host = String(connection.host || "").trim();
+  const port = String(connection.port || "").trim();
+  if (host && port) {
+    return `${host}:${port}`;
+  }
+  return "-";
+}
+
+function challengeNeedsInstance(payload) {
+  const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
+  return Boolean(effective.needs_instance);
+}
+
+function challengeInstanceWorkflowLabel(payload) {
+  const needsInstance = challengeNeedsInstance(payload);
+  const connectionLabel = effectiveConnectionLabel(payload);
+  if (needsInstance && connectionLabel !== "-") {
+    return "manual deploy required · connection saved";
+  }
+  if (needsInstance) {
+    return "manual deploy required · waiting for connection details";
+  }
+  return "not required";
+}
+
+function setChallengeConfigEnabled(enabled) {
+  [
+    els.challengeConfigSchemeInput,
+    els.challengeConfigHostInput,
+    els.challengeConfigPortInput,
+    els.challengeConfigUrlInput,
+    els.challengeConfigRawCommandInput,
+    els.challengeConfigNotesInput,
+    els.challengeConfigPriorityInput,
+    els.challengeConfigNoSubmitInput,
+    els.challengeConfigNeedsInstanceInput,
+    els.instanceCheckBtn,
+    els.instanceCheckRestartBtn,
+    els.challengeConfigResetBtn,
+  ].forEach((input) => {
+    if (input) {
+      input.disabled = !enabled;
+    }
+  });
+}
+
+function populateChallengeConfigForm(payload) {
+  const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
+  const connection = effective?.connection && typeof effective.connection === "object" ? effective.connection : {};
+  if (els.challengeConfigSchemeInput) {
+    els.challengeConfigSchemeInput.value = String(connection.scheme || "");
+  }
+  if (els.challengeConfigHostInput) {
+    els.challengeConfigHostInput.value = String(connection.host || "");
+  }
+  if (els.challengeConfigPortInput) {
+    els.challengeConfigPortInput.value = connection.port === undefined || connection.port === null ? "" : String(connection.port);
+  }
+  if (els.challengeConfigUrlInput) {
+    els.challengeConfigUrlInput.value = String(connection.url || "");
+  }
+  if (els.challengeConfigRawCommandInput) {
+    els.challengeConfigRawCommandInput.value = String(connection.raw_command || "");
+  }
+  if (els.challengeConfigNotesInput) {
+    els.challengeConfigNotesInput.value = String(effective.notes || "");
+  }
+  if (els.challengeConfigPriorityInput) {
+    els.challengeConfigPriorityInput.checked = Boolean(effective.priority);
+  }
+  if (els.challengeConfigNoSubmitInput) {
+    els.challengeConfigNoSubmitInput.checked = Boolean(effective.no_submit);
+  }
+  if (els.challengeConfigNeedsInstanceInput) {
+    els.challengeConfigNeedsInstanceInput.checked = Boolean(effective.needs_instance);
+  }
+}
+
+function clearChallengeConfigForm() {
+  populateChallengeConfigForm({ effective: {} });
+}
+
+function renderInstanceCheckSummary(payload) {
+  if (!els.instanceCheckSummary) {
+    return;
+  }
+  if (!state.selectedChallenge || !payload || state.challengeConfigFor !== state.selectedChallenge) {
+    els.instanceCheckSummary.textContent = "Use Check instance to verify the current connection before restarting lanes.";
+    els.instanceCheckSummary.dataset.state = "";
+    return;
+  }
+  const challengeName = String(state.selectedChallenge || "").trim();
+  const sameChallenge = state.instanceProbeFor === challengeName;
+  if (sameChallenge && state.instanceProbeLoading) {
+    els.instanceCheckSummary.textContent = "Checking the current challenge connection...";
+    els.instanceCheckSummary.dataset.state = "checking";
+    return;
+  }
+  if (sameChallenge && state.instanceProbeResult && typeof state.instanceProbeResult === "object") {
+    const probe =
+      state.instanceProbeResult.probe && typeof state.instanceProbeResult.probe === "object"
+        ? state.instanceProbeResult.probe
+        : {};
+    const detail = String(probe.detail || probe.error || "").trim();
+    if (state.instanceProbeResult.ready) {
+      const restartResult = String(state.instanceProbeResult.restart_result || "").trim();
+      els.instanceCheckSummary.textContent = restartResult ? `${detail} · ${restartResult}` : detail;
+      els.instanceCheckSummary.dataset.state = "ready";
+      return;
+    }
+    els.instanceCheckSummary.textContent = detail || "Current challenge connection is not ready yet.";
+    els.instanceCheckSummary.dataset.state = "warn";
+    return;
+  }
+  if (challengeNeedsInstance(payload)) {
+    els.instanceCheckSummary.textContent =
+      "Deploy or refresh the challenge instance, save the new host/port/url if needed, then use Check instance.";
+    els.instanceCheckSummary.dataset.state = "warn";
+    return;
+  }
+  els.instanceCheckSummary.textContent = "Use Check instance to verify the current connection before restarting lanes.";
+  els.instanceCheckSummary.dataset.state = "";
+}
+
+function renderChallengeConfigPanel() {
+  if (!els.challengeConfigSummary || !els.challengeConfigFacts) {
+    return;
+  }
+  if (!state.selectedChallenge) {
+    els.challengeConfigSummary.textContent = "Select a challenge to inspect imported metadata and overrides.";
+    els.challengeConfigFacts.innerHTML = "";
+    clearChallengeConfigForm();
+    setChallengeConfigEnabled(false);
+    renderInstanceCheckSummary(null);
+    return;
+  }
+  if (state.challengeConfigLoading) {
+    els.challengeConfigSummary.textContent = "Loading challenge config...";
+    els.challengeConfigFacts.innerHTML = "";
+    setChallengeConfigEnabled(false);
+    renderInstanceCheckSummary(null);
+    return;
+  }
+  if (!state.challengeConfig || state.challengeConfigFor !== state.selectedChallenge) {
+    els.challengeConfigSummary.textContent = "Challenge config is unavailable for this selection.";
+    els.challengeConfigFacts.innerHTML = "";
+    clearChallengeConfigForm();
+    setChallengeConfigEnabled(false);
+    renderInstanceCheckSummary(null);
+    return;
+  }
+
+  const payload = state.challengeConfig;
+  const sourceInfo = challengeConfigSourceInfo(payload);
+  const competition = sourceInfo?.competition && typeof sourceInfo.competition === "object" ? sourceInfo.competition : {};
+  const status = sourceInfo?.status && typeof sourceInfo.status === "object" ? sourceInfo.status : {};
+  const facts = [
+    {
+      label: "Source",
+      value: [
+        sourceInfo.platform ? `platform ${sourceInfo.platform}` : "",
+        competition.title ? `competition ${competition.title}` : "",
+      ].filter(Boolean).join(" · ") || "-",
+    },
+    {
+      label: "Source URL",
+      value: String(sourceInfo.challenge_url || competition.url || "").trim() || "-",
+    },
+    {
+      label: "Import Status",
+      value: [
+        `solved ${Boolean(status.solved) ? "yes" : "no"}`,
+        `writeup ${Boolean(status.writeup_submitted) ? "yes" : "no"}`,
+        `override ${payload.override_present ? "present" : "none"}`,
+      ].join(" · "),
+    },
+    {
+      label: "Runtime Mode",
+      value: challengeConfigRuntimeLabel(payload),
+    },
+    {
+      label: "Capabilities",
+      value: challengeConfigCapabilitiesLabel(payload),
+    },
+    {
+      label: "Effective Connection",
+      value: effectiveConnectionLabel(payload),
+    },
+    {
+      label: "Instance Workflow",
+      value: challengeInstanceWorkflowLabel(payload),
+    },
+  ];
+
+  els.challengeConfigSummary.textContent = `Editing ${state.selectedChallenge}`;
+  els.challengeConfigFacts.innerHTML = facts
+    .map(
+      (fact) => `
+        <div class="config-fact">
+          <strong>${escapeHtml(fact.label)}</strong>
+          <div>${escapeHtml(fact.value)}</div>
+        </div>
+      `
+    )
+    .join("");
+  setChallengeConfigEnabled(true);
+  if (els.instanceCheckBtn) {
+    els.instanceCheckBtn.disabled = state.instanceProbeLoading;
+  }
+  if (els.instanceCheckRestartBtn) {
+    els.instanceCheckRestartBtn.disabled = state.instanceProbeLoading;
+  }
+  renderInstanceCheckSummary(payload);
 }
 
 function renderFlagCandidates(challenge) {
@@ -585,7 +891,12 @@ function selectedChallengePendingEntry() {
 
 function renderSchedulerControls(selected, challenge) {
   if (els.maxChallengesInput) {
-    els.maxChallengesInput.value = String(Number(state.snapshot?.max_concurrent_challenges ?? 0));
+    const snapshotValue = String(Number(state.snapshot?.max_concurrent_challenges ?? 0));
+    const inputFocused = document.activeElement === els.maxChallengesInput;
+    if (!state.maxChallengesDirty && !inputFocused) {
+      els.maxChallengesInput.value = snapshotValue;
+      state.maxChallengesDraft = snapshotValue;
+    }
   }
 
   if (!els.selectedChallengeQueueMeta || !els.priorityWaitBtn || !els.normalQueueBtn || !els.restartChallengeBtn) {
@@ -608,11 +919,11 @@ function renderSchedulerControls(selected, challenge) {
     selected.bucket === "active" ? "Pause to priority waiting" : "Move to priority waiting";
   els.normalQueueBtn.textContent = selected.bucket === "pending" ? "Restore waiting" : "Restore normal waiting";
   if (selected.bucket === "active") {
-    els.restartChallengeBtn.textContent = "Resume after stop";
+    els.restartChallengeBtn.textContent = "Restart after stop";
   } else if (isPendingPriority) {
-    els.restartChallengeBtn.textContent = "Restore and resume";
+    els.restartChallengeBtn.textContent = "Restore and restart";
   } else {
-    els.restartChallengeBtn.textContent = "Resume previous work";
+    els.restartChallengeBtn.textContent = "Restart from saved notes";
   }
 }
 
@@ -775,7 +1086,6 @@ function syncSelections() {
   const lanes = laneEntries(selected);
   const visibleLanes = visibleLaneEntries(selected);
   if (!lanes.length) {
-    state.selectedLane = null;
     return;
   }
   const hasVisibleSelection =
@@ -874,11 +1184,18 @@ function renderChallenges() {
       state.selectedChallenge = button.dataset.challenge;
       state.selectedLane = null;
       state.selectedTrace = null;
+      state.challengeConfig = null;
+      state.challengeConfigFor = "";
+      state.challengeConfigLoading = true;
+      state.instanceProbeResult = null;
+      state.instanceProbeFor = "";
+      state.instanceProbeLoading = false;
       state.traceFiles = [];
       state.traceEvents = [];
       state.traceWindow = null;
       syncSelections();
       render();
+      fetchChallengeConfig({ force: true });
       fetchTraceFiles();
     });
   });
@@ -1102,6 +1419,7 @@ function render() {
   renderSummary();
   renderChallenges();
   renderSelectedChallenge();
+  renderChallengeConfigPanel();
   renderTraceSelector();
   renderTraceTable();
   renderRunningFor();
@@ -1117,6 +1435,7 @@ async function fetchJson(url, options = {}) {
 }
 
 async function applyStatusSnapshot(snapshot) {
+  const previousSelectedChallenge = state.selectedChallenge;
   state.snapshot = snapshot;
   state.snapshotReceived = true;
   syncSelections();
@@ -1124,9 +1443,13 @@ async function applyStatusSnapshot(snapshot) {
   els.updatedAt.textContent = new Date().toLocaleTimeString("ko-KR", {
     hour12: false,
   });
+  const challengeChanged = previousSelectedChallenge !== state.selectedChallenge;
   await Promise.all([
     fetchTraceFiles({ preserveSelection: true, refreshTrace: false }),
     fetchAdvisoryHistory(),
+    fetchChallengeConfig({
+      force: challengeChanged || state.challengeConfigFor !== String(state.selectedChallenge || ""),
+    }),
   ]);
 }
 
@@ -1156,6 +1479,58 @@ async function fetchAdvisoryHistory() {
     render();
   } catch (error) {
     pushActivity(`advisory history failed: ${error.message}`, "error");
+  }
+}
+
+async function fetchChallengeConfig({ force = false } = {}) {
+  const challengeName = String(state.selectedChallenge || "").trim();
+  if (!challengeName) {
+    state.challengeConfig = null;
+    state.challengeConfigFor = "";
+    state.challengeConfigLoading = false;
+    state.instanceProbeResult = null;
+    state.instanceProbeFor = "";
+    state.instanceProbeLoading = false;
+    clearChallengeConfigForm();
+    render();
+    return;
+  }
+  if (!force && state.challengeConfigFor === challengeName && state.challengeConfig) {
+    return;
+  }
+
+  state.challengeConfigLoading = true;
+  state.challengeConfig = null;
+  state.challengeConfigFor = challengeName;
+  if (state.instanceProbeFor !== challengeName) {
+    state.instanceProbeResult = null;
+    state.instanceProbeLoading = false;
+  }
+  render();
+  try {
+    const payload = await fetchJson(
+      `/api/runtime/challenge-config?${new URLSearchParams({ challenge_name: challengeName })}`
+    );
+    if (state.selectedChallenge !== challengeName) {
+      return;
+    }
+    state.challengeConfig = payload;
+    state.challengeConfigFor = challengeName;
+    populateChallengeConfigForm(payload);
+    render();
+  } catch (error) {
+    if (state.selectedChallenge === challengeName) {
+      state.challengeConfig = null;
+      state.challengeConfigFor = challengeName;
+      clearChallengeConfigForm();
+      render();
+    }
+    pushChallengeActivity(challengeName, `config fetch failed: ${error.message}`, "error");
+  } finally {
+    if (state.selectedChallenge === challengeName) {
+      state.challengeConfigLoading = false;
+      render();
+    }
   }
 }
 
@@ -1463,6 +1838,14 @@ async function handleMaxChallenges(event) {
     const payload = await postOperator("/api/runtime/set-max-challenges", {
       max_active: value,
     });
+    state.maxChallengesDirty = false;
+    state.maxChallengesDraft = String(value);
+    if (state.snapshot && typeof state.snapshot === "object") {
+      state.snapshot.max_concurrent_challenges = value;
+    }
+    if (els.maxChallengesInput) {
+      els.maxChallengesInput.value = String(value);
+    }
     pushSchedulerActivity(`max active set to ${value}`, "ok");
     pushServerActivity(payload?.result, "ok");
     await fetchStatus();
@@ -1513,18 +1896,143 @@ async function handleNormalWaiting() {
 async function handleRestartChallenge() {
   const challengeName = String(state.selectedChallenge || "").trim();
   if (!challengeName) {
-    pushChallengeActivity("", "resume failed: select a challenge first", "error");
+    pushChallengeActivity("", "restart failed: select a challenge first", "error");
     return;
   }
   try {
-    const payload = await postOperator("/api/runtime/resume-challenge", {
+    const payload = await postOperator("/api/runtime/restart-challenge", {
       challenge_name: challengeName,
     });
-    pushChallengeActivity(challengeName, "resume requested", "ok");
+    pushChallengeActivity(challengeName, "restart requested", "ok");
     pushServerActivity(payload?.result, "ok");
     await fetchStatus();
   } catch (error) {
-    pushChallengeActivity(challengeName, `resume failed: ${error.message}`, "error");
+    pushChallengeActivity(challengeName, `restart failed: ${error.message}`, "error");
+  }
+}
+
+async function handleChallengeConfigSave(event) {
+  event.preventDefault();
+  const challengeName = String(state.selectedChallenge || "").trim();
+  if (!challengeName) {
+    pushChallengeActivity("", "config save failed: select a challenge first", "error");
+    return;
+  }
+
+  const connection = {
+    scheme: String(els.challengeConfigSchemeInput?.value || "").trim(),
+    host: String(els.challengeConfigHostInput?.value || "").trim(),
+    port: String(els.challengeConfigPortInput?.value || "").trim(),
+    url: String(els.challengeConfigUrlInput?.value || "").trim(),
+    raw_command: String(els.challengeConfigRawCommandInput?.value || "").trim(),
+  };
+  const override = {
+    connection,
+    notes: String(els.challengeConfigNotesInput?.value || "").trim(),
+    priority: Boolean(els.challengeConfigPriorityInput?.checked),
+    no_submit: Boolean(els.challengeConfigNoSubmitInput?.checked),
+    needs_instance: Boolean(els.challengeConfigNeedsInstanceInput?.checked),
+  };
+  const submitButton = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+  if (submitButton) {
+    submitButton.disabled = true;
+  }
+  try {
+    const payload = await fetchJson("/api/runtime/challenge-config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        challenge_name: challengeName,
+        replace: true,
+        override,
+      }),
+    });
+    state.challengeConfig = payload;
+    state.challengeConfigFor = challengeName;
+    state.challengeConfigLoading = false;
+    state.instanceProbeResult = null;
+    state.instanceProbeFor = challengeName;
+    state.instanceProbeLoading = false;
+    populateChallengeConfigForm(payload);
+    render();
+    pushChallengeActivity(challengeName, "challenge override saved", "ok");
+  } catch (error) {
+    pushChallengeActivity(challengeName, `config save failed: ${error.message}`, "error");
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+    }
+  }
+}
+
+async function handleChallengeConfigReset() {
+  const challengeName = String(state.selectedChallenge || "").trim();
+  if (!challengeName) {
+    pushChallengeActivity("", "config reset failed: select a challenge first", "error");
+    return;
+  }
+  if (els.challengeConfigResetBtn) {
+    els.challengeConfigResetBtn.disabled = true;
+  }
+  try {
+    const payload = await fetchJson(
+      `/api/runtime/challenge-config?${new URLSearchParams({ challenge_name: challengeName })}`,
+      {
+        method: "DELETE",
+      }
+    );
+    state.challengeConfig = payload;
+    state.challengeConfigFor = challengeName;
+    state.challengeConfigLoading = false;
+    state.instanceProbeResult = null;
+    state.instanceProbeFor = challengeName;
+    state.instanceProbeLoading = false;
+    populateChallengeConfigForm(payload);
+    render();
+    pushChallengeActivity(challengeName, "challenge override reset", "ok");
+  } catch (error) {
+    pushChallengeActivity(challengeName, `config reset failed: ${error.message}`, "error");
+  } finally {
+    if (els.challengeConfigResetBtn) {
+      els.challengeConfigResetBtn.disabled = false;
+    }
+  }
+}
+
+async function handleInstanceCheck({ restartOnSuccess = false } = {}) {
+  const challengeName = String(state.selectedChallenge || "").trim();
+  if (!challengeName) {
+    pushChallengeActivity("", "instance check failed: select a challenge first", "error");
+    return;
+  }
+  state.instanceProbeFor = challengeName;
+  state.instanceProbeLoading = true;
+  render();
+  try {
+    const payload = await postOperator("/api/runtime/check-instance", {
+      challenge_name: challengeName,
+      restart_on_success: restartOnSuccess,
+    });
+    state.instanceProbeResult = payload;
+    state.instanceProbeFor = challengeName;
+    state.instanceProbeLoading = false;
+    if (payload.challenge_config && typeof payload.challenge_config === "object") {
+      state.challengeConfig = payload.challenge_config;
+      state.challengeConfigFor = challengeName;
+      populateChallengeConfigForm(payload.challenge_config);
+    }
+    render();
+    const detail = String(payload?.probe?.detail || payload?.probe?.error || "").trim();
+    const restartResult = String(payload?.restart_result || "").trim();
+    let message = payload?.ready ? detail || "instance ready" : detail || "instance not ready";
+    if (restartResult) {
+      message = `${message}; ${restartResult}`;
+    }
+    pushChallengeActivity(challengeName, message, payload?.ready ? "ok" : "warn");
+  } catch (error) {
+    state.instanceProbeLoading = false;
+    render();
+    pushChallengeActivity(challengeName, `instance check failed: ${error.message}`, "error");
   }
 }
 
@@ -1558,6 +2066,18 @@ function bindEvents() {
     state.traceTextFilter = els.traceTextFilter.value.trim();
     renderTraceTable();
   });
+  els.maxChallengesInput.addEventListener("input", () => {
+    state.maxChallengesDraft = String(els.maxChallengesInput.value || "");
+    state.maxChallengesDirty = true;
+  });
+  els.maxChallengesInput.addEventListener("blur", () => {
+    const snapshotValue = String(Number(state.snapshot?.max_concurrent_challenges ?? 0));
+    const inputValue = String(els.maxChallengesInput.value || "").trim();
+    if (inputValue === snapshotValue) {
+      state.maxChallengesDirty = false;
+      state.maxChallengesDraft = snapshotValue;
+    }
+  });
   els.msgForm.addEventListener("submit", handleCoordinatorMessage);
   els.laneBumpForm.addEventListener("submit", handleLaneBump);
   els.challengeBumpForm.addEventListener("submit", handleChallengeBump);
@@ -1566,6 +2086,14 @@ function bindEvents() {
   els.normalQueueBtn.addEventListener("click", handleNormalWaiting);
   els.restartChallengeBtn.addEventListener("click", handleRestartChallenge);
   els.externalSolveForm.addEventListener("submit", handleExternalSolve);
+  els.challengeConfigForm.addEventListener("submit", handleChallengeConfigSave);
+  els.instanceCheckBtn.addEventListener("click", () => {
+    handleInstanceCheck();
+  });
+  els.instanceCheckRestartBtn.addEventListener("click", () => {
+    handleInstanceCheck({ restartOnSuccess: true });
+  });
+  els.challengeConfigResetBtn.addEventListener("click", handleChallengeConfigReset);
   els.flagCandidatesList.addEventListener("click", handleCandidateAction);
 }
 
