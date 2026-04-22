@@ -219,7 +219,7 @@ def test_coordinator_prompts_require_artifact_inspection_before_rebroadcast() ->
         assert "Artifact path: /challenge/shared-artifacts/..." in prompt
         assert "/challenge/shared-artifacts/manifest.md" in prompt
         assert "Do not rebroadcast advisor or artifact messages blindly" in prompt
-        assert "/challenge/agent-repo/ctf-skills/" in prompt
+        assert "/challenge/agent-repo/ctf-skills/" not in prompt
         assert len(prompt) < 2200
 
 

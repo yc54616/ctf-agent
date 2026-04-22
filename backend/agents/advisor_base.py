@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from backend.prompts import build_ctf_skills_guidance
-
 ADVISOR_SYSTEM_PROMPT = """\
 You are a strategic CTF advisory sidecar.
 
@@ -24,10 +22,6 @@ Rules:
 - Do not restate the whole finding/message.
 - Do not call tools.
 """
-
-_ADVISOR_CTF_SKILLS_GUIDANCE = build_ctf_skills_guidance(compact=True, audience="advisor")
-if _ADVISOR_CTF_SKILLS_GUIDANCE:
-    ADVISOR_SYSTEM_PROMPT = f"{ADVISOR_SYSTEM_PROMPT}\n\n{_ADVISOR_CTF_SKILLS_GUIDANCE}"
 
 ADVISOR_MAX_RESPONSE_CHARS = 1200
 

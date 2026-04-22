@@ -24,12 +24,11 @@ def test_build_prompt_includes_flag_format_guidance_when_available() -> None:
     assert "- Expected format: `DH{...}`" in prompt
 
 
-def test_build_prompt_includes_ctf_skills_reference_paths() -> None:
+def test_build_prompt_does_not_include_ctf_skills_reference_paths() -> None:
     prompt = build_prompt(
         ChallengeMeta(name="webby", category="web"),
         distfile_names=["index.html"],
     )
 
-    assert "## Local CTF Skills" in prompt
-    assert "/challenge/agent-repo/ctf-skills/ctf-web/SKILL.md" in prompt
-    assert "/challenge/agent-repo/ctf-skills/solve-challenge/SKILL.md" in prompt
+    assert "## Local CTF Skills" not in prompt
+    assert "/challenge/agent-repo/ctf-skills/" not in prompt

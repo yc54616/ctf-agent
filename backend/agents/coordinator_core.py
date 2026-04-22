@@ -13,7 +13,7 @@ from pathlib import Path
 from backend.challenge_config import refresh_effective_metadata
 from backend.deps import CoordinatorDeps
 from backend.platforms import platform_label
-from backend.prompts import ChallengeMeta, build_ctf_skills_guidance
+from backend.prompts import ChallengeMeta
 from backend.sandbox import resolve_shared_artifacts_dir
 from backend.solver_base import FLAG_FOUND
 
@@ -57,10 +57,6 @@ Critical rules:
 
 You will receive event messages. Respond with tool calls to manage the competition.
 """
-
-_COORDINATOR_CTF_SKILLS_GUIDANCE = build_ctf_skills_guidance(compact=True, audience="coordinator")
-if _COORDINATOR_CTF_SKILLS_GUIDANCE:
-    COORDINATOR_PROMPT = f"{COORDINATOR_PROMPT}\n\n{_COORDINATOR_CTF_SKILLS_GUIDANCE}"
 
 
 def _int_from_object(value: object) -> int:

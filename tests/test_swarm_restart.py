@@ -117,8 +117,8 @@ def test_build_prompt_pushes_noisy_output_to_shared_artifacts() -> None:
     assert "grep -R" in prompt
     assert "ffuf" in prompt
     assert "you may run build or compose commands early" in prompt
-    assert "The only `agent-repo` exception is targeted reads under `/challenge/agent-repo/ctf-skills/`" in prompt
-    assert "/challenge/agent-repo/ctf-skills/ctf-web/SKILL.md" in prompt
+    assert "Never reread `/challenge/agent-repo`" in prompt
+    assert "/challenge/agent-repo/ctf-skills/" not in prompt
     assert "Large saved output may come back with only a path, not a preview." in prompt
     assert "`docker compose`" in prompt
     assert "`docker-compose`" in prompt

@@ -257,18 +257,16 @@ async def test_do_bash_blocks_relative_python_reread_patterns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_do_bash_allows_targeted_ctf_skills_reads() -> None:
-    sandbox = _FakeBashSandbox(ExecResult(exit_code=0, stdout="skill header\n", stderr=""))
+async def test_do_bash_blocks_agent_repo_reads() -> None:
+    sandbox = _FakeBashSandbox(ExecResult(exit_code=0, stdout="should not run", stderr=""))
 
     out = await do_bash(
         sandbox,
         "sed -n '1,80p' /challenge/agent-repo/ctf-skills/ctf-web/SKILL.md",
     )
 
-    assert out == "skill header"
-    assert sandbox.commands == [
-        "sed -n '1,80p' /challenge/agent-repo/ctf-skills/ctf-web/SKILL.md"
-    ]
+    assert "Blocked reread of prior traces or solve history" in out
+    assert not sandbox.commands
 
 
 @pytest.mark.asyncio

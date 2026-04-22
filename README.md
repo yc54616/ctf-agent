@@ -469,7 +469,6 @@ Notes:
 
 - `/challenge/challenge-src/` is a read-only mount of the full challenge directory.
 - `/challenge/workspace/` is the writable scratch area for active lanes.
-- Local skill docs are available under `/challenge/agent-repo/ctf-skills/`.
 
 ### What gets saved when a challenge is solved
 
@@ -553,8 +552,6 @@ Run the smoke test after changing the image:
 ```bash
 docker run --rm ctf-sandbox sandbox-smoke-check
 ```
-
-The sandbox also mounts the local skill library at `/challenge/agent-repo/ctf-skills/`. Prompts point lanes at targeted `SKILL.md` reads there when a challenge category matches.
 
 Provider CLIs now support a persistent runtime cache outside the image build too:
 
