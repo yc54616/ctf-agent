@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Protocol
@@ -9,10 +10,12 @@ from typing import Protocol
 # Status constants
 FLAG_FOUND = "flag_found"
 FLAG_CANDIDATE = "flag_candidate"
+RETRY_SOON = "retry_soon"
 GAVE_UP = "gave_up"
 CANCELLED = "cancelled"
 ERROR = "error"
 QUOTA_ERROR = "quota_error"
+CANDIDATE_REJECTION_ALERT_PREFIX = "__candidate_rejected__:"
 
 # Flag confirmation markers from automatic remote submit
 CORRECT_MARKERS = ("CORRECT", "ALREADY SOLVED")
@@ -25,6 +28,66 @@ def candidate_report_was_rejected(reply: object) -> bool:
 
 def candidate_report_was_accepted(reply: object) -> bool:
     return not candidate_report_was_rejected(reply)
+
+
+def candidate_report_rejection_reason(reply: object) -> str:
+    text = " ".join(str(reply or "").split())
+    prefix = "Flag candidate rejected:"
+    if text.lower().startswith(prefix.lower()):
+        return text[len(prefix):].strip()
+    return text
+
+
+def build_candidate_rejection_alert(
+    *,
+    flag: str,
+    reply: object,
+    cooldown_seconds: float,
+) -> str:
+    payload = {
+        "flag": str(flag or "").strip(),
+        "reason": candidate_report_rejection_reason(reply) or "rejected",
+        "cooldown_seconds": max(0, int(round(float(cooldown_seconds)))),
+    }
+    return f"{CANDIDATE_REJECTION_ALERT_PREFIX}{json.dumps(payload, sort_keys=True)}"
+
+
+def parse_candidate_rejection_alert(message: object) -> dict[str, object] | None:
+    text = str(message or "").strip()
+    if not text.startswith(CANDIDATE_REJECTION_ALERT_PREFIX):
+        return None
+    raw_payload = text[len(CANDIDATE_REJECTION_ALERT_PREFIX) :].strip()
+    if not raw_payload:
+        return None
+    try:
+        parsed = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    flag = str(parsed.get("flag") or "").strip()
+    reason = str(parsed.get("reason") or "").strip() or "rejected"
+    raw_cooldown = parsed.get("cooldown_seconds", 0)
+    cooldown_seconds = int(raw_cooldown) if isinstance(raw_cooldown, (int, float)) else 0
+    return {
+        "flag": flag,
+        "reason": reason,
+        "cooldown_seconds": max(0, cooldown_seconds),
+    }
+
+
+def format_candidate_rejection_alert(message: object) -> str:
+    payload = parse_candidate_rejection_alert(message)
+    if payload is None:
+        return "Candidate rejected; cooling down before continuing."
+    flag = str(payload.get("flag") or "").strip() or "unknown candidate"
+    reason = str(payload.get("reason") or "").strip() or "rejected"
+    cooldown_seconds = int(payload.get("cooldown_seconds") or 0)
+    cooldown_label = f"{cooldown_seconds}s" if cooldown_seconds > 0 else "briefly"
+    return (
+        f'candidate "{flag}" rejected ({reason}); '
+        f"cooling down {cooldown_label} before continuing"
+    )
 
 
 def _compact_runtime_text(value: object, limit: int = 160) -> str:
@@ -85,6 +148,8 @@ def lifecycle_for_result(status: str) -> str:
         return "quota_error"
     if status == ERROR:
         return "error"
+    if status == RETRY_SOON:
+        return "finished"
     if status == GAVE_UP:
         return "finished"
     return "finished"

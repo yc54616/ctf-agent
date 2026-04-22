@@ -28,5 +28,8 @@ class Settings(BaseSettings):
     exec_output_spill_threshold_bytes: int = 65_536
     read_file_spill_threshold_bytes: int = 262_144
     artifact_preview_bytes: int = 8_192
+    sandbox_runtime_tools_dir: str = ""
+    sandbox_runtime_tools_auto_update: bool = True
+    sandbox_runtime_tools_refresh_interval_seconds: int = 86_400
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}

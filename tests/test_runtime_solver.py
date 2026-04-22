@@ -15,6 +15,11 @@ class _FakeSandbox:
     def __init__(self, results: dict[str, ExecResult]) -> None:
         self.results = results
         self.commands: list[tuple[str, int]] = []
+        self.detached: list[tuple[str, str, dict[str, str]]] = []
+        self.runtime_tools_dir = ""
+
+    async def start(self) -> None:
+        return None
 
     async def exec(self, command: str, timeout_s: int = 300) -> ExecResult:
         self.commands.append((command, timeout_s))
@@ -22,6 +27,15 @@ class _FakeSandbox:
             if command.startswith(prefix):
                 return result
         raise AssertionError(f"unexpected command: {command}")
+
+    async def exec_detached(
+        self,
+        command: str,
+        *,
+        cwd: str = "/challenge",
+        env: dict[str, str] | None = None,
+    ) -> None:
+        self.detached.append((command, cwd, dict(env or {})))
 
 
 def _make_solver(provider: str, sandbox: _FakeSandbox, tmp_path) -> InSandboxRuntimeSolver:
@@ -92,6 +106,47 @@ def test_runtime_preflight_reports_rebuild_hint(tmp_path) -> None:
     assert "Sandbox runtime preflight failed for demo/gemini/demo-model" in message
     assert "Rebuild ctf-sandbox from sandbox/Dockerfile.sandbox." in message
     assert "missing python modules: pydantic_ai" in message
+
+
+def test_runtime_solver_refreshes_provider_tooling_cache_when_enabled(tmp_path) -> None:
+    sandbox = _FakeSandbox(
+        {
+            "refresh-provider-tooling": ExecResult(
+                exit_code=0,
+                stdout="provider-tooling: refreshed\n",
+                stderr="",
+            ),
+        }
+    )
+    sandbox.runtime_tools_dir = "/tmp/runtime-tools"
+    solver = _make_solver("codex", sandbox, tmp_path)
+
+    asyncio.run(solver._maybe_refresh_provider_runtime_tools())
+
+    assert sandbox.commands == [("refresh-provider-tooling", 1800)]
+
+
+def test_runtime_solver_skips_provider_tooling_refresh_without_cache_dir(tmp_path) -> None:
+    sandbox = _FakeSandbox({})
+    solver = _make_solver("codex", sandbox, tmp_path)
+
+    asyncio.run(solver._maybe_refresh_provider_runtime_tools())
+
+    assert sandbox.commands == []
+
+
+def test_runtime_solver_launch_env_keeps_cached_python_tools_first(tmp_path) -> None:
+    sandbox = _FakeSandbox({})
+    sandbox.runtime_tools_dir = "/tmp/runtime-tools"
+    solver = _make_solver("codex", sandbox, tmp_path)
+
+    asyncio.run(solver._start_runtime_process())
+
+    assert len(sandbox.detached) == 1
+    _command, cwd, env = sandbox.detached[0]
+    assert cwd == "/challenge/agent-repo"
+    assert env["PYTHONPATH"] == "/challenge/runtime-tools/python:/challenge/agent-repo"
+    assert env["CTF_AGENT_LOG_DIR"] == "/challenge/host-logs"
 
 
 def test_runtime_solver_consumes_turn_results_from_events_without_run_turn(tmp_path) -> None:

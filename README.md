@@ -40,7 +40,7 @@ The default flow is now:
 1. `ctf-import --url <competition-url>`
 2. `ctf-solve --challenges-dir ./challenges`
 
-If you do not pass `--cookie-file`, `ctf-import` opens Chromium through Playwright, waits for you to finish any required login, and saves browser state under `~/.config/ctf-agent/browser-sessions/`.
+If you do not pass `--cookie-file`, `ctf-import` opens Chromium through Playwright, waits for you to finish any required login, and saves browser state under `.cache/browser-sessions/` in this repo.
 
 That saved session reference is written into the imported metadata, so later `ctf-solve` runs can auto-reattach remote solved polling and flag submission without asking for the same auth again.
 
@@ -337,6 +337,24 @@ If a remote host, port, URL, or raw connect command changes while a challenge is
 - For deploy-on-demand labs, mark `Manual instance step required`, let the user start/deploy the instance, then use `Check instance` or `Check and restart` after saving the new host/port/url.
 - Imported `source.needs_vm` now surfaces as `needs_instance` in effective metadata, and the operator override can still turn that workflow off if the challenge no longer needs a manual deploy step.
 - `needs_instance` is intentionally broad: use it both for "start the first VM before solving" and for "enter the portal, deploy/check another VM, then continue" style labs.
+- If a challenge has multiple lab hops, you can still seed `instance_stages` in `metadata.yml`, but the operator UI can now save edited stage definitions into `.runtime/override.json` too.
+- Each stage can carry multiple named `endpoints`; the UI saves a live `current_endpoint` plus per-endpoint runtime connection values under `.runtime/override.json`.
+- The effective top-level `connection` always follows the current stage and active endpoint, so existing solvers and prompts still see one active target even when the operator is walking through a multi-stage lab.
+- If the current stage is marked `done`, the effective workflow advances to the next unfinished stage automatically.
+
+Example:
+
+```yaml
+instance_stages:
+  - id: public_lab
+    title: Public Lab
+    manual_action: deploy_from_portal
+    connection:
+      url: https://portal.example/lab
+  - id: internal_vm
+    title: Internal VM
+    manual_action: deploy_inside_lab
+```
 
 ## Typical Workflows
 
@@ -372,7 +390,8 @@ uv run ctf-solve --challenges-dir challenges --max-challenges 4 --no-submit -v
 2. In the operator UI, leave `Manual instance step required` enabled if the lab still needs a human deploy/check step.
 3. Start or deploy the instance from the competition site.
 4. Save the resulting host/port/url override in challenge config.
-5. Use `Check instance` to confirm the target is live, or `Check and restart` to both verify it and relaunch fresh lanes from saved notes.
+5. If the current stage has multiple targets, select the active endpoint in challenge config before saving.
+6. Use `Check instance` to confirm the target is live, or `Check and restart` to both verify it and relaunch fresh lanes from saved notes.
 
 ### Legacy direct CTFd compatibility
 
@@ -537,6 +556,13 @@ docker run --rm ctf-sandbox sandbox-smoke-check
 
 The sandbox also mounts the local skill library at `/challenge/agent-repo/ctf-skills/`. Prompts point lanes at targeted `SKILL.md` reads there when a challenge category matches.
 
+Provider CLIs now support a persistent runtime cache outside the image build too:
+
+- the image still ships working baseline versions
+- each lane container mounts a host cache at `.cache/runtime-tools/` under this repo by default
+- on container start, `refresh-provider-tooling` can refresh cached `codex`, `gemini`, and `claude-agent-sdk`
+- fresh containers then reuse the cached copies first from `PATH` / `PYTHONPATH`, so you do not need to rebuild the whole image for every upstream CLI bump
+
 ## Configuration Notes
 
 All runtime settings can come from CLI flags, `.env`, or `backend/config.py`.
@@ -548,6 +574,9 @@ Useful defaults:
 | `--max-challenges` | `10` | max active challenges |
 | `container_memory_limit` | `4g` | per-container memory cap |
 | `sandbox_image` | `ctf-sandbox` | Docker image name |
+| `sandbox_runtime_tools_auto_update` | `true` | refresh cached provider tooling on container start |
+| `sandbox_runtime_tools_refresh_interval_seconds` | `86400` | minimum delay between runtime tooling refresh attempts |
+| `sandbox_runtime_tools_dir` | `.cache/runtime-tools` | host cache used for refreshed provider tooling |
 | `msg_port` | `9400` | operator UI / API port |
 
 Authentication is expected through home auth:

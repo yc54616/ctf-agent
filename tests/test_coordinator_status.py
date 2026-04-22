@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import time
 from typing import Any, cast
 
 from click.testing import CliRunner
 
 import backend.cli as cli_module
-from backend.agents.coordinator_loop import _runtime_snapshot, _status_snapshot
+from backend.agents.coordinator_loop import _capture_solver_ui_alert, _runtime_snapshot, _status_snapshot
 from backend.cli import (
     _build_compact_lane_renderables,
     _format_agent_activity,
@@ -16,6 +17,8 @@ from backend.cli import (
 )
 from backend.cost_tracker import CostTracker
 from backend.deps import CoordinatorDeps
+from backend.message_bus import CoordinatorNoteRef
+from backend.solver_base import build_candidate_rejection_alert
 
 
 class _FakeSwarm:
@@ -254,6 +257,67 @@ def test_runtime_snapshot_includes_per_challenge_usage() -> None:
     assert usage["output_tokens"] == 300
     assert usage["total_tokens"] == 1_500
     assert usage["cost_usd"] >= 0.0
+
+
+def test_runtime_snapshot_exposes_only_active_ui_alerts() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    now = time.time()
+    deps.ui_alerts.append(
+        {
+            "id": "expired",
+            "ts": now - 60,
+            "expires_at": now - 1,
+            "challenge_name": "demo",
+            "lane_id": "codex/gpt-5.4",
+            "message": "old alert",
+            "tone": "warn",
+        }
+    )
+    deps.ui_alerts.append(
+        {
+            "id": "active",
+            "ts": now,
+            "expires_at": now + 30,
+            "challenge_name": "demo",
+            "lane_id": "codex/gpt-5.4",
+            "message": 'candidate "BLOCKED_NO_FLAG" rejected (placeholder sentinel.); cooling down 15s before continuing',
+            "tone": "warn",
+        }
+    )
+
+    snapshot = _runtime_snapshot(deps)
+
+    assert [entry["id"] for entry in snapshot["ui_alerts"]] == ["active"]
+
+
+def test_capture_solver_ui_alert_extracts_candidate_rejection_note() -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    note = CoordinatorNoteRef(
+        challenge_name="demo",
+        source_model="codex/gpt-5.4",
+        summary=build_candidate_rejection_alert(
+            flag="BLOCKED_NO_FLAG",
+            reply="Flag candidate rejected: placeholder sentinel.",
+            cooldown_seconds=15,
+        ),
+        timestamp=time.time(),
+    )
+
+    captured = _capture_solver_ui_alert(deps, note)
+
+    assert captured is True
+    assert len(deps.ui_alerts) == 1
+    assert deps.ui_alerts[0]["challenge_name"] == "demo"
+    assert deps.ui_alerts[0]["lane_id"] == "codex/gpt-5.4"
+    assert "BLOCKED_NO_FLAG" in str(deps.ui_alerts[0]["message"])
 
 
 def test_preview_line_handles_empty_and_multiline_text() -> None:

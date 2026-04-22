@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -20,8 +21,15 @@ from backend.runtime_control import (
     read_json,
     read_new_jsonl,
 )
-from backend.sandbox import TRACE_CONTAINER_ROOT, DockerSandbox
+from backend.sandbox import (
+    RUNTIME_TOOLS_PYTHON_CONTAINER_ROOT,
+    TRACE_CONTAINER_ROOT,
+    DockerSandbox,
+    sandbox_runtime_tooling_kwargs,
+)
 from backend.solver_base import ERROR, LaneRuntimeStatus, SolverResult, lifecycle_for_result
+
+logger = logging.getLogger(__name__)
 
 
 def _dict(value: object) -> dict[str, Any]:
@@ -88,6 +96,7 @@ class InSandboxRuntimeSolver:
             auth_seed_mounts=auth_seed_mounts,
             existing_container_id=str(warm_container_id or "").strip(),
             preserve_stopped_container=True,
+            **sandbox_runtime_tooling_kwargs(settings),
         )
         self._runtime = LaneRuntimeStatus()
         self._event_offset = 0
@@ -139,12 +148,28 @@ class InSandboxRuntimeSolver:
 
     async def start(self) -> None:
         await self.sandbox.start()
+        await self._maybe_refresh_provider_runtime_tools()
         await self._verify_runtime_prerequisites()
         self._write_runtime_config()
         self._prime_runtime_state()
         await self._start_runtime_process()
         await self._wait_for_heartbeat()
         self._started = True
+
+    async def _maybe_refresh_provider_runtime_tools(self) -> None:
+        runtime_tools_dir = str(getattr(self.sandbox, "runtime_tools_dir", "") or "").strip()
+        if not runtime_tools_dir:
+            return
+        result = await self.sandbox.exec("refresh-provider-tooling", timeout_s=1_800)
+        detail = (result.stdout or result.stderr or "").strip()
+        if result.exit_code == 0:
+            if detail:
+                logger.info("Sandbox provider tooling: %s", detail)
+            return
+        if detail:
+            logger.warning("Sandbox provider tooling refresh failed: %s", detail)
+        else:
+            logger.warning("Sandbox provider tooling refresh failed with exit code %s", result.exit_code)
 
     async def run_until_done_or_gave_up(self) -> SolverResult:
         if not self._started:
@@ -381,11 +406,15 @@ PY"""
 
     async def _start_runtime_process(self) -> None:
         command = "python3 -m backend.agents.lane_runtime --control-dir /challenge/control"
+        python_path_entries = ["/challenge/agent-repo"]
+        runtime_tools_dir = str(getattr(self.sandbox, "runtime_tools_dir", "") or "").strip()
+        if runtime_tools_dir:
+            python_path_entries.insert(0, RUNTIME_TOOLS_PYTHON_CONTAINER_ROOT)
         await self.sandbox.exec_detached(
             command,
             cwd="/challenge/agent-repo",
             env={
-                "PYTHONPATH": "/challenge/agent-repo",
+                "PYTHONPATH": ":".join(python_path_entries),
                 "CTF_AGENT_LOG_DIR": TRACE_CONTAINER_ROOT,
             },
         )
@@ -450,6 +479,11 @@ PY"""
         challenge_src_dir = old_sandbox.challenge_src_dir
         auth_seed_mounts = dict(old_sandbox.auth_seed_mounts)
         preserve_stopped_container = old_sandbox.preserve_stopped_container
+        runtime_tools_dir = str(getattr(old_sandbox, "runtime_tools_dir", "") or "")
+        runtime_tools_auto_update = bool(getattr(old_sandbox, "runtime_tools_auto_update", True))
+        runtime_tools_refresh_interval_seconds = int(
+            getattr(old_sandbox, "runtime_tools_refresh_interval_seconds", 86_400) or 86_400
+        )
         await old_sandbox.stop(delete=True)
         self.sandbox = DockerSandbox(
             image=old_sandbox.image,
@@ -462,13 +496,17 @@ PY"""
             shared_artifacts_dir=shared_artifacts_dir,
             control_dir=control_dir,
             provider_home_dir=provider_home_dir,
+            runtime_tools_dir=runtime_tools_dir,
             trace_dir=trace_dir,
             repo_root_dir=repo_root_dir,
             challenge_src_dir=challenge_src_dir,
             auth_seed_mounts=auth_seed_mounts,
             preserve_stopped_container=preserve_stopped_container,
+            runtime_tools_auto_update=runtime_tools_auto_update,
+            runtime_tools_refresh_interval_seconds=runtime_tools_refresh_interval_seconds,
         )
         await self.sandbox.start()
+        await self._maybe_refresh_provider_runtime_tools()
         self._write_runtime_config()
         self._prime_runtime_state()
         await self._start_runtime_process()

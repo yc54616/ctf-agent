@@ -100,6 +100,153 @@ def test_apply_override_patch_and_effective_metadata_file(tmp_path: Path) -> Non
     assert effective_data["notes"] == "operator-fixed endpoint"
 
 
+def test_effective_metadata_uses_current_instance_stage_connection(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "lab-chain"
+    challenge_dir.mkdir()
+    (challenge_dir / "metadata.yml").write_text(
+        "\n".join(
+            [
+                "name: lab-chain",
+                "description: stage workflow",
+                "instance_stages:",
+                "  - id: public_lab",
+                "    title: Public Lab",
+                "    description: Start the outer lab first",
+                "    manual_action: deploy_from_portal",
+                "    connection:",
+                "      url: https://portal.example/lab",
+                "  - id: internal_vm",
+                "    title: Internal VM",
+                "    notes: Deploy the second VM after logging in",
+                "source:",
+                "  platform: dreamhack",
+                "  needs_vm: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    override = apply_override_patch(
+        {},
+        {
+            "current_stage": "internal_vm",
+            "stages": {
+                "internal_vm": {
+                    "status": "ready",
+                    "connection": {
+                        "scheme": "tcp",
+                        "host": "10.10.10.5",
+                        "port": 31337,
+                        "raw_command": "nc 10.10.10.5 31337",
+                    },
+                }
+            },
+        },
+    )
+    write_override(challenge_dir, override)
+    effective_path = refresh_effective_metadata(challenge_dir)
+    effective_data = yaml.safe_load(effective_path.read_text(encoding="utf-8"))
+
+    assert effective_data["needs_instance"] is True
+    assert effective_data["current_stage"] == "internal_vm"
+    assert effective_data["current_stage_title"] == "Internal VM"
+    assert effective_data["current_stage_status"] == "ready"
+    assert effective_data["connection"]["host"] == "10.10.10.5"
+    assert effective_data["connection_info"] == "nc 10.10.10.5 31337"
+    assert len(effective_data["instance_stages"]) == 2
+    assert effective_data["instance_stages"][1]["is_current"] is True
+    assert effective_data["instance_stages"][0]["connection_info"] == "https://portal.example/lab"
+
+
+def test_effective_metadata_supports_override_stage_definitions_endpoints_and_auto_advance(tmp_path: Path) -> None:
+    challenge_dir = tmp_path / "multi-hop"
+    challenge_dir.mkdir()
+    (challenge_dir / "metadata.yml").write_text(
+        "\n".join(
+            [
+                "name: multi-hop",
+                "description: stage workflow",
+                "instance_stages:",
+                "  - id: public_lab",
+                "    title: Public Lab",
+                "  - id: internal_vm",
+                "    title: Internal VM",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    override = apply_override_patch(
+        {},
+        {
+            "instance_stages": [
+                {
+                    "id": "public_lab",
+                    "title": "Public Lab",
+                    "description": "Enter the portal first",
+                    "endpoints": [
+                        {
+                            "id": "portal",
+                            "title": "Portal",
+                            "connection": {"url": "https://portal.example/lab"},
+                        }
+                    ],
+                },
+                {
+                    "id": "internal_vm",
+                    "title": "Internal VM",
+                    "endpoints": [
+                        {
+                            "id": "shell",
+                            "title": "Shell",
+                            "connection": {
+                                "scheme": "tcp",
+                                "host": "10.10.10.5",
+                                "port": 31337,
+                            },
+                        }
+                    ],
+                },
+            ],
+            "current_stage": "public_lab",
+            "stages": {
+                "public_lab": {
+                    "status": "done",
+                    "current_endpoint": "portal",
+                },
+                "internal_vm": {
+                    "status": "ready",
+                    "current_endpoint": "shell",
+                    "endpoints": {
+                        "shell": {
+                            "connection": {
+                                "scheme": "tcp",
+                                "host": "10.10.10.9",
+                                "port": 4444,
+                                "raw_command": "nc 10.10.10.9 4444",
+                            }
+                        }
+                    },
+                },
+            },
+        },
+    )
+    write_override(challenge_dir, override)
+
+    effective_path = refresh_effective_metadata(challenge_dir)
+    effective_data = yaml.safe_load(effective_path.read_text(encoding="utf-8"))
+
+    assert effective_data["current_stage"] == "internal_vm"
+    assert effective_data["current_stage_status"] == "ready"
+    assert effective_data["current_stage_endpoint"] == "shell"
+    assert effective_data["current_stage_endpoint_title"] == "Shell"
+    assert effective_data["connection"]["host"] == "10.10.10.9"
+    assert effective_data["connection_info"] == "nc 10.10.10.9 4444"
+    assert effective_data["instance_stages"][0]["status"] == "done"
+    assert effective_data["instance_stages"][0]["current_endpoint"] == "portal"
+    assert effective_data["instance_stages"][1]["is_current"] is True
+
+
 def test_challenge_config_snapshot_forces_operator_only_on_unknown_platform(tmp_path: Path) -> None:
     challenge_dir = tmp_path / "mystery"
     challenge_dir.mkdir()

@@ -10,6 +10,7 @@ import pytest
 from backend.agents.codex_solver import SANDBOX_TOOLS, CodexSolver
 from backend.cost_tracker import CostTracker
 from backend.prompts import ChallengeMeta
+from backend.solver_base import parse_candidate_rejection_alert
 
 
 def _make_solver(model_spec: str) -> CodexSolver:
@@ -195,6 +196,39 @@ async def test_codex_rejected_candidate_does_not_set_candidate_state() -> None:
     assert solver._candidate_flag is None
     assert solver._candidate_evidence == ""
     assert solver._candidate_confidence == ""
+
+
+@pytest.mark.asyncio
+async def test_codex_rejected_candidate_cools_down_and_notifies(monkeypatch) -> None:
+    solver = _make_solver("codex/gpt-5.4")
+    notifications: list[str] = []
+    wait_timeouts: list[float] = []
+
+    async def fake_notify(message: str) -> None:
+        notifications.append(message)
+
+    async def fake_wait_for(awaitable, timeout):  # type: ignore[no-untyped-def]
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        wait_timeouts.append(float(timeout))
+        raise asyncio.TimeoutError
+
+    solver.notify_coordinator = fake_notify
+    monkeypatch.setattr("backend.agents.codex_solver.asyncio.wait_for", fake_wait_for)
+
+    await solver._handle_rejected_candidate(
+        "BLOCKED_NO_FLAG",
+        "Flag candidate rejected: placeholder sentinel.",
+    )
+
+    assert wait_timeouts == [15.0]
+    assert notifications
+    payload = parse_candidate_rejection_alert(notifications[0])
+    assert payload is not None
+    assert payload["flag"] == "BLOCKED_NO_FLAG"
+    assert payload["reason"] == "placeholder sentinel."
+    assert payload["cooldown_seconds"] == 15
+    assert "Cooling down 15s before continuing." in solver._findings
 
 
 def test_codex_tool_call_phase_expires_when_local_tool_runs_past_deadline() -> None:

@@ -379,6 +379,7 @@ RUN npm install -g "@openai/codex@${CODEX_CLI_VERSION}" "@google/gemini-cli@${GE
 # ── Tools reference and smoke check ───────────────────────────────────────────
 COPY sandbox/sandbox-tools.txt /tools.txt
 COPY sandbox/smoke-check.sh /usr/local/bin/sandbox-smoke-check
-RUN chmod +x /usr/local/bin/sandbox-smoke-check
+COPY sandbox/refresh-provider-tooling.sh /usr/local/bin/refresh-provider-tooling
+RUN chmod +x /usr/local/bin/sandbox-smoke-check /usr/local/bin/refresh-provider-tooling
 
 WORKDIR /challenge

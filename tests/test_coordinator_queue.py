@@ -861,6 +861,8 @@ async def test_swarm_report_flag_candidate_ctfd_incorrect_stays_reviewable(tmp_p
         ("flag{NOT_SOLVED_YET}", "placeholder sentinel"),
         ("flag{NOT_SOLVED_REMOTE_REFUSED}", "placeholder sentinel"),
         ("flag{NO_FLAG_YET}", "placeholder sentinel"),
+        ("BLOCKED_NO_FLAG", "placeholder sentinel"),
+        ("flag{BLOCKED_NO_FLAG}", "placeholder sentinel"),
         ("fakeflag{this_is_not_the_real_flag}", "placeholder sentinel"),
         ("flag{flag_for_testing}", "placeholder sentinel"),
         ("ping{fake_flag}", "placeholder sentinel"),

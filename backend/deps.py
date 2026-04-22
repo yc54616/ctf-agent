@@ -71,6 +71,7 @@ class CoordinatorDeps:
     pending_swarm_set: set[str] = field(default_factory=set)
     pending_swarm_meta: dict[str, dict[str, object]] = field(default_factory=dict)
     quota_exhausted_model_specs: set[str] = field(default_factory=set)
+    ui_alerts: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=20))
     known_challenge_count: int = 0
     known_solved_count: int = 0
     session_started_at: float = field(default_factory=time.time)

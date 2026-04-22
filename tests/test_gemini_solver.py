@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -8,6 +9,7 @@ import pytest
 from backend.agents.gemini_solver import GeminiSolver
 from backend.cost_tracker import CostTracker
 from backend.prompts import ChallengeMeta, build_shell_solver_preamble
+from backend.solver_base import parse_candidate_rejection_alert
 
 
 def _make_solver() -> GeminiSolver:
@@ -136,6 +138,39 @@ async def test_gemini_rejected_candidate_does_not_set_candidate_state() -> None:
     assert solver._candidate_flag is None
     assert solver._candidate_evidence == ""
     assert solver._candidate_confidence == ""
+
+
+@pytest.mark.asyncio
+async def test_gemini_rejected_candidate_cools_down_and_notifies(monkeypatch) -> None:
+    solver = _make_solver()
+    notifications: list[str] = []
+    wait_timeouts: list[float] = []
+
+    async def fake_notify(message: str) -> None:
+        notifications.append(message)
+
+    async def fake_wait_for(awaitable, timeout):  # type: ignore[no-untyped-def]
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        wait_timeouts.append(float(timeout))
+        raise asyncio.TimeoutError
+
+    solver.notify_coordinator = fake_notify
+    monkeypatch.setattr("backend.agents.gemini_solver.asyncio.wait_for", fake_wait_for)
+
+    await solver._handle_rejected_candidate(
+        "BLOCKED_NO_FLAG",
+        "Flag candidate rejected: placeholder sentinel.",
+    )
+
+    assert wait_timeouts == [15.0]
+    assert notifications
+    payload = parse_candidate_rejection_alert(notifications[0])
+    assert payload is not None
+    assert payload["flag"] == "BLOCKED_NO_FLAG"
+    assert payload["reason"] == "placeholder sentinel."
+    assert payload["cooldown_seconds"] == 15
+    assert "Cooling down 15s before continuing." in solver._findings
 
 
 @pytest.mark.asyncio

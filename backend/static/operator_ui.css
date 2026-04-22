@@ -112,6 +112,19 @@ h1 {
   background: rgba(12, 29, 47, 0.75);
 }
 
+.metric-pill-action {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.metric-pill-action button {
+  width: 100%;
+  min-width: 180px;
+  padding: 10px 12px;
+}
+
 .summary-shell {
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -466,6 +479,11 @@ textarea {
   min-height: 88px;
 }
 
+textarea[data-state="error"],
+input[data-state="error"] {
+  border-color: rgba(255, 122, 122, 0.6);
+}
+
 button {
   border: 0;
   border-radius: 14px;
@@ -479,6 +497,11 @@ button {
 button.ghost {
   background: rgba(8, 17, 28, 0.82);
   border: 1px solid var(--line);
+}
+
+button.small {
+  padding: 8px 11px;
+  font-size: 12px;
 }
 
 button:disabled {
@@ -516,6 +539,84 @@ button:disabled {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.config-grid > .field-inline.wide,
+.config-grid > .workflow-editor {
+  grid-column: 1 / -1;
+}
+
+.notes-panel textarea {
+  min-height: 72px;
+}
+
+.workflow-editor {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(152, 185, 210, 0.12);
+  background: rgba(8, 17, 28, 0.42);
+}
+
+.workflow-editor-header,
+.workflow-editor-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.workflow-editor-header > div:first-child {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.workflow-editor-copy {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.workflow-editor-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-top: 10px;
+}
+
+.workflow-editor-grid-primary {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.workflow-editor-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.workflow-more,
+.workflow-advanced {
+  margin-top: 12px;
+  border-top: 1px solid rgba(152, 185, 210, 0.08);
+  padding-top: 12px;
+}
+
+.workflow-more summary,
+.workflow-advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.workflow-more[open] summary,
+.workflow-advanced[open] summary {
+  margin-bottom: 12px;
+}
+
+.workflow-editor textarea {
+  min-height: 64px;
 }
 
 .checkbox-row {

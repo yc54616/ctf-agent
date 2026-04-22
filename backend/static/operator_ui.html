@@ -26,6 +26,10 @@
           <span class="metric-label">Sync</span>
           <strong id="syncMode">connecting...</strong>
         </div>
+        <div class="metric-pill metric-pill-action">
+          <span class="metric-label">Browser Alerts</span>
+          <button class="ghost" id="browserNotificationsBtn" type="button">Enable browser alerts</button>
+        </div>
       </div>
     </header>
 
@@ -132,6 +136,26 @@
             <form class="composer-body compact-form" id="challengeConfigForm">
               <div class="config-grid">
                 <label class="field-inline">
+                  <span>Current stage</span>
+                  <select id="challengeConfigStageSelect">
+                    <option value="">No stage workflow</option>
+                  </select>
+                </label>
+                <label class="field-inline">
+                  <span>Active endpoint</span>
+                  <select id="challengeConfigEndpointSelect">
+                    <option value="">Stage connection</option>
+                  </select>
+                </label>
+                <label class="field-inline">
+                  <span>Stage status</span>
+                  <select id="challengeConfigStageStatusInput">
+                    <option value="pending">pending</option>
+                    <option value="ready">ready</option>
+                    <option value="done">done</option>
+                  </select>
+                </label>
+                <label class="field-inline">
                   <span>Scheme</span>
                   <input id="challengeConfigSchemeInput" type="text" placeholder="tcp, http, https">
                 </label>
@@ -151,11 +175,58 @@
                   <span>Raw command</span>
                   <input id="challengeConfigRawCommandInput" type="text" placeholder="nc host 31337">
                 </label>
-                <label class="field-inline wide">
+                <label class="field-inline wide notes-panel">
                   <span>Notes</span>
                   <textarea id="challengeConfigNotesInput" rows="3" placeholder="operator note for this challenge"></textarea>
                 </label>
+                <div class="field-inline wide workflow-editor">
+                  <div class="workflow-editor-header">
+                    <div>
+                      <span>Stage workflow</span>
+                      <p class="workflow-editor-copy">Edit the current stage here. Advanced JSON stays available only when you need the full structure.</p>
+                    </div>
+                    <div class="workflow-editor-actions">
+                      <button class="ghost small" id="challengeConfigStageAddBtn" type="button">Add stage</button>
+                      <button class="ghost small" id="challengeConfigStageRemoveBtn" type="button">Remove stage</button>
+                    </div>
+                  </div>
+                  <div class="workflow-editor-grid workflow-editor-grid-primary">
+                    <label class="field-inline">
+                      <span>Stage id</span>
+                      <input id="challengeConfigStageIdInput" type="text" placeholder="public_lab">
+                    </label>
+                    <label class="field-inline">
+                      <span>Stage title</span>
+                      <input id="challengeConfigStageTitleInput" type="text" placeholder="Public Lab">
+                    </label>
+                    <label class="field-inline wide">
+                      <span>Manual action</span>
+                      <input id="challengeConfigStageActionInput" type="text" placeholder="deploy_from_portal">
+                    </label>
+                  </div>
+                  <details class="workflow-more">
+                    <summary>More stage details</summary>
+                    <div class="workflow-editor-grid workflow-editor-grid-secondary">
+                      <label class="field-inline wide">
+                        <span>Stage description</span>
+                        <textarea id="challengeConfigStageDescriptionInput" rows="2" placeholder="What the operator should do at this stage"></textarea>
+                      </label>
+                      <label class="field-inline wide">
+                        <span>Stage notes</span>
+                        <textarea id="challengeConfigStageNotesInput" rows="2" placeholder="Optional notes about this stage"></textarea>
+                      </label>
+                    </div>
+                  </details>
+                  <details class="workflow-advanced">
+                    <summary>Advanced workflow JSON</summary>
+                    <label class="field-inline wide">
+                      <span>Advanced workflow JSON</span>
+                      <textarea id="challengeConfigStagesInput" rows="10" placeholder='[{"id":"public_lab","title":"Public Lab"}]'></textarea>
+                    </label>
+                  </details>
+                </div>
               </div>
+              <p class="instance-check-summary" id="challengeConfigStageSummary">No instance stages configured for this challenge.</p>
               <div class="checkbox-row">
                 <label class="toggle-inline">
                   <input id="challengeConfigPriorityInput" type="checkbox">

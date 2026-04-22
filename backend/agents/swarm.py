@@ -42,6 +42,7 @@ from backend.solver_base import (
     FLAG_FOUND,
     GAVE_UP,
     QUOTA_ERROR,
+    RETRY_SOON,
     SolverProtocol,
     SolverResult,
 )
@@ -155,6 +156,7 @@ FLAG_CANDIDATE_SENTINEL_COMPACTS = frozenset(
         "incorrect",
         "accepted",
         "rejected",
+        "blockednoflag",
         "alreadysolved",
         "cooldown",
         "none",
@@ -187,6 +189,7 @@ FLAG_CANDIDATE_PLACEHOLDER_COMPACTS = frozenset(
         "notsolveremoterefused",
         "notsolvedremoterefused",
         "notfound",
+        "blockednoflag",
         "placeholderflag",
         "fakeflaghere",
         "flaggoeshere",
@@ -232,6 +235,7 @@ FLAG_CANDIDATE_PLACEHOLDER_TOKENS = frozenset(
         "here",
         "not",
         "real",
+        "blocked",
         "reflect",
         "reflection",
     }
@@ -4077,7 +4081,7 @@ class ChallengeSwarm:
             result = await solver.run_until_done_or_gave_up()
 
             # Only broadcast useful findings — skip errors and broken solvers
-            if (result.status not in (ERROR, QUOTA_ERROR)
+            if (result.status not in (ERROR, QUOTA_ERROR, RETRY_SOON)
                     and not (result.step_count == 0 and result.cost_usd == 0)
                     and result.findings_summary
                     and not result.findings_summary.startswith(("Error:", "Turn failed:"))):
@@ -4091,7 +4095,7 @@ class ChallengeSwarm:
 
             await self._maybe_share_artifact_finding(model_spec, solver, result)
 
-            if result.status == FLAG_CANDIDATE:
+            if result.status in {FLAG_CANDIDATE, RETRY_SOON}:
                 continue
 
             if result.status == FLAG_FOUND:

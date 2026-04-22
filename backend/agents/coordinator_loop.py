@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
@@ -36,12 +37,14 @@ from backend.operator_ui import (
 from backend.platforms import NullPlatformClient, PlatformClient, build_platform_client
 from backend.poller import CTFdPoller, PlatformPoller
 from backend.prompts import ChallengeMeta
+from backend.solver_base import format_candidate_rejection_alert, parse_candidate_rejection_alert
 
 logger = logging.getLogger(__name__)
 
 # Callable type for a coordinator turn: (message) -> None
 TurnFn = Callable[[str], Coroutine[Any, Any, None]]
 SHUTDOWN_SWARM_GRACE_SECONDS = 8.0
+UI_ALERT_MIN_TTL_SECONDS = 20.0
 
 
 def _is_loop_closed_error(exc: BaseException) -> bool:
@@ -53,6 +56,14 @@ def _render_solver_message(event: object) -> str:
         return event.rendered_text()
 
     if isinstance(event, CoordinatorNoteRef):
+        parsed_rejection = parse_candidate_rejection_alert(event.summary)
+        if parsed_rejection is not None:
+            prefix = (
+                f"[{event.challenge_name}/{event.source_model}] "
+                if event.challenge_name and event.source_model
+                else ""
+            )
+            return f"UI ALERT: {prefix}{format_candidate_rejection_alert(event.summary)}".strip()
         return event.rendered_text()
 
     if isinstance(event, str):
@@ -118,6 +129,9 @@ def _render_solver_message(event: object) -> str:
         return "\n".join(lines)
 
     if kind == "coordinator_note":
+        parsed_rejection = parse_candidate_rejection_alert(payload.get("summary"))
+        if parsed_rejection is not None:
+            return f"UI ALERT: {prefix}{format_candidate_rejection_alert(payload.get('summary'))}".strip()
         lines = [f"ADVISOR MESSAGE: {prefix}{str(payload.get('summary') or '').strip()}".rstrip()]
         pointer_text = str(payload.get("pointer_path") or "").strip()
         if pointer_text:
@@ -136,6 +150,45 @@ def _dedupe_preserve_order(messages: list[str]) -> list[str]:
         seen.add(message)
         deduped.append(message)
     return deduped
+
+
+def _snapshot_ui_alerts(deps: CoordinatorDeps) -> list[dict[str, Any]]:
+    now = time.time()
+    active_alerts = [
+        dict(alert)
+        for alert in deps.ui_alerts
+        if float(alert.get("expires_at") or 0.0) > now
+    ]
+    if len(active_alerts) != len(deps.ui_alerts):
+        deps.ui_alerts.clear()
+        deps.ui_alerts.extend(active_alerts)
+    return active_alerts
+
+
+def _capture_solver_ui_alert(deps: CoordinatorDeps, event: object) -> bool:
+    note = event if isinstance(event, CoordinatorNoteRef) else CoordinatorNoteRef.from_snapshot(event)
+    if note is None:
+        return False
+    parsed = parse_candidate_rejection_alert(note.summary)
+    if parsed is None:
+        return False
+    cooldown_seconds = max(
+        int(parsed.get("cooldown_seconds") or 0),
+        int(UI_ALERT_MIN_TTL_SECONDS),
+    )
+    deps.ui_alerts.append(
+        {
+            "id": f"candidate-rejected:{note.challenge_name}:{note.source_model}:{int(note.timestamp * 1000)}",
+            "kind": "candidate_rejected",
+            "tone": "warn",
+            "ts": note.timestamp,
+            "expires_at": note.timestamp + cooldown_seconds,
+            "challenge_name": note.challenge_name,
+            "lane_id": note.source_model,
+            "message": format_candidate_rejection_alert(note.summary),
+        }
+    )
+    return True
 
 
 def _restored_solved_names(deps: CoordinatorDeps) -> set[str]:
@@ -493,6 +546,8 @@ async def run_event_loop(
             while True:
                 try:
                     solver_msg = deps.coordinator_inbox.get_nowait()
+                    if _capture_solver_ui_alert(deps, solver_msg):
+                        continue
                     parts.append(_render_solver_message(solver_msg))
                 except asyncio.QueueEmpty:
                     break
@@ -739,6 +794,7 @@ def _pending_candidate_count(challenges: list[dict[str, Any]], results: dict[str
 
 def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
     legacy = _status_snapshot(deps)
+    ui_alerts = _snapshot_ui_alerts(deps)
     active = legacy.get("active_swarms", {})
     pending = legacy.get("pending_swarms", {})
     finished = legacy.get("finished_swarms", {})
@@ -825,6 +881,7 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
             "coordinator_queue_depth": legacy.get("coordinator_queue_depth", 0),
             "operator_queue_depth": legacy.get("operator_queue_depth", 0),
         },
+        "ui_alerts": ui_alerts,
         "no_submit": bool(deps.no_submit),
         "local_mode": bool(deps.local_mode),
     }
@@ -1421,7 +1478,7 @@ async def _start_msg_server(
     try:
         server = await asyncio.start_server(_handle, "127.0.0.1", port)
         actual_port = server.sockets[0].getsockname()[1]
-        logger.info(f"Operator message endpoint listening on http://127.0.0.1:{actual_port}")
+        logger.info(f"Operator message endpoint listening on http://127.0.0.1:{actual_port}/ui")
         return server
     except OSError as e:
         logger.warning(f"Could not start operator message endpoint: {e}")

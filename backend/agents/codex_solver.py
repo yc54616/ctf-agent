@@ -44,9 +44,12 @@ from backend.solver_base import (
     FLAG_FOUND,
     GAVE_UP,
     QUOTA_ERROR,
+    RETRY_SOON,
     LaneRuntimeStatus,
     SolverResult,
+    build_candidate_rejection_alert,
     candidate_report_was_accepted,
+    format_candidate_rejection_alert,
     lifecycle_for_result,
     summarize_tool_input,
     summarize_tool_result,
@@ -70,6 +73,7 @@ WATCHDOG_MAX_BASH_TOOL_SECONDS = 600.0
 PROACTIVE_COMPACT_CONTEXT_FRACTION = 0.7
 PROACTIVE_COMPACT_ABSOLUTE_TOKENS = 250_000
 THREAD_STATE_VERSION = 2
+REJECTED_CANDIDATE_COOLDOWN_SECONDS = 15.0
 
 WATCHDOG_SHORT_TOOLS = {
     "report_flag_candidate",
@@ -826,6 +830,29 @@ class CodexSolver:
             self._candidate_confidence = confidence.strip() or "medium"
         return ack
 
+    async def _handle_rejected_candidate(self, flag: str, ack: object) -> None:
+        cooldown_seconds = REJECTED_CANDIDATE_COOLDOWN_SECONDS
+        alert_payload = build_candidate_rejection_alert(
+            flag=flag,
+            reply=ack,
+            cooldown_seconds=cooldown_seconds,
+        )
+        alert_text = format_candidate_rejection_alert(alert_payload)
+        self._candidate_flag = None
+        self._candidate_evidence = ""
+        self._candidate_confidence = ""
+        self._findings = (
+            f"Flag candidate rejected: {flag}\n{ack}\n"
+            f"Cooling down {int(cooldown_seconds)}s before continuing."
+        )[:2000]
+        self._runtime.note_commentary(alert_text)
+        if self.notify_coordinator:
+            await self.notify_coordinator(alert_payload)
+        try:
+            await asyncio.wait_for(self.cancel_event.wait(), timeout=cooldown_seconds)
+        except asyncio.TimeoutError:
+            pass
+
     def get_runtime_status(self) -> dict[str, object]:
         snapshot = self._runtime.snapshot()
         snapshot["watchdog_phase"] = self._watchdog_phase
@@ -923,6 +950,8 @@ class CodexSolver:
                     )[:2000]
                     if candidate_report_was_accepted(ack):
                         return self._result(FLAG_CANDIDATE)
+                    await self._handle_rejected_candidate(candidate_flag, ack)
+                    return self._result(RETRY_SOON)
 
             if self._confirmed and self._flag:
                 return self._result(FLAG_FOUND)

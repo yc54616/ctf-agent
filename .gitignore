@@ -25,3 +25,6 @@ uv.lock
 workspace/
 codex-schema-*/
 .claude/scheduled_tasks.lock
+
+# Tests CTF
+2026-GMDSOFT/

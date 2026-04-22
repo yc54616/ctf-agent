@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,15 +16,12 @@ if TYPE_CHECKING:
 _SESSION_DIRNAME = "browser-sessions"
 
 
-def _config_root() -> Path:
-    xdg_config = str(os.environ.get("XDG_CONFIG_HOME") or "").strip()
-    if xdg_config:
-        return Path(xdg_config).expanduser().resolve()
-    return (Path.home() / ".config").resolve()
+def _repo_cache_root() -> Path:
+    return (Path(__file__).resolve().parents[1] / ".cache").resolve()
 
 
 def browser_session_root() -> Path:
-    path = _config_root() / "ctf-agent" / _SESSION_DIRNAME
+    path = _repo_cache_root() / _SESSION_DIRNAME
     path.mkdir(parents=True, exist_ok=True)
     return path
 

@@ -112,6 +112,14 @@ async def probe_instance_connection(meta: dict[str, Any], *, timeout: float = 5.
     connection = _resolved_connection(effective)
     target_label = render_connection_info(connection, fallback=str(effective.get("connection_info") or ""))
     needs_instance = bool(effective.get("needs_instance"))
+    current_stage = str(effective.get("current_stage") or "").strip()
+    current_stage_title = str(
+        effective.get("current_stage_title") or current_stage or ""
+    ).strip()
+    current_stage_endpoint = str(effective.get("current_stage_endpoint") or "").strip()
+    current_stage_endpoint_title = str(
+        effective.get("current_stage_endpoint_title") or current_stage_endpoint or ""
+    ).strip()
     kind, target = _probe_target(connection)
     if kind == "http":
         result = await _probe_http(str(target["url"]), timeout=timeout)
@@ -136,4 +144,8 @@ async def probe_instance_connection(meta: dict[str, Any], *, timeout: float = 5.
         }
     result.setdefault("target", target_label or "-")
     result["needs_instance"] = needs_instance
+    result["current_stage"] = current_stage
+    result["current_stage_title"] = current_stage_title
+    result["current_stage_endpoint"] = current_stage_endpoint
+    result["current_stage_endpoint_title"] = current_stage_endpoint_title
     return result

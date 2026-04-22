@@ -34,6 +34,9 @@ SHARED_ARTIFACTS_HOST_DIRNAME = ".shared-artifacts"
 SHARED_ARTIFACTS_CONTAINER_ROOT = "/challenge/shared-artifacts"
 CONTROL_CONTAINER_ROOT = "/challenge/control"
 PROVIDER_HOME_CONTAINER_ROOT = "/challenge/provider-home"
+RUNTIME_TOOLS_CONTAINER_ROOT = "/challenge/runtime-tools"
+RUNTIME_TOOLS_NPM_CONTAINER_ROOT = f"{RUNTIME_TOOLS_CONTAINER_ROOT}/npm"
+RUNTIME_TOOLS_PYTHON_CONTAINER_ROOT = f"{RUNTIME_TOOLS_CONTAINER_ROOT}/python"
 CHALLENGE_SRC_CONTAINER_ROOT = "/challenge/challenge-src"
 REPO_CONTAINER_ROOT = "/challenge/agent-repo"
 TRACE_CONTAINER_ROOT = "/challenge/host-logs"
@@ -41,6 +44,33 @@ AUTH_SEED_CONTAINER_ROOT = "/challenge/auth-seeds"
 DEFAULT_EXEC_OUTPUT_SPILL_THRESHOLD_BYTES = 64 * 1024
 DEFAULT_READ_FILE_SPILL_THRESHOLD_BYTES = 256 * 1024
 DEFAULT_ARTIFACT_PREVIEW_BYTES = 8 * 1024
+DEFAULT_RUNTIME_TOOLS_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
+DEFAULT_CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def resolve_runtime_tools_host_dir(configured: str | Path | None = None) -> Path:
+    if configured:
+        return Path(configured).expanduser().resolve()
+    repo_root = Path(__file__).resolve().parents[1]
+    return (repo_root / ".cache" / "runtime-tools").resolve()
+
+
+def sandbox_runtime_tooling_kwargs(settings: object) -> dict[str, object]:
+    configured_dir = str(getattr(settings, "sandbox_runtime_tools_dir", "") or "").strip()
+    refresh_raw = getattr(
+        settings,
+        "sandbox_runtime_tools_refresh_interval_seconds",
+        DEFAULT_RUNTIME_TOOLS_REFRESH_INTERVAL_SECONDS,
+    )
+    try:
+        refresh_interval = max(0, int(refresh_raw))
+    except (TypeError, ValueError):
+        refresh_interval = DEFAULT_RUNTIME_TOOLS_REFRESH_INTERVAL_SECONDS
+    return {
+        "runtime_tools_dir": str(resolve_runtime_tools_host_dir(configured_dir)),
+        "runtime_tools_auto_update": bool(getattr(settings, "sandbox_runtime_tools_auto_update", True)),
+        "runtime_tools_refresh_interval_seconds": refresh_interval,
+    }
 
 
 def configure_semaphore(max_concurrent: int = 50) -> None:
@@ -227,12 +257,15 @@ class DockerSandbox:
     workspace_dir: str = ""
     control_dir: str = ""
     provider_home_dir: str = ""
+    runtime_tools_dir: str = ""
     trace_dir: str = ""
     repo_root_dir: str = ""
     challenge_src_dir: str = ""
     auth_seed_mounts: dict[str, str] = field(default_factory=dict)
     existing_container_id: str = ""
     preserve_stopped_container: bool = False
+    runtime_tools_auto_update: bool = True
+    runtime_tools_refresh_interval_seconds: int = DEFAULT_RUNTIME_TOOLS_REFRESH_INTERVAL_SECONDS
     owns_workspace_dir: bool = False
     _container: Any = field(default=None, repr=False)
     _docker: Any = field(default=None, repr=False)
@@ -356,6 +389,10 @@ class DockerSandbox:
                 (provider_home / ".codex").mkdir(parents=True, exist_ok=True)
                 (provider_home / ".gemini").mkdir(parents=True, exist_ok=True)
                 binds.append(f"{self.provider_home_dir}:{PROVIDER_HOME_CONTAINER_ROOT}:rw")
+            if self.runtime_tools_dir:
+                runtime_tools = Path(self.runtime_tools_dir)
+                runtime_tools.mkdir(parents=True, exist_ok=True)
+                binds.append(f"{self.runtime_tools_dir}:{RUNTIME_TOOLS_CONTAINER_ROOT}:rw")
             if self.repo_root_dir and Path(self.repo_root_dir).exists():
                 binds.append(f"{self.repo_root_dir}:{REPO_CONTAINER_ROOT}:ro")
             if self.trace_dir:
@@ -382,11 +419,22 @@ class DockerSandbox:
             if Path(meta_yml).exists():
                 binds.append(f"{meta_yml}:/challenge/metadata.yml:ro")
 
+            env = [
+                f"PATH={RUNTIME_TOOLS_NPM_CONTAINER_ROOT}/bin:{DEFAULT_CONTAINER_PATH}",
+                f"PYTHONPATH={RUNTIME_TOOLS_PYTHON_CONTAINER_ROOT}",
+                f"CTF_AGENT_RUNTIME_TOOLS_DIR={RUNTIME_TOOLS_CONTAINER_ROOT}",
+                f"CTF_AGENT_RUNTIME_TOOLS_NPM_PREFIX={RUNTIME_TOOLS_NPM_CONTAINER_ROOT}",
+                f"CTF_AGENT_RUNTIME_TOOLS_PYTHONPATH={RUNTIME_TOOLS_PYTHON_CONTAINER_ROOT}",
+                f"CTF_AGENT_RUNTIME_TOOLS_AUTO_UPDATE={'1' if self.runtime_tools_auto_update else '0'}",
+                "CTF_AGENT_RUNTIME_TOOLS_BIN=/challenge/runtime-tools/npm/bin",
+                f"CTF_AGENT_RUNTIME_TOOLS_REFRESH_INTERVAL_SECONDS={max(0, int(self.runtime_tools_refresh_interval_seconds))}",
+            ]
             config = {
                 "Image": self.image,
                 "Cmd": ["sleep", "infinity"],
                 "WorkingDir": "/challenge",
                 "Tty": False,
+                "Env": env,
                 "Labels": {CONTAINER_LABEL: "true"},
                 "HostConfig": {
                     "Binds": binds,

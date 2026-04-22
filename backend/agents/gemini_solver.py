@@ -33,9 +33,12 @@ from backend.solver_base import (
     FLAG_FOUND,
     GAVE_UP,
     QUOTA_ERROR,
+    RETRY_SOON,
     LaneRuntimeStatus,
     SolverResult,
+    build_candidate_rejection_alert,
     candidate_report_was_accepted,
+    format_candidate_rejection_alert,
     lifecycle_for_result,
     summarize_tool_input,
     summarize_tool_result,
@@ -52,6 +55,7 @@ WATCHDOG_SHORT_TOOL_SECONDS = 60.0
 WATCHDOG_DEFAULT_TOOL_SECONDS = 120.0
 WATCHDOG_TOOL_TIMEOUT_PADDING_SECONDS = 30.0
 WATCHDOG_MAX_BASH_TOOL_SECONDS = 600.0
+REJECTED_CANDIDATE_COOLDOWN_SECONDS = 15.0
 
 WATCHDOG_SHORT_TOOLS = {
     "report_flag_candidate",
@@ -241,6 +245,7 @@ class GeminiSolver:
         steps_before = self._step_count
         prompt = self._consume_turn_prompt()
         prior_candidate = self._candidate_flag
+        rejected_candidate = False
 
         stdout_state: dict[str, Any] = {
             "response_chunks": [],
@@ -342,17 +347,20 @@ class GeminiSolver:
                 self._findings = response_text[:2000]
                 flag_match = FLAG_LINE_RE.search(response_text)
                 if flag_match:
-                    self._candidate_flag = flag_match.group(1).strip()
-                    self._candidate_evidence = "Gemini terminal response"
-                    self._candidate_confidence = "medium"
+                    candidate_flag = flag_match.group(1).strip()
+                    candidate_evidence = "Gemini terminal response"
+                    candidate_confidence = "medium"
                     ack = await self._report_flag_candidate(
-                        self._candidate_flag,
-                        evidence=self._candidate_evidence,
-                        confidence=self._candidate_confidence,
+                        candidate_flag,
+                        evidence=candidate_evidence,
+                        confidence=candidate_confidence,
                     )
                     self._findings = (
-                        f"Flag candidate via {self._candidate_evidence}: {self._candidate_flag}\n{ack}"
+                        f"Flag candidate via {candidate_evidence}: {candidate_flag}\n{ack}"
                     )[:2000]
+                    if not candidate_report_was_accepted(ack):
+                        await self._handle_rejected_candidate(candidate_flag, ack)
+                        rejected_candidate = True
 
             self._record_usage(stdout_state.get("result_stats"), time.monotonic() - t0)
             self.tracer.event(
@@ -382,6 +390,12 @@ class GeminiSolver:
             if self._confirmed and self._flag:
                 return self._result(
                     FLAG_FOUND,
+                    run_steps=self._step_count - steps_before,
+                    run_cost=self._cost_usd - cost_before,
+                )
+            if rejected_candidate:
+                return self._result(
+                    RETRY_SOON,
                     run_steps=self._step_count - steps_before,
                     run_cost=self._cost_usd - cost_before,
                 )
@@ -699,6 +713,29 @@ class GeminiSolver:
             self._candidate_evidence = evidence.strip()
             self._candidate_confidence = confidence.strip() or "medium"
         return ack
+
+    async def _handle_rejected_candidate(self, flag: str, ack: object) -> None:
+        cooldown_seconds = REJECTED_CANDIDATE_COOLDOWN_SECONDS
+        alert_payload = build_candidate_rejection_alert(
+            flag=flag,
+            reply=ack,
+            cooldown_seconds=cooldown_seconds,
+        )
+        alert_text = format_candidate_rejection_alert(alert_payload)
+        self._candidate_flag = None
+        self._candidate_evidence = ""
+        self._candidate_confidence = ""
+        self._findings = (
+            f"Flag candidate rejected: {flag}\n{ack}\n"
+            f"Cooling down {int(cooldown_seconds)}s before continuing."
+        )[:2000]
+        self._runtime.note_commentary(alert_text)
+        if self.notify_coordinator:
+            await self.notify_coordinator(alert_payload)
+        try:
+            await asyncio.wait_for(self.cancel_event.wait(), timeout=cooldown_seconds)
+        except asyncio.TimeoutError:
+            pass
 
     async def _terminate_proc(self) -> None:
         if not self._proc:

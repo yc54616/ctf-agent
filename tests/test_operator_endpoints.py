@@ -1482,3 +1482,121 @@ def test_check_instance_endpoint_reports_probe_and_optional_restart(monkeypatch,
     assert restart_payload["ready"] is True
     assert restart_payload["restart_requested"] is True
     assert restart_payload["restart_result"] == 'Restarted "Ring of IO" from saved notes.'
+
+
+def test_challenge_config_endpoint_tracks_current_instance_stage(tmp_path: Path) -> None:
+    deps = CoordinatorDeps(
+        ctfd=cast(Any, object()),
+        cost_tracker=CostTracker(),
+        settings=object(),
+    )
+    challenge_dir = tmp_path / "multi-hop"
+    challenge_dir.mkdir()
+    (challenge_dir / "metadata.yml").write_text(
+        "\n".join(
+            [
+                "name: multi-hop",
+                "description: staged deploy",
+                "instance_stages:",
+                "  - id: public_lab",
+                "    title: Public Lab",
+                "    connection:",
+                "      url: https://portal.example/lab",
+                "  - id: internal_vm",
+                "    title: Internal VM",
+                "source:",
+                "  platform: dreamhack",
+                "  needs_vm: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    deps.challenge_dirs["multi-hop"] = str(challenge_dir)
+
+    async def _exercise() -> tuple[tuple[str, dict], tuple[str, dict]]:
+        server = await _start_msg_server(deps.operator_inbox, deps, 0)
+        assert server is not None
+        port = server.sockets[0].getsockname()[1]
+        try:
+            get_resp = await _get_json(port, "/api/runtime/challenge-config?challenge_name=multi-hop")
+            patch_resp = await _patch_json(
+                port,
+                "/api/runtime/challenge-config",
+                {
+                    "challenge_name": "multi-hop",
+                    "replace": True,
+                    "override": {
+                        "instance_stages": [
+                            {
+                                "id": "public_lab",
+                                "title": "Public Lab",
+                                "endpoints": [
+                                    {
+                                        "id": "portal",
+                                        "title": "Portal",
+                                        "connection": {
+                                            "url": "https://portal.example/lab",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "id": "internal_vm",
+                                "title": "Internal VM",
+                                "endpoints": [
+                                    {
+                                        "id": "shell",
+                                        "title": "Shell",
+                                        "connection": {
+                                            "scheme": "tcp",
+                                            "host": "10.10.10.9",
+                                            "port": 4444,
+                                        },
+                                    }
+                                ],
+                            },
+                        ],
+                        "current_stage": "internal_vm",
+                        "stages": {
+                            "internal_vm": {
+                                "status": "ready",
+                                "current_endpoint": "shell",
+                                "endpoints": {
+                                    "shell": {
+                                        "connection": {
+                                            "scheme": "tcp",
+                                            "host": "10.10.10.9",
+                                            "port": 4444,
+                                            "raw_command": "nc 10.10.10.9 4444",
+                                        },
+                                    }
+                                },
+                            }
+                        },
+                        "needs_instance": True,
+                    },
+                },
+            )
+            return get_resp, patch_resp
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    get_resp, patch_resp = asyncio.run(_exercise())
+
+    get_status, get_payload = get_resp
+    assert get_status.startswith("HTTP/1.1 200")
+    assert get_payload["effective"]["current_stage"] == "public_lab"
+    assert get_payload["effective"]["connection"]["url"] == "https://portal.example/lab"
+    assert len(get_payload["effective"]["instance_stages"]) == 2
+
+    patch_status, patch_payload = patch_resp
+    assert patch_status.startswith("HTTP/1.1 200")
+    assert patch_payload["override"]["current_stage"] == "internal_vm"
+    assert patch_payload["override"]["stages"]["internal_vm"]["status"] == "ready"
+    assert patch_payload["override"]["stages"]["internal_vm"]["current_endpoint"] == "shell"
+    assert patch_payload["effective"]["current_stage"] == "internal_vm"
+    assert patch_payload["effective"]["current_stage_status"] == "ready"
+    assert patch_payload["effective"]["current_stage_endpoint"] == "shell"
+    assert patch_payload["effective"]["connection"]["host"] == "10.10.10.9"
+    assert patch_payload["effective"]["connection_info"] == "nc 10.10.10.9 4444"

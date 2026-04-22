@@ -1,6 +1,7 @@
 const POLL_MS = 2000;
 const FINAL_STATES = new Set(["won", "flag_found", "cancelled"]);
 const TERMINAL_CANDIDATE_STATUSES = new Set(["confirmed", "rejected"]);
+const HIDE_ERROR_LANES_STORAGE_KEY = "ctf-agent:hide-error-lanes";
 const state = {
   snapshot: null,
   snapshotReceived: false,
@@ -12,6 +13,10 @@ const state = {
   challengeConfig: null,
   challengeConfigFor: "",
   challengeConfigLoading: false,
+  stageWorkflowDraft: "",
+  stageWorkflowDirty: false,
+  stageWorkflowDefinitions: [],
+  stageWorkflowParseError: "",
   instanceProbeResult: null,
   instanceProbeFor: "",
   instanceProbeLoading: false,
@@ -21,17 +26,20 @@ const state = {
   traceWindow: null,
   traceTypeFilter: "",
   traceTextFilter: "",
-  hideErrorLanes: false,
+  hideErrorLanes: loadHideErrorLanesPreference(),
   loadingTraceFilesFor: "",
   usingRealtime: false,
   statusPollHandle: null,
   statusStream: null,
+  seenUiAlertIds: [],
+  browserNotificationPermission: "",
 };
 
 const els = {
   updatedAt: document.getElementById("updatedAt"),
   runningFor: document.getElementById("runningFor"),
   syncMode: document.getElementById("syncMode"),
+  browserNotificationsBtn: document.getElementById("browserNotificationsBtn"),
   summaryGrid: document.getElementById("summaryGrid"),
   challengeCount: document.getElementById("challengeCount"),
   challengeGroups: document.getElementById("challengeGroups"),
@@ -71,12 +79,24 @@ const els = {
   challengeConfigSummary: document.getElementById("challengeConfigSummary"),
   challengeConfigFacts: document.getElementById("challengeConfigFacts"),
   challengeConfigForm: document.getElementById("challengeConfigForm"),
+  challengeConfigStageSelect: document.getElementById("challengeConfigStageSelect"),
+  challengeConfigStageAddBtn: document.getElementById("challengeConfigStageAddBtn"),
+  challengeConfigStageRemoveBtn: document.getElementById("challengeConfigStageRemoveBtn"),
+  challengeConfigStageIdInput: document.getElementById("challengeConfigStageIdInput"),
+  challengeConfigStageTitleInput: document.getElementById("challengeConfigStageTitleInput"),
+  challengeConfigStageActionInput: document.getElementById("challengeConfigStageActionInput"),
+  challengeConfigStageDescriptionInput: document.getElementById("challengeConfigStageDescriptionInput"),
+  challengeConfigStageNotesInput: document.getElementById("challengeConfigStageNotesInput"),
+  challengeConfigEndpointSelect: document.getElementById("challengeConfigEndpointSelect"),
+  challengeConfigStageStatusInput: document.getElementById("challengeConfigStageStatusInput"),
+  challengeConfigStageSummary: document.getElementById("challengeConfigStageSummary"),
   challengeConfigSchemeInput: document.getElementById("challengeConfigSchemeInput"),
   challengeConfigHostInput: document.getElementById("challengeConfigHostInput"),
   challengeConfigPortInput: document.getElementById("challengeConfigPortInput"),
   challengeConfigUrlInput: document.getElementById("challengeConfigUrlInput"),
   challengeConfigRawCommandInput: document.getElementById("challengeConfigRawCommandInput"),
   challengeConfigNotesInput: document.getElementById("challengeConfigNotesInput"),
+  challengeConfigStagesInput: document.getElementById("challengeConfigStagesInput"),
   challengeConfigPriorityInput: document.getElementById("challengeConfigPriorityInput"),
   challengeConfigNoSubmitInput: document.getElementById("challengeConfigNoSubmitInput"),
   challengeConfigNeedsInstanceInput: document.getElementById("challengeConfigNeedsInstanceInput"),
@@ -85,6 +105,48 @@ const els = {
   instanceCheckRestartBtn: document.getElementById("instanceCheckRestartBtn"),
   challengeConfigResetBtn: document.getElementById("challengeConfigResetBtn"),
 };
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function getLocalStorage() {
+  try {
+    return typeof globalThis.localStorage === "object" && globalThis.localStorage
+      ? globalThis.localStorage
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadHideErrorLanesPreference() {
+  const storage = getLocalStorage();
+  if (!storage || typeof storage.getItem !== "function") {
+    return false;
+  }
+  try {
+    return storage.getItem(HIDE_ERROR_LANES_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveHideErrorLanesPreference(value) {
+  const storage = getLocalStorage();
+  if (!storage || typeof storage.setItem !== "function") {
+    return;
+  }
+  try {
+    storage.setItem(HIDE_ERROR_LANES_STORAGE_KEY, value ? "true" : "false");
+  } catch {
+    // Ignore unavailable or quota-limited storage so the UI still works.
+  }
+}
+
+if (els.hideErrorLanes) {
+  els.hideErrorLanes.checked = state.hideErrorLanes;
+}
 
 function pendingChallengeEntries(snapshot) {
   const entries = Array.isArray(snapshot?.pending_challenge_entries)
@@ -559,26 +621,379 @@ function challengeNeedsInstance(payload) {
   return Boolean(effective.needs_instance);
 }
 
+function serverInstanceStages(payload) {
+  const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
+  if (!Array.isArray(effective.instance_stages)) {
+    return [];
+  }
+  return effective.instance_stages.filter((stage) => stage && typeof stage === "object");
+}
+
+function editableStageDefinitions(payload) {
+  return serverInstanceStages(payload).map((stage) => {
+    const definition = {
+      id: String(stage?.id || "").trim(),
+    };
+    ["title", "description", "manual_action", "notes"].forEach((field) => {
+      const value = String(stage?.[field] || "").trim();
+      if (value) {
+        definition[field] = value;
+      }
+    });
+    const stageConnection =
+      stage?.stage_connection && typeof stage.stage_connection === "object"
+        ? stage.stage_connection
+        : (stage?.connection && typeof stage.connection === "object" ? stage.connection : {});
+    if (Object.keys(stageConnection).length) {
+      definition.connection = JSON.parse(JSON.stringify(stageConnection));
+    }
+    const endpoints = Array.isArray(stage?.endpoints)
+      ? stage.endpoints
+          .filter((endpoint) => endpoint && typeof endpoint === "object")
+          .map((endpoint) => {
+            const result = {
+              id: String(endpoint?.id || "").trim(),
+            };
+            ["title", "description"].forEach((field) => {
+              const value = String(endpoint?.[field] || "").trim();
+              if (value) {
+                result[field] = value;
+              }
+            });
+            const connection = endpoint?.connection && typeof endpoint.connection === "object" ? endpoint.connection : {};
+            if (Object.keys(connection).length) {
+              result.connection = JSON.parse(JSON.stringify(connection));
+            }
+            return result;
+          })
+          .filter((endpoint) => endpoint.id)
+      : [];
+    if (endpoints.length) {
+      definition.endpoints = endpoints;
+    }
+    return definition;
+  }).filter((stage) => stage.id);
+}
+
+function parseStageWorkflowText(rawText) {
+  const normalizedText = String(rawText || "").trim();
+  if (!normalizedText) {
+    return [];
+  }
+  const parsed = JSON.parse(normalizedText);
+  if (!Array.isArray(parsed)) {
+    throw new Error("stage workflow JSON must be an array");
+  }
+  const normalized = parsed
+    .map((stage) => {
+      if (!stage || typeof stage !== "object") {
+        return null;
+      }
+      const stageId = String(stage.id || "").trim();
+      if (!stageId) {
+        return null;
+      }
+      const result = { id: stageId };
+      ["title", "description", "manual_action", "notes"].forEach((field) => {
+        const value = String(stage[field] || "").trim();
+        if (value) {
+          result[field] = value;
+        }
+      });
+      if (stage.connection && typeof stage.connection === "object") {
+        result.connection = {
+          scheme: String(stage.connection.scheme || "").trim(),
+          host: String(stage.connection.host || "").trim(),
+          port: stage.connection.port === undefined || stage.connection.port === null ? undefined : Number(stage.connection.port),
+          url: String(stage.connection.url || "").trim(),
+          raw_command: String(stage.connection.raw_command || "").trim(),
+        };
+      }
+      if (Array.isArray(stage.endpoints)) {
+        result.endpoints = stage.endpoints
+          .map((endpoint) => {
+            if (!endpoint || typeof endpoint !== "object") {
+              return null;
+            }
+            const endpointId = String(endpoint.id || "").trim();
+            if (!endpointId) {
+              return null;
+            }
+            const normalizedEndpoint = { id: endpointId };
+            ["title", "description"].forEach((field) => {
+              const value = String(endpoint[field] || "").trim();
+              if (value) {
+                normalizedEndpoint[field] = value;
+              }
+            });
+            if (endpoint.connection && typeof endpoint.connection === "object") {
+              normalizedEndpoint.connection = {
+                scheme: String(endpoint.connection.scheme || "").trim(),
+                host: String(endpoint.connection.host || "").trim(),
+                port:
+                  endpoint.connection.port === undefined || endpoint.connection.port === null
+                    ? undefined
+                    : Number(endpoint.connection.port),
+                url: String(endpoint.connection.url || "").trim(),
+                raw_command: String(endpoint.connection.raw_command || "").trim(),
+              };
+            }
+            return normalizedEndpoint;
+          })
+          .filter(Boolean);
+      }
+      return result;
+    })
+    .filter(Boolean);
+  return normalized;
+}
+
+function stageWorkflowText(payload) {
+  const definitions = editableStageDefinitions(payload);
+  return definitions.length ? JSON.stringify(definitions, null, 2) : "";
+}
+
+function workflowStageDefinitions() {
+  const rawText = String(els.challengeConfigStagesInput?.value || state.stageWorkflowDraft || "").trim();
+  if (!rawText) {
+    return [];
+  }
+  return parseStageWorkflowText(rawText);
+}
+
+function stageDefinitionsForUi(payload) {
+  if (state.challengeConfigFor === state.selectedChallenge && Array.isArray(state.stageWorkflowDefinitions)) {
+    if (state.stageWorkflowDefinitions.length) {
+      return cloneJson(state.stageWorkflowDefinitions);
+    }
+    if (state.stageWorkflowDirty && !String(state.stageWorkflowDraft || "").trim()) {
+      return [];
+    }
+  }
+  return editableStageDefinitions(payload);
+}
+
+function effectiveInstanceStages(payload) {
+  const serverStages = serverInstanceStages(payload);
+  const definitions = stageDefinitionsForUi(payload);
+  if (!definitions.length) {
+    return serverStages;
+  }
+  const serverById = new Map(
+    serverStages.map((stage) => [String(stage?.id || "").trim(), stage])
+  );
+  return definitions.map((definition) => {
+    const stageId = String(definition?.id || "").trim();
+    const serverStage = serverById.get(stageId);
+    const merged = serverStage && typeof serverStage === "object" ? cloneJson(serverStage) : {};
+    merged.id = stageId;
+    ["title", "description", "manual_action", "notes"].forEach((field) => {
+      const value = String(definition?.[field] || "").trim();
+      if (value) {
+        merged[field] = value;
+      } else {
+        delete merged[field];
+      }
+    });
+    if (definition?.connection && typeof definition.connection === "object") {
+      merged.connection = cloneJson(definition.connection);
+      merged.stage_connection = cloneJson(definition.connection);
+    } else if (!merged.stage_connection && merged.connection) {
+      merged.stage_connection = cloneJson(merged.connection);
+    }
+    if (Array.isArray(definition?.endpoints)) {
+      const serverEndpoints = Array.isArray(serverStage?.endpoints) ? serverStage.endpoints : [];
+      const serverEndpointById = new Map(
+        serverEndpoints.map((endpoint) => [String(endpoint?.id || "").trim(), endpoint])
+      );
+      merged.endpoints = definition.endpoints
+        .map((endpointDefinition) => {
+          const endpointId = String(endpointDefinition?.id || "").trim();
+          if (!endpointId) {
+            return null;
+          }
+          const serverEndpoint = serverEndpointById.get(endpointId);
+          const endpoint =
+            serverEndpoint && typeof serverEndpoint === "object" ? cloneJson(serverEndpoint) : {};
+          endpoint.id = endpointId;
+          ["title", "description"].forEach((field) => {
+            const value = String(endpointDefinition?.[field] || "").trim();
+            if (value) {
+              endpoint[field] = value;
+            } else {
+              delete endpoint[field];
+            }
+          });
+          if (endpointDefinition?.connection && typeof endpointDefinition.connection === "object") {
+            endpoint.connection = cloneJson(endpointDefinition.connection);
+          }
+          return endpoint;
+        })
+        .filter(Boolean);
+    } else if (!Array.isArray(merged.endpoints)) {
+      merged.endpoints = [];
+    }
+    return merged;
+  });
+}
+
+function syncStageWorkflowText(definitions) {
+  const normalized = Array.isArray(definitions)
+    ? parseStageWorkflowText(JSON.stringify(definitions.filter((stage) => stage && stage.id)))
+    : [];
+  state.stageWorkflowDefinitions = cloneJson(normalized);
+  state.stageWorkflowDraft = normalized.length ? JSON.stringify(normalized, null, 2) : "";
+  state.stageWorkflowDirty = true;
+  state.stageWorkflowParseError = "";
+  if (els.challengeConfigStagesInput) {
+    els.challengeConfigStagesInput.value = state.stageWorkflowDraft;
+    delete els.challengeConfigStagesInput.dataset.state;
+  }
+}
+
+function nextGeneratedStageId(definitions) {
+  const used = new Set(
+    (Array.isArray(definitions) ? definitions : [])
+      .map((stage) => String(stage?.id || "").trim())
+      .filter(Boolean)
+  );
+  let index = used.size + 1;
+  while (used.has(`stage_${index}`)) {
+    index += 1;
+  }
+  return `stage_${index}`;
+}
+
+function ensureUniqueStageId(rawId, definitions, currentIndex = -1) {
+  const baseId = String(rawId || "").trim() || nextGeneratedStageId(definitions);
+  let candidate = baseId;
+  let suffix = 2;
+  while (
+    definitions.some(
+      (stage, index) => index !== currentIndex && String(stage?.id || "").trim() === candidate
+    )
+  ) {
+    candidate = `${baseId}_${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function updateSelectedWorkflowStage(mutator) {
+  const challengePayload =
+    state.challengeConfig && state.challengeConfigFor === state.selectedChallenge
+      ? state.challengeConfig
+      : { effective: {} };
+  let definitions;
+  try {
+    definitions = workflowStageDefinitions().map((stage) => cloneJson(stage));
+  } catch (_error) {
+    definitions = Array.isArray(state.stageWorkflowDefinitions)
+      ? state.stageWorkflowDefinitions.map((stage) => cloneJson(stage))
+      : [];
+  }
+  const selectedStageId = String(els.challengeConfigStageSelect?.value || "").trim();
+  const selectedEndpointId = String(els.challengeConfigEndpointSelect?.value || "").trim();
+  const index = definitions.findIndex((stage) => String(stage?.id || "").trim() === selectedStageId);
+  if (index < 0) {
+    return;
+  }
+  const nextSelectedStageId = mutator(definitions, index) || String(definitions[index]?.id || "").trim();
+  syncStageWorkflowText(definitions);
+  renderChallengeConfigStageFields(challengePayload, nextSelectedStageId, selectedEndpointId);
+  renderInstanceCheckSummary(challengePayload);
+}
+
+function effectiveCurrentStageId(payload) {
+  const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
+  return String(effective.current_stage || "").trim();
+}
+
+function effectiveInstanceStageEntry(payload, stageId = "") {
+  const stages = effectiveInstanceStages(payload);
+  const targetStageId = String(stageId || effectiveCurrentStageId(payload) || "").trim();
+  return stages.find((stage) => String(stage.id || "").trim() === targetStageId) || null;
+}
+
+function effectiveCurrentEndpointId(payload, stageId = "") {
+  const stage = effectiveInstanceStageEntry(payload, stageId);
+  return String(stage?.current_endpoint || "").trim();
+}
+
+function effectiveEndpointEntries(stage) {
+  if (!Array.isArray(stage?.endpoints)) {
+    return [];
+  }
+  return stage.endpoints.filter((endpoint) => endpoint && typeof endpoint === "object");
+}
+
+function effectiveInstanceEndpointEntry(payload, stageId = "", endpointId = "") {
+  const stage = effectiveInstanceStageEntry(payload, stageId);
+  const endpoints = effectiveEndpointEntries(stage);
+  const targetEndpointId = String(endpointId || stage?.current_endpoint || "").trim();
+  return endpoints.find((endpoint) => String(endpoint.id || "").trim() === targetEndpointId) || null;
+}
+
+function connectionFieldsFromSource(sourceConnection = {}) {
+  const connection = sourceConnection && typeof sourceConnection === "object" ? sourceConnection : {};
+  return {
+    scheme: String(connection.scheme || "").trim(),
+    host: String(connection.host || "").trim(),
+    port: connection.port === undefined || connection.port === null ? "" : String(connection.port),
+    url: String(connection.url || "").trim(),
+    raw_command: String(connection.raw_command || "").trim(),
+  };
+}
+
+function connectionFieldsFromSelection(stage, endpoint, fallbackConnection = {}) {
+  if (endpoint) {
+    return connectionFieldsFromSource(endpoint.connection);
+  }
+  if (stage) {
+    const stageConnection =
+      stage?.stage_connection && typeof stage.stage_connection === "object"
+        ? stage.stage_connection
+        : (stage?.connection && typeof stage.connection === "object" ? stage.connection : {});
+    return connectionFieldsFromSource(stageConnection);
+  }
+  return connectionFieldsFromSource(fallbackConnection);
+}
+
 function challengeInstanceWorkflowLabel(payload) {
   const needsInstance = challengeNeedsInstance(payload);
   const connectionLabel = effectiveConnectionLabel(payload);
+  const currentStage = effectiveInstanceStageEntry(payload);
+  const stageLabel = currentStage
+    ? `stage ${String(currentStage.title || currentStage.id || "").trim()}`
+    : "";
   if (needsInstance && connectionLabel !== "-") {
-    return "manual deploy required · connection saved";
+    return [stageLabel, "manual deploy required", "connection saved"].filter(Boolean).join(" · ");
   }
   if (needsInstance) {
-    return "manual deploy required · waiting for connection details";
+    return [stageLabel, "manual deploy required", "waiting for connection details"].filter(Boolean).join(" · ");
   }
   return "not required";
 }
 
 function setChallengeConfigEnabled(enabled) {
   [
+    els.challengeConfigStageSelect,
+    els.challengeConfigStageAddBtn,
+    els.challengeConfigStageRemoveBtn,
+    els.challengeConfigStageIdInput,
+    els.challengeConfigStageTitleInput,
+    els.challengeConfigStageActionInput,
+    els.challengeConfigStageDescriptionInput,
+    els.challengeConfigStageNotesInput,
+    els.challengeConfigEndpointSelect,
+    els.challengeConfigStageStatusInput,
     els.challengeConfigSchemeInput,
     els.challengeConfigHostInput,
     els.challengeConfigPortInput,
     els.challengeConfigUrlInput,
     els.challengeConfigRawCommandInput,
     els.challengeConfigNotesInput,
+    els.challengeConfigStagesInput,
     els.challengeConfigPriorityInput,
     els.challengeConfigNoSubmitInput,
     els.challengeConfigNeedsInstanceInput,
@@ -592,23 +1007,139 @@ function setChallengeConfigEnabled(enabled) {
   });
 }
 
-function populateChallengeConfigForm(payload) {
+function renderChallengeConfigStageFields(payload, preferredStageId = "", preferredEndpointId = "") {
   const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
-  const connection = effective?.connection && typeof effective.connection === "object" ? effective.connection : {};
+  const fallbackConnection = effective?.connection && typeof effective.connection === "object" ? effective.connection : {};
+  const stages = effectiveInstanceStages(payload);
+  const currentSelectedStageId = String(els.challengeConfigStageSelect?.value || "").trim();
+  const defaultStageId =
+    preferredStageId ||
+    currentSelectedStageId ||
+    effectiveCurrentStageId(payload) ||
+    String(stages[0]?.id || "").trim();
+  const selectedStage = effectiveInstanceStageEntry(payload, defaultStageId);
+  const endpoints = effectiveEndpointEntries(selectedStage);
+  const defaultEndpointId = preferredEndpointId || effectiveCurrentEndpointId(payload, defaultStageId);
+  const selectedEndpoint = effectiveInstanceEndpointEntry(payload, defaultStageId, defaultEndpointId);
+
+  if (els.challengeConfigStageSelect) {
+    const options = ['<option value="">No stage workflow</option>'];
+    stages.forEach((stage) => {
+      const stageId = String(stage.id || "").trim();
+      const label = String(stage.title || stageId || "").trim() || stageId;
+      const status = String(stage.status || "").trim();
+      const selected = selectedStage && String(selectedStage.id || "").trim() === stageId ? " selected" : "";
+      options.push(
+        `<option value="${escapeAttr(stageId)}"${selected}>${escapeHtml(status ? `${label} (${status})` : label)}</option>`
+      );
+    });
+    els.challengeConfigStageSelect.innerHTML = options.join("");
+    els.challengeConfigStageSelect.disabled = !stages.length;
+  }
+
+  if (els.challengeConfigStageIdInput) {
+    els.challengeConfigStageIdInput.value = String(selectedStage?.id || "").trim();
+    els.challengeConfigStageIdInput.disabled = !stages.length;
+  }
+  if (els.challengeConfigStageTitleInput) {
+    els.challengeConfigStageTitleInput.value = String(selectedStage?.title || "").trim();
+    els.challengeConfigStageTitleInput.disabled = !stages.length;
+  }
+  if (els.challengeConfigStageActionInput) {
+    els.challengeConfigStageActionInput.value = String(selectedStage?.manual_action || "").trim();
+    els.challengeConfigStageActionInput.disabled = !stages.length;
+  }
+  if (els.challengeConfigStageDescriptionInput) {
+    els.challengeConfigStageDescriptionInput.value = String(selectedStage?.description || "").trim();
+    els.challengeConfigStageDescriptionInput.disabled = !stages.length;
+  }
+  if (els.challengeConfigStageNotesInput) {
+    els.challengeConfigStageNotesInput.value = String(selectedStage?.notes || "").trim();
+    els.challengeConfigStageNotesInput.disabled = !stages.length;
+  }
+  if (els.challengeConfigStageRemoveBtn) {
+    els.challengeConfigStageRemoveBtn.disabled = !stages.length || !selectedStage;
+  }
+
+  if (els.challengeConfigEndpointSelect) {
+    const options = ['<option value="">Stage connection</option>'];
+    endpoints.forEach((endpoint) => {
+      const endpointId = String(endpoint.id || "").trim();
+      const label = String(endpoint.title || endpointId || "").trim() || endpointId;
+      const selected = selectedEndpoint && String(selectedEndpoint.id || "").trim() === endpointId ? " selected" : "";
+      options.push(`<option value="${escapeAttr(endpointId)}"${selected}>${escapeHtml(label)}</option>`);
+    });
+    els.challengeConfigEndpointSelect.innerHTML = options.join("");
+    els.challengeConfigEndpointSelect.disabled = !selectedStage || !endpoints.length;
+  }
+
+  if (els.challengeConfigStageStatusInput) {
+    const stageStatus = String(selectedStage?.status || "pending").trim().toLowerCase() || "pending";
+    els.challengeConfigStageStatusInput.value = stageStatus;
+    els.challengeConfigStageStatusInput.disabled = !stages.length;
+  }
+
+  const selectedConnection = connectionFieldsFromSelection(selectedStage, selectedEndpoint, fallbackConnection);
   if (els.challengeConfigSchemeInput) {
-    els.challengeConfigSchemeInput.value = String(connection.scheme || "");
+    els.challengeConfigSchemeInput.value = selectedConnection.scheme;
   }
   if (els.challengeConfigHostInput) {
-    els.challengeConfigHostInput.value = String(connection.host || "");
+    els.challengeConfigHostInput.value = selectedConnection.host;
   }
   if (els.challengeConfigPortInput) {
-    els.challengeConfigPortInput.value = connection.port === undefined || connection.port === null ? "" : String(connection.port);
+    els.challengeConfigPortInput.value = selectedConnection.port;
   }
   if (els.challengeConfigUrlInput) {
-    els.challengeConfigUrlInput.value = String(connection.url || "");
+    els.challengeConfigUrlInput.value = selectedConnection.url;
   }
   if (els.challengeConfigRawCommandInput) {
-    els.challengeConfigRawCommandInput.value = String(connection.raw_command || "");
+    els.challengeConfigRawCommandInput.value = selectedConnection.raw_command;
+  }
+
+  if (els.challengeConfigStageSummary) {
+    if (state.stageWorkflowParseError) {
+      els.challengeConfigStageSummary.textContent = `Workflow JSON is invalid: ${state.stageWorkflowParseError}`;
+      els.challengeConfigStageSummary.dataset.state = "error";
+    } else if (!stages.length) {
+      els.challengeConfigStageSummary.textContent = "No instance stages configured for this challenge.";
+      delete els.challengeConfigStageSummary.dataset.state;
+    } else if (!selectedStage) {
+      els.challengeConfigStageSummary.textContent = "Select a stage to edit its current runtime connection details.";
+      delete els.challengeConfigStageSummary.dataset.state;
+    } else {
+      const stageBits = [
+        String(selectedStage.title || selectedStage.id || "").trim(),
+        String(selectedStage.status || "").trim() ? `status ${String(selectedStage.status || "").trim()}` : "",
+        selectedEndpoint
+          ? `endpoint ${String(selectedEndpoint.title || selectedEndpoint.id || "").trim()}`
+          : (endpoints.length ? `endpoints ${endpoints.length}` : ""),
+        String(selectedStage.manual_action || "").trim() ? `action ${String(selectedStage.manual_action || "").trim()}` : "",
+        String(selectedStage.description || "").trim(),
+        String(selectedStage.notes || "").trim(),
+      ].filter(Boolean);
+      els.challengeConfigStageSummary.textContent = stageBits.join(" · ");
+      delete els.challengeConfigStageSummary.dataset.state;
+    }
+  }
+}
+
+function populateChallengeConfigForm(payload, preferredStageId = "") {
+  const effective = payload?.effective && typeof payload.effective === "object" ? payload.effective : {};
+  if (!state.stageWorkflowDirty) {
+    state.stageWorkflowDefinitions = editableStageDefinitions(payload);
+    state.stageWorkflowDraft = stageWorkflowText(payload);
+    state.stageWorkflowParseError = "";
+  }
+  renderChallengeConfigStageFields(payload, preferredStageId);
+  if (els.challengeConfigStagesInput) {
+    const nextWorkflowText = state.stageWorkflowDraft;
+    const inputFocused = document.activeElement === els.challengeConfigStagesInput;
+    if (!state.stageWorkflowDirty && !inputFocused) {
+      els.challengeConfigStagesInput.value = nextWorkflowText;
+    }
+    if (!state.stageWorkflowParseError) {
+      delete els.challengeConfigStagesInput.dataset.state;
+    }
   }
   if (els.challengeConfigNotesInput) {
     els.challengeConfigNotesInput.value = String(effective.notes || "");
@@ -625,6 +1156,10 @@ function populateChallengeConfigForm(payload) {
 }
 
 function clearChallengeConfigForm() {
+  state.stageWorkflowDraft = "";
+  state.stageWorkflowDirty = false;
+  state.stageWorkflowDefinitions = [];
+  state.stageWorkflowParseError = "";
   populateChallengeConfigForm({ effective: {} });
 }
 
@@ -650,13 +1185,17 @@ function renderInstanceCheckSummary(payload) {
         ? state.instanceProbeResult.probe
         : {};
     const detail = String(probe.detail || probe.error || "").trim();
+    const stageTitle = String(probe.current_stage_title || probe.current_stage || "").trim();
+    const endpointTitle = String(probe.current_stage_endpoint_title || probe.current_stage_endpoint || "").trim();
+    const scopeTitle = [stageTitle, endpointTitle].filter(Boolean).join(" / ");
+    const detailWithStage = scopeTitle ? `${scopeTitle}: ${detail}` : detail;
     if (state.instanceProbeResult.ready) {
       const restartResult = String(state.instanceProbeResult.restart_result || "").trim();
-      els.instanceCheckSummary.textContent = restartResult ? `${detail} · ${restartResult}` : detail;
+      els.instanceCheckSummary.textContent = restartResult ? `${detailWithStage} · ${restartResult}` : detailWithStage;
       els.instanceCheckSummary.dataset.state = "ready";
       return;
     }
-    els.instanceCheckSummary.textContent = detail || "Current challenge connection is not ready yet.";
+    els.instanceCheckSummary.textContent = detailWithStage || "Current challenge connection is not ready yet.";
     els.instanceCheckSummary.dataset.state = "warn";
     return;
   }
@@ -702,6 +1241,13 @@ function renderChallengeConfigPanel() {
   const sourceInfo = challengeConfigSourceInfo(payload);
   const competition = sourceInfo?.competition && typeof sourceInfo.competition === "object" ? sourceInfo.competition : {};
   const status = sourceInfo?.status && typeof sourceInfo.status === "object" ? sourceInfo.status : {};
+  const currentStage = effectiveInstanceStageEntry(payload);
+  const currentEndpoint = effectiveInstanceEndpointEntry(payload);
+  const instanceStages = effectiveInstanceStages(payload);
+  const endpointCount = instanceStages.reduce(
+    (total, stage) => total + (Array.isArray(stage?.endpoints) ? stage.endpoints.length : 0),
+    0
+  );
   const facts = [
     {
       label: "Source",
@@ -735,8 +1281,24 @@ function renderChallengeConfigPanel() {
       value: effectiveConnectionLabel(payload),
     },
     {
+      label: "Current Stage",
+      value: currentStage
+        ? [
+            String(currentStage.title || currentStage.id || "").trim(),
+            String(currentStage.status || "").trim() || "",
+            currentEndpoint ? `endpoint ${String(currentEndpoint.title || currentEndpoint.id || "").trim()}` : "",
+          ].filter(Boolean).join(" · ")
+        : (instanceStages.length ? "configured, no current stage selected" : "-"),
+    },
+    {
       label: "Instance Workflow",
       value: challengeInstanceWorkflowLabel(payload),
+    },
+    {
+      label: "Stage Count",
+      value: instanceStages.length
+        ? `${instanceStages.length} stage${instanceStages.length === 1 ? "" : "s"} · ${endpointCount} endpoint${endpointCount === 1 ? "" : "s"}`
+        : "-",
     },
   ];
 
@@ -1051,6 +1613,144 @@ function pushServerActivity(result, tone = "ok") {
   pushActivity(`server: ${text}`, tone);
 }
 
+function browserNotificationPermission() {
+  if (typeof Notification === "undefined") {
+    return "unsupported";
+  }
+  return String(Notification.permission || "default");
+}
+
+function renderBrowserNotificationsControl() {
+  if (!els.browserNotificationsBtn) {
+    return;
+  }
+  const permission = browserNotificationPermission();
+  state.browserNotificationPermission = permission;
+  if (permission === "unsupported") {
+    els.browserNotificationsBtn.textContent = "Browser alerts unsupported";
+    els.browserNotificationsBtn.disabled = true;
+    return;
+  }
+  if (permission === "granted") {
+    els.browserNotificationsBtn.textContent = "Browser alerts enabled";
+    els.browserNotificationsBtn.disabled = false;
+    return;
+  }
+  if (permission === "denied") {
+    els.browserNotificationsBtn.textContent = "Browser alerts blocked";
+    els.browserNotificationsBtn.disabled = true;
+    return;
+  }
+  els.browserNotificationsBtn.textContent = "Enable browser alerts";
+  els.browserNotificationsBtn.disabled = false;
+}
+
+function sendBrowserNotification(alert) {
+  if (browserNotificationPermission() !== "granted" || typeof Notification === "undefined") {
+    return;
+  }
+  const id = String(alert?.id || "").trim();
+  const message = String(alert?.message || "").trim();
+  if (!message) {
+    return;
+  }
+  const challengeName = String(alert?.challenge_name || "").trim();
+  const laneId = String(alert?.lane_id || "").trim();
+  const titleBits = ["CTF Agent"];
+  if (challengeName) {
+    titleBits.push(challengeName);
+  }
+  if (laneId) {
+    titleBits.push(shortModelName(laneId));
+  }
+  let notification;
+  try {
+    notification = new Notification(titleBits.join(" · "), {
+      body: message,
+      tag: id || undefined,
+      renotify: true,
+    });
+  } catch (error) {
+    pushActivity(`browser notification failed: ${error.message}`, "error");
+    return;
+  }
+  if (typeof notification.close === "function") {
+    setTimeout(() => notification.close(), 8000);
+  }
+  notification.onclick = () => {
+    try {
+      window.focus?.();
+    } catch (error) {
+      console.warn("browser notification focus failed", error);
+    }
+    if (typeof notification.close === "function") {
+      notification.close();
+    }
+  };
+}
+
+async function handleBrowserNotificationsClick() {
+  const permission = browserNotificationPermission();
+  if (permission === "unsupported") {
+    pushActivity("browser notifications are unsupported in this browser", "warn");
+    renderBrowserNotificationsControl();
+    return;
+  }
+  if (permission === "granted") {
+    pushActivity("browser notifications already enabled", "ok");
+    renderBrowserNotificationsControl();
+    return;
+  }
+  try {
+    const updated = await Notification.requestPermission();
+    state.browserNotificationPermission = String(updated || "default");
+    renderBrowserNotificationsControl();
+    if (updated === "granted") {
+      pushActivity("browser notifications enabled", "ok");
+      return;
+    }
+    if (updated === "denied") {
+      pushActivity("browser notifications blocked by browser settings", "warn");
+      return;
+    }
+    pushActivity("browser notifications left disabled", "warn");
+  } catch (error) {
+    pushActivity(`browser notifications failed: ${error.message}`, "error");
+    renderBrowserNotificationsControl();
+  }
+}
+
+function syncSnapshotAlerts(snapshot) {
+  const alerts = Array.isArray(snapshot?.ui_alerts) ? snapshot.ui_alerts : [];
+  const activeIds = [];
+  alerts.forEach((alert) => {
+    const id = String(alert?.id || "").trim();
+    if (!id) {
+      return;
+    }
+    activeIds.push(id);
+    if (state.seenUiAlertIds.includes(id)) {
+      return;
+    }
+    const message = String(alert?.message || "").trim();
+    const tone = String(alert?.tone || "warn").trim();
+    const challengeName = String(alert?.challenge_name || "").trim();
+    const laneId = String(alert?.lane_id || "").trim();
+    if (challengeName && laneId) {
+      pushLaneActivity(challengeName, laneId, message, tone);
+    } else if (challengeName) {
+      pushChallengeActivity(challengeName, message, tone);
+    } else {
+      pushActivity(message, tone);
+    }
+    sendBrowserNotification(alert);
+    state.seenUiAlertIds.unshift(id);
+  });
+  state.seenUiAlertIds = state.seenUiAlertIds
+    .filter((id, index, arr) => activeIds.includes(id) && arr.indexOf(id) === index)
+    .slice(0, 64);
+}
+
 function setSyncMode(label) {
   if (els.syncMode) {
     els.syncMode.textContent = label;
@@ -1350,6 +2050,9 @@ function renderSelectedChallenge() {
 }
 
 function renderTraceSelector() {
+  if (els.hideErrorLanes) {
+    els.hideErrorLanes.checked = state.hideErrorLanes;
+  }
   els.traceSelect.innerHTML = state.traceFiles.length
     ? state.traceFiles
         .map((traceName) => {
@@ -1416,6 +2119,7 @@ function renderTraceTable() {
 }
 
 function render() {
+  renderBrowserNotificationsControl();
   renderSummary();
   renderChallenges();
   renderSelectedChallenge();
@@ -1438,6 +2142,7 @@ async function applyStatusSnapshot(snapshot) {
   const previousSelectedChallenge = state.selectedChallenge;
   state.snapshot = snapshot;
   state.snapshotReceived = true;
+  syncSnapshotAlerts(snapshot);
   syncSelections();
   render();
   els.updatedAt.textContent = new Date().toLocaleTimeString("ko-KR", {
@@ -1497,6 +2202,12 @@ async function fetchChallengeConfig({ force = false } = {}) {
   }
   if (!force && state.challengeConfigFor === challengeName && state.challengeConfig) {
     return;
+  }
+  if (state.challengeConfigFor !== challengeName) {
+    state.stageWorkflowDraft = "";
+    state.stageWorkflowDirty = false;
+    state.stageWorkflowDefinitions = [];
+    state.stageWorkflowParseError = "";
   }
 
   state.challengeConfigLoading = true;
@@ -1919,6 +2630,14 @@ async function handleChallengeConfigSave(event) {
     return;
   }
 
+  let stageDefinitions = [];
+  try {
+    stageDefinitions = workflowStageDefinitions();
+  } catch (error) {
+    pushChallengeActivity(challengeName, `config save failed: ${error.message}`, "error");
+    return;
+  }
+
   const connection = {
     scheme: String(els.challengeConfigSchemeInput?.value || "").trim(),
     host: String(els.challengeConfigHostInput?.value || "").trim(),
@@ -1926,13 +2645,81 @@ async function handleChallengeConfigSave(event) {
     url: String(els.challengeConfigUrlInput?.value || "").trim(),
     raw_command: String(els.challengeConfigRawCommandInput?.value || "").trim(),
   };
+  const stageId = String(els.challengeConfigStageSelect?.value || "").trim();
+  const endpointId = String(els.challengeConfigEndpointSelect?.value || "").trim();
+  const stageStatus = String(els.challengeConfigStageStatusInput?.value || "pending").trim().toLowerCase() || "pending";
+  const baseOverride =
+    state.challengeConfig && state.challengeConfigFor === challengeName && state.challengeConfig.override
+      ? JSON.parse(JSON.stringify(state.challengeConfig.override))
+      : {};
   const override = {
-    connection,
+    ...baseOverride,
     notes: String(els.challengeConfigNotesInput?.value || "").trim(),
     priority: Boolean(els.challengeConfigPriorityInput?.checked),
     no_submit: Boolean(els.challengeConfigNoSubmitInput?.checked),
     needs_instance: Boolean(els.challengeConfigNeedsInstanceInput?.checked),
   };
+  const stageOrder = stageDefinitions.map((stage) => String(stage.id || "").trim()).filter(Boolean);
+  const existingStageStates =
+    baseOverride.stages && typeof baseOverride.stages === "object" ? baseOverride.stages : {};
+  const prunedStageStates = Object.fromEntries(
+    Object.entries(existingStageStates).filter(([existingStageId]) => stageOrder.includes(String(existingStageId || "").trim()))
+  );
+  if (stageDefinitions.length) {
+    override.instance_stages = stageDefinitions;
+    if (Object.keys(prunedStageStates).length) {
+      override.stages = prunedStageStates;
+    } else {
+      delete override.stages;
+    }
+  } else {
+    delete override.instance_stages;
+    delete override.stages;
+    delete override.current_stage;
+  }
+  if (stageId) {
+    const stages = override.stages && typeof override.stages === "object" ? override.stages : {};
+    const stageIndex = stageOrder.indexOf(stageId);
+    const nextStageId =
+      stageStatus === "done" && stageIndex >= 0 && stageIndex + 1 < stageOrder.length
+        ? stageOrder[stageIndex + 1]
+        : "";
+    override.current_stage = nextStageId || stageId;
+    const nextStageState =
+      stages[stageId] && typeof stages[stageId] === "object" ? stages[stageId] : {};
+    const updatedStage = {
+      ...nextStageState,
+      status: stageStatus,
+    };
+    if (endpointId) {
+      const existingEndpoints =
+        nextStageState.endpoints && typeof nextStageState.endpoints === "object"
+          ? nextStageState.endpoints
+          : {};
+      updatedStage.current_endpoint = endpointId;
+      updatedStage.endpoints = {
+        ...existingEndpoints,
+        [endpointId]: {
+          ...(existingEndpoints[endpointId] && typeof existingEndpoints[endpointId] === "object"
+            ? existingEndpoints[endpointId]
+            : {}),
+          connection,
+        },
+      };
+      delete updatedStage.connection;
+    } else {
+      updatedStage.connection = connection;
+      delete updatedStage.current_endpoint;
+    }
+    override.stages = {
+      ...stages,
+      [stageId]: updatedStage,
+    };
+    delete override.connection;
+  } else {
+    override.connection = connection;
+    delete override.current_stage;
+  }
   const submitButton = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
   if (submitButton) {
     submitButton.disabled = true;
@@ -1953,6 +2740,10 @@ async function handleChallengeConfigSave(event) {
     state.instanceProbeResult = null;
     state.instanceProbeFor = challengeName;
     state.instanceProbeLoading = false;
+    state.stageWorkflowDirty = false;
+    state.stageWorkflowDefinitions = editableStageDefinitions(payload);
+    state.stageWorkflowDraft = stageWorkflowText(payload);
+    state.stageWorkflowParseError = "";
     populateChallengeConfigForm(payload);
     render();
     pushChallengeActivity(challengeName, "challenge override saved", "ok");
@@ -1987,6 +2778,10 @@ async function handleChallengeConfigReset() {
     state.instanceProbeResult = null;
     state.instanceProbeFor = challengeName;
     state.instanceProbeLoading = false;
+    state.stageWorkflowDirty = false;
+    state.stageWorkflowDefinitions = [];
+    state.stageWorkflowDraft = "";
+    state.stageWorkflowParseError = "";
     populateChallengeConfigForm(payload);
     render();
     pushChallengeActivity(challengeName, "challenge override reset", "ok");
@@ -2056,6 +2851,7 @@ function bindEvents() {
   });
   els.hideErrorLanes.addEventListener("change", () => {
     state.hideErrorLanes = Boolean(els.hideErrorLanes.checked);
+    saveHideErrorLanesPreference(state.hideErrorLanes);
     syncSelections();
     render();
     if (state.selectedChallenge && state.selectedLane) {
@@ -2078,7 +2874,146 @@ function bindEvents() {
       state.maxChallengesDraft = snapshotValue;
     }
   });
+  if (els.challengeConfigStagesInput) {
+    els.challengeConfigStagesInput.addEventListener("input", () => {
+      state.stageWorkflowDraft = String(els.challengeConfigStagesInput.value || "");
+      state.stageWorkflowDirty = true;
+      try {
+        state.stageWorkflowDefinitions = parseStageWorkflowText(state.stageWorkflowDraft);
+        state.stageWorkflowParseError = "";
+        delete els.challengeConfigStagesInput.dataset.state;
+        if (state.challengeConfig && state.challengeConfigFor === state.selectedChallenge) {
+          renderChallengeConfigStageFields(
+            state.challengeConfig,
+            String(els.challengeConfigStageSelect?.value || "").trim(),
+            String(els.challengeConfigEndpointSelect?.value || "").trim()
+          );
+          renderInstanceCheckSummary(state.challengeConfig);
+        }
+      } catch (error) {
+        state.stageWorkflowParseError = error instanceof Error ? error.message : String(error || "invalid JSON");
+        els.challengeConfigStagesInput.dataset.state = "error";
+        if (state.challengeConfig && state.challengeConfigFor === state.selectedChallenge) {
+          renderChallengeConfigStageFields(
+            state.challengeConfig,
+            String(els.challengeConfigStageSelect?.value || "").trim(),
+            String(els.challengeConfigEndpointSelect?.value || "").trim()
+          );
+        }
+      }
+    });
+  }
+  if (els.challengeConfigStageAddBtn) {
+    els.challengeConfigStageAddBtn.addEventListener("click", () => {
+      const payload =
+        state.challengeConfig && state.challengeConfigFor === state.selectedChallenge
+          ? state.challengeConfig
+          : { effective: {} };
+      const definitions = workflowStageDefinitions().map((stage) => cloneJson(stage));
+      const newId = nextGeneratedStageId(definitions);
+      definitions.push({
+        id: newId,
+        title: `Stage ${definitions.length + 1}`,
+      });
+      syncStageWorkflowText(definitions);
+      renderChallengeConfigStageFields(payload, newId, "");
+      renderInstanceCheckSummary(payload);
+    });
+  }
+  if (els.challengeConfigStageRemoveBtn) {
+    els.challengeConfigStageRemoveBtn.addEventListener("click", () => {
+      const payload =
+        state.challengeConfig && state.challengeConfigFor === state.selectedChallenge
+          ? state.challengeConfig
+          : { effective: {} };
+      const definitions = workflowStageDefinitions().map((stage) => cloneJson(stage));
+      const selectedStageId = String(els.challengeConfigStageSelect?.value || "").trim();
+      const index = definitions.findIndex((stage) => String(stage?.id || "").trim() === selectedStageId);
+      if (index < 0) {
+        return;
+      }
+      definitions.splice(index, 1);
+      const nextStageId = String(definitions[Math.max(0, index - 1)]?.id || definitions[0]?.id || "").trim();
+      syncStageWorkflowText(definitions);
+      renderChallengeConfigStageFields(payload, nextStageId, "");
+      renderInstanceCheckSummary(payload);
+    });
+  }
+  if (els.challengeConfigStageSelect) {
+    els.challengeConfigStageSelect.addEventListener("change", () => {
+      if (!state.challengeConfig || state.challengeConfigFor !== state.selectedChallenge) {
+        return;
+      }
+      renderChallengeConfigStageFields(
+        state.challengeConfig,
+        els.challengeConfigStageSelect.value || "",
+        ""
+      );
+      renderInstanceCheckSummary(state.challengeConfig);
+    });
+  }
+  if (els.challengeConfigStageIdInput) {
+    els.challengeConfigStageIdInput.addEventListener("change", () => {
+      updateSelectedWorkflowStage((definitions, index) => {
+        const nextId = ensureUniqueStageId(
+          String(els.challengeConfigStageIdInput?.value || ""),
+          definitions,
+          index
+        );
+        definitions[index].id = nextId;
+        return nextId;
+      });
+    });
+  }
+  if (els.challengeConfigStageTitleInput) {
+    els.challengeConfigStageTitleInput.addEventListener("input", () => {
+      updateSelectedWorkflowStage((definitions, index) => {
+        definitions[index].title = String(els.challengeConfigStageTitleInput?.value || "").trim();
+        return definitions[index].id;
+      });
+    });
+  }
+  if (els.challengeConfigStageActionInput) {
+    els.challengeConfigStageActionInput.addEventListener("input", () => {
+      updateSelectedWorkflowStage((definitions, index) => {
+        definitions[index].manual_action = String(els.challengeConfigStageActionInput?.value || "").trim();
+        return definitions[index].id;
+      });
+    });
+  }
+  if (els.challengeConfigStageDescriptionInput) {
+    els.challengeConfigStageDescriptionInput.addEventListener("input", () => {
+      updateSelectedWorkflowStage((definitions, index) => {
+        definitions[index].description = String(els.challengeConfigStageDescriptionInput?.value || "").trim();
+        return definitions[index].id;
+      });
+    });
+  }
+  if (els.challengeConfigStageNotesInput) {
+    els.challengeConfigStageNotesInput.addEventListener("input", () => {
+      updateSelectedWorkflowStage((definitions, index) => {
+        definitions[index].notes = String(els.challengeConfigStageNotesInput?.value || "").trim();
+        return definitions[index].id;
+      });
+    });
+  }
+  if (els.challengeConfigEndpointSelect) {
+    els.challengeConfigEndpointSelect.addEventListener("change", () => {
+      if (!state.challengeConfig || state.challengeConfigFor !== state.selectedChallenge) {
+        return;
+      }
+      renderChallengeConfigStageFields(
+        state.challengeConfig,
+        els.challengeConfigStageSelect?.value || "",
+        els.challengeConfigEndpointSelect.value || ""
+      );
+      renderInstanceCheckSummary(state.challengeConfig);
+    });
+  }
   els.msgForm.addEventListener("submit", handleCoordinatorMessage);
+  if (els.browserNotificationsBtn) {
+    els.browserNotificationsBtn.addEventListener("click", handleBrowserNotificationsClick);
+  }
   els.laneBumpForm.addEventListener("submit", handleLaneBump);
   els.challengeBumpForm.addEventListener("submit", handleChallengeBump);
   els.maxChallengesForm.addEventListener("submit", handleMaxChallenges);
