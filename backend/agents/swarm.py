@@ -558,6 +558,13 @@ class ChallengeSwarm:
     # the GUI and the advisor monitoring loop both observe the same stream.
     solve_reports_log: "deque[dict[str, Any]] | None" = None
 
+    # Standing directives the operator has registered for this swarm.  Each
+    # entry: {id, text, added_at}.  Re-bumped into every lane every ~30 s so
+    # they don't fall off the end of the solver's context window.  One-shot
+    # bumps (strategic override, tactical hint) use the existing bump_operator
+    # path and are NOT stored here — those are fire-and-forget.
+    persistent_directives: list[dict[str, Any]] = field(default_factory=list)
+
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     solvers: dict[str, SolverProtocol] = field(default_factory=dict)
     agent_results: dict[str, SolverResult] = field(default_factory=dict)
@@ -3646,6 +3653,96 @@ class ChallengeSwarm:
             else:
                 solver.bump(advisory_msg)
 
+    # ── Standing directives (persistent operator instructions) ─────────────
+    PERSISTENT_DIRECTIVE_INTERVAL_SECONDS = 30.0
+
+    def add_persistent_directive(self, text: str) -> str:
+        """Register a standing directive and bump every lane immediately.
+
+        The directive is re-bumped every PERSISTENT_DIRECTIVE_INTERVAL_SECONDS
+        by ``_persistent_directive_pump`` so it doesn't age out of context.
+        Returns the directive ID.
+        """
+        import uuid
+        text = str(text or "").strip()
+        if not text:
+            return ""
+        entry = {
+            "id": uuid.uuid4().hex[:12],
+            "text": text,
+            "added_at": time.time(),
+        }
+        self.persistent_directives.append(entry)
+        self._push_directives_now(reason="added")
+        self.publish_report(
+            kind="hint",
+            title=f"[HUMAN STANDING DIRECTIVE added] {text[:160]}",
+            body=text,
+            lane_id="all lanes",
+        )
+        return entry["id"]
+
+    def remove_persistent_directive(self, directive_id: str) -> bool:
+        """Remove a directive by ID.  Returns True if found and removed."""
+        before = len(self.persistent_directives)
+        self.persistent_directives = [
+            d for d in self.persistent_directives if d.get("id") != directive_id
+        ]
+        removed = len(self.persistent_directives) < before
+        if removed:
+            self.publish_report(
+                kind="hint",
+                title=f"[HUMAN STANDING DIRECTIVE removed] {directive_id}",
+                body=f"Directive {directive_id} revoked by operator.",
+                lane_id="all lanes",
+            )
+        return removed
+
+    def clear_persistent_directives(self) -> int:
+        """Remove all directives.  Returns count removed."""
+        count = len(self.persistent_directives)
+        self.persistent_directives = []
+        if count > 0:
+            self.publish_report(
+                kind="hint",
+                title=f"[HUMAN STANDING DIRECTIVES cleared] {count} removed",
+                body=f"Operator cleared all {count} standing directive(s).",
+                lane_id="all lanes",
+            )
+        return count
+
+    def _push_directives_now(self, *, reason: str = "reminder") -> None:
+        """Bump every lane with the current directive set right now."""
+        if not self.persistent_directives:
+            return
+        bullets = "\n".join(f"  • {d['text']}" for d in self.persistent_directives)
+        wrapped = (
+            f"[STANDING DIRECTIVES — {reason}; apply to every response from "
+            "now until revoked]\n"
+            f"{bullets}\n\n"
+            "These are persistent instructions from the human operator.  "
+            "Even if older turns in your context don't repeat them, keep "
+            "following them on every step."
+        )
+        for spec, solver in self.solvers.items():
+            bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
+            if callable(bump_fn):
+                try:
+                    bump_fn(wrapped)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("persistent directive bump failed for %s: %s", spec, exc)
+
+    async def _persistent_directive_pump(self) -> None:
+        """Background loop: re-bump standing directives every ~30 s."""
+        while not self.cancel_event.is_set():
+            await asyncio.sleep(self.PERSISTENT_DIRECTIVE_INTERVAL_SECONDS)
+            if self.cancel_event.is_set():
+                break
+            try:
+                self._push_directives_now(reason="periodic reminder")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("directive pump iteration failed: %s", exc)
+
     async def _monitor_lane_advisories(self) -> None:
         last_trigger_signature: tuple[object, ...] | None = None
         while not self.cancel_event.is_set():
@@ -4399,6 +4496,10 @@ class ChallengeSwarm:
             self._monitor_lane_advisories(),
             name=f"lane-advice-{self.meta.name}",
         )
+        directive_pump = asyncio.create_task(
+            self._persistent_directive_pump(),
+            name=f"directive-pump-{self.meta.name}",
+        )
 
         try:
             while tasks:
@@ -4435,7 +4536,11 @@ class ChallengeSwarm:
         finally:
             artifact_monitor.cancel()
             advisory_monitor.cancel()
-            await asyncio.gather(artifact_monitor, advisory_monitor, return_exceptions=True)
+            directive_pump.cancel()
+            await asyncio.gather(
+                artifact_monitor, advisory_monitor, directive_pump,
+                return_exceptions=True,
+            )
             self._solver_tasks.difference_update(solver_tasks)
 
     def kill(self, reason: str = "swarm cancelled") -> None:

@@ -247,21 +247,40 @@
         </div>
       </section>
 
-      <!-- Strategic override → advisor -->
+      <!-- Strategic override → advisor (ONE-SHOT) -->
       <section class="section">
-        <h3 class="section-title">Strategic Override → Advisor + All Lanes</h3>
+        <h3 class="section-title">One-shot Strategic Override → Advisor + All Lanes</h3>
         <p class="cmd-meta">
-          Broadcasts a high-level critique to the advisor's message bus <em>and</em> bumps every
-          active solver immediately. The advisor applies it on its next 2 s monitoring cycle.
-          <br><strong>Note:</strong> The advisor cannot be interrupted mid-LLM-call (API calls are atomic).
+          <strong>Transient</strong> — broadcasts a one-time critique to the advisor's message bus and
+          bumps every active solver on its next step. Once absorbed into the conversation history,
+          the message ages out naturally as context grows.  Use for <em>"do this now"</em>.
+          <br>The advisor cannot be interrupted mid-LLM-call (API calls are atomic).
         </p>
         <form id="strategicForm">
           <textarea id="strategicInput" rows="4"
             placeholder="e.g. PIE is disabled — stop looking for ASLR bypasses, focus on ROP gadgets at fixed addresses."></textarea>
-          <button class="btn-accent" type="submit" id="strategicBtn" disabled style="margin-top:6px;width:100%"
-            title="Disabled: no active swarm. Spawn a swarm first.">🧠 Send Strategic Override</button>
+          <button class="btn-accent" type="submit" id="strategicBtn" style="margin-top:6px;width:100%">🧠 Send Strategic Override</button>
         </form>
         <div class="intervention-result" id="strategicResult"></div>
+      </section>
+
+      <!-- Persistent / standing directives (re-bumped every 30s) -->
+      <section class="section">
+        <h3 class="section-title">Standing Directives → All Lanes (persistent)</h3>
+        <p class="cmd-meta">
+          <strong>Persistent</strong> — added to every lane and re-bumped every ~30 s until revoked,
+          so it stays in context even as the solver's history grows.  Use for rules you want to hold
+          for the whole session (e.g. <em>"always reply in Korean"</em>, <em>"never call SSRF tools"</em>).
+        </p>
+        <form id="directiveForm">
+          <textarea id="directiveInput" rows="2"
+            placeholder="e.g. Reply in Korean for the rest of this session."></textarea>
+          <button class="btn-accent" type="submit" id="directiveBtn" style="margin-top:6px;width:100%">📌 Add Standing Directive</button>
+        </form>
+        <div class="directives-list" id="directivesList">
+          <div class="empty">No standing directives active.</div>
+        </div>
+        <div class="intervention-result" id="directiveResult"></div>
       </section>
 
       <!-- Tactical hint → specific lane -->
@@ -275,8 +294,7 @@
           </div>
           <textarea id="tacticalInput" rows="3"
             placeholder="e.g. The flag format is picoCTF{...}. Check PNG metadata with exiftool."></textarea>
-          <button class="btn-accent" type="submit" id="tacticalBtn" disabled style="margin-top:6px;width:100%"
-            title="Disabled: no active swarm. Spawn a swarm first.">💬 Send Hint to Lane</button>
+          <button class="btn-accent" type="submit" id="tacticalBtn" style="margin-top:6px;width:100%">💬 Send Hint to Lane</button>
         </form>
         <div class="intervention-result" id="tacticalResult"></div>
       </section>
