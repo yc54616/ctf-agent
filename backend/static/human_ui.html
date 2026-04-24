@@ -310,6 +310,26 @@
       <div class="intervention-result" id="markSolvedResult"></div>
     </div>
 
+    <!-- CTFd session cookie -->
+    <div class="cmd-card">
+      <h3>
+        CTFd Session Cookie
+        <span id="cookieDot" class="cookie-dot missing" title="No session cookie loaded"></span>
+      </h3>
+      <p class="cmd-meta" id="cookieMeta">Solvers and instance probes use this cookie for authenticated requests.</p>
+      <div class="cookie-status" id="cookieStatus">Loading…</div>
+      <textarea id="cookieInput" rows="3"
+        placeholder="Paste raw Cookie header (e.g. session=abc123; remember_token=…)
+or full header line starting with Cookie:"></textarea>
+      <div class="btn-row" style="margin-top:6px">
+        <button class="btn-accent" id="cookieSaveBtn">💾 Save</button>
+        <button class="ghost-btn"  id="cookieTestBtn">🔌 Test</button>
+        <button class="btn-danger small" id="cookieClearBtn">🗑 Clear</button>
+      </div>
+      <label class="checkbox-label" style="margin-top:4px"><input type="checkbox" id="cookieTestOnSave" checked> test after saving</label>
+      <div class="intervention-result" id="cookieResult"></div>
+    </div>
+
     <!-- Broadcast -->
     <div class="cmd-card">
       <h3>Broadcast to All Solvers</h3>

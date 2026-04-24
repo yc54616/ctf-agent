@@ -999,6 +999,95 @@ def _pending_swarms_snapshot(
     return pending
 
 
+def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
+    """Return a safe, UI-ready summary of the currently configured CTFd cookie.
+
+    Never returns the raw cookie value — only metadata suitable for display
+    (length, number of cookie pairs, names present, first-seen timestamp).
+    """
+    raw = str(getattr(deps.settings, "remote_cookie_header", "") or "").strip()
+    base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
+    platform = str(getattr(deps.ctfd, "platform", "") or "remote")
+    username = str(getattr(deps.settings, "ctfd_user", "") or "")
+    token_present = bool(str(getattr(deps.settings, "ctfd_token", "") or "").strip())
+
+    names: list[str] = []
+    for chunk in raw.split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        names.append(chunk.split("=", 1)[0])
+
+    return {
+        "configured": bool(raw),
+        "length": len(raw),
+        "cookie_count": len(names),
+        "cookie_names": names[:16],
+        "base_url": base_url,
+        "platform": platform,
+        "username": username,
+        "token_present": token_present,
+        "source": str(getattr(deps, "cookie_source", "") or ""),
+    }
+
+
+async def _probe_cookie(deps: CoordinatorDeps, cookie_header: str) -> dict[str, Any]:
+    """GET CTFd's /users/me with the given Cookie header to verify validity.
+
+    Returns a dict describing the probe outcome.  Does not mutate deps.
+    """
+    base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
+    if not base_url:
+        return {"ok": False, "error": "No CTFd URL configured"}
+
+    import httpx
+
+    probe_url = base_url.rstrip("/") + "/api/v1/users/me"
+    headers: dict[str, str] = {"User-Agent": "ctf-agent/cookie-probe"}
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+    token = str(getattr(deps.settings, "ctfd_token", "") or "").strip()
+    if token:
+        headers["Authorization"] = f"Token {token}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=False) as client:
+            resp = await client.get(probe_url, headers=headers)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"Request failed: {exc}"}
+
+    status = resp.status_code
+    if status == 200:
+        body = {}
+        try:
+            body = resp.json()
+        except Exception:  # noqa: BLE001
+            pass
+        user = ""
+        if isinstance(body, dict):
+            data = body.get("data") or {}
+            if isinstance(data, dict):
+                user = str(data.get("name") or data.get("username") or "")
+        return {"ok": True, "status": status, "user": user, "probe_url": probe_url}
+
+    # 302 redirect to /login means cookie is invalid
+    if status in {301, 302, 303, 307, 308}:
+        location = resp.headers.get("location", "")
+        return {
+            "ok": False,
+            "status": status,
+            "error": f"Redirected to {location or 'unknown'} — session likely expired",
+            "probe_url": probe_url,
+        }
+
+    if status == 403:
+        return {"ok": False, "status": status, "error": "403 Forbidden — cookie invalid or lacking access", "probe_url": probe_url}
+    if status == 401:
+        return {"ok": False, "status": status, "error": "401 Unauthorized — cookie invalid", "probe_url": probe_url}
+
+    return {"ok": False, "status": status, "error": f"Unexpected HTTP {status}", "probe_url": probe_url}
+
+
 async def _auto_import_remote_challenges(
     deps: CoordinatorDeps,
     remote_challenges: list[dict[str, Any]],
@@ -1580,6 +1669,45 @@ async def _start_msg_server(
                             payload["restart_requested"] = True
                             payload["restart_result"] = await do_restart_challenge(deps, challenge_name)
                         _json_response("200 OK", payload)
+            elif method == "GET" and path == "/api/runtime/cookie":
+                # Status snapshot (never leaks the raw cookie value).
+                _json_response("200 OK", {"ok": True, **_cookie_summary(deps)})
+            elif method == "PUT" and path == "/api/runtime/cookie" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                raw = str(data.get("cookie") or "").strip()
+                # Strip leading "Cookie:" prefix if the user pasted the full header line.
+                if raw.lower().startswith("cookie:"):
+                    raw = raw[len("cookie:"):].strip()
+                if not raw:
+                    _json_response("400 Bad Request", {"error": "cookie value is required (body: {\"cookie\": \"…\"})"})
+                else:
+                    deps.settings.remote_cookie_header = raw
+                    deps.cookie_source = f"operator_api@{int(time.time())}"
+                    summary = _cookie_summary(deps)
+                    # Optionally verify immediately.
+                    probe_result: dict[str, Any] = {}
+                    if bool(data.get("test")):
+                        probe_result = await _probe_cookie(deps, raw)
+                    logger.info(
+                        "Cookie header updated via API (%d chars, %d cookies)",
+                        summary["length"], summary["cookie_count"],
+                    )
+                    _json_response("200 OK", {"ok": True, "cookie": summary, "probe": probe_result})
+            elif method == "DELETE" and path == "/api/runtime/cookie":
+                deps.settings.remote_cookie_header = ""
+                deps.cookie_source = ""
+                logger.info("Cookie header cleared via API")
+                _json_response("200 OK", {"ok": True, "cookie": _cookie_summary(deps)})
+            elif method == "POST" and path == "/api/runtime/cookie/test":
+                # Probe the currently-configured cookie (doesn't accept an override).
+                probe_result = await _probe_cookie(
+                    deps, str(getattr(deps.settings, "remote_cookie_header", "") or "")
+                )
+                _json_response("200 OK", {"ok": True, "probe": probe_result, "cookie": _cookie_summary(deps)})
             elif method == "PATCH" and path == "/api/runtime/challenge-config" and content_length > 0:
                 body = await asyncio.wait_for(reader.read(content_length), timeout=5)
                 try:

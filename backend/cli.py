@@ -1325,6 +1325,9 @@ async def _run_coordinator(
             effective_no_submit_for_deps,
             local_mode,
         )
+    # Record provenance so the operator UI can show how the cookie arrived.
+    if cookie_header:
+        deps.cookie_source = f"--cookie-file {cookie_path}" if cookie_path else "--cookie-file"
     if restore_mode:
         restored = restore_pending_swarms_from_results(deps)
         if restored:
