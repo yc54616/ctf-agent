@@ -879,6 +879,7 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "finished_swarms": finished,
         "pending_challenges": legacy.get("pending_challenges", []),
         "pending_challenge_entries": legacy.get("pending_challenge_entries", []),
+        "known_challenges": _known_challenges_snapshot(deps),
         "results": results,
         "known_challenge_count": legacy.get("known_challenge_count", 0),
         "known_solved_count": legacy.get("known_solved_count", 0),
@@ -936,6 +937,52 @@ def _pending_swarms_snapshot(
             },
         }
     return pending
+
+
+def _known_challenges_snapshot(deps: CoordinatorDeps) -> list[dict[str, Any]]:
+    """Return every challenge known to deps (on-disk metas + cached remote fetches).
+
+    This lets the human-mode UI display challenges that haven't been spawned yet,
+    including ones pulled in by the Fetch button but not yet imported to disk.
+    Entries carry a `source` field ("local" / "remote") so the UI can style them.
+    """
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # 1) Challenges discovered on disk (via discover_challenge_dirs).
+    for name, meta in deps.challenge_metas.items():
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        records.append(
+            {
+                "name": name,
+                "category": str(getattr(meta, "category", "") or ""),
+                "value": int(getattr(meta, "value", 0) or 0),
+                "description": str(getattr(meta, "description", "") or "")[:400],
+                "source": "local",
+                "local_preloaded": name in deps.challenge_dirs,
+            }
+        )
+
+    # 2) Remote-only challenges cached by the most recent Fetch call.
+    for name, record in getattr(deps, "remote_challenge_cache", {}).items():
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        records.append(
+            {
+                "name": str(name),
+                "category": str(record.get("category") or ""),
+                "value": int(record.get("value", 0) or 0),
+                "description": str(record.get("description") or "")[:400],
+                "source": str(record.get("source") or "remote"),
+                "local_preloaded": False,
+            }
+        )
+
+    records.sort(key=lambda r: (r.get("category", ""), r.get("name", "")))
+    return records
 
 
 def _refresh_challenge_meta(deps: CoordinatorDeps, challenge_name: str) -> ChallengeMeta | None:

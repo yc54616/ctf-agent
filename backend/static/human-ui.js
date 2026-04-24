@@ -160,6 +160,8 @@ function buildChallenges(snap) {
       if (!out[name]) out[name] = {
         name, status: chStatus(sw, null),
         category: sw?.category ?? "", points: sw?.points ?? null,
+        source: "local",
+        local_preloaded: true,
         lanes: mkLanes(sw?.agents ?? {}),
         flag_candidates: mkCandidates(sw?.flag_candidates ?? {}),
         shared_findings: mkFindings(sw?.shared_findings ?? {}),
@@ -171,11 +173,28 @@ function buildChallenges(snap) {
       out[name] = {
         name, status: chStatus(null, result),
         category: result?.category ?? "", points: result?.points ?? null,
+        source: "local",
+        local_preloaded: true,
         lanes: [],
         flag_candidates: mkCandidates(result?.flag_candidates ?? {}),
         shared_findings: mkFindings(result?.shared_findings ?? {}),
       };
     }
+  }
+  // Idle/not-yet-spawned challenges: on-disk metas + remote-fetched cache.
+  for (const entry of (snap.known_challenges ?? [])) {
+    const name = entry?.name; if (!name || out[name]) continue;
+    out[name] = {
+      name,
+      status: "idle",
+      category: entry.category ?? "",
+      points: entry.value ?? null,
+      source: entry.source ?? "local",
+      local_preloaded: !!entry.local_preloaded,
+      lanes: [],
+      flag_candidates: [],
+      shared_findings: [],
+    };
   }
   return out;
 }
@@ -241,10 +260,12 @@ function renderChallengeList() {
     const item   = document.createElement("div");
     item.className    = "challenge-item" + (name === S.selectedName ? " active" : "");
     item.dataset.name = name;
+    const isRemoteOnly = ch.source === "remote" && !ch.local_preloaded;
     item.innerHTML = `
       <span class="ch-status-dot ${chStatusCls(ch.status)}"></span>
-      <span class="ch-name" title="${esc(name)}">${esc(name)}</span>
+      <span class="ch-name" title="${esc(name)}${isRemoteOnly ? " (remote-only — run ctf-import to pull files)" : ""}">${esc(name)}</span>
       ${ch.category ? `<span class="ch-cat">${esc(ch.category)}</span>` : ""}
+      ${isRemoteOnly ? `<span class="ch-cat" style="color:var(--purple)" title="Not yet imported to disk">☁</span>` : ""}
       ${staleN > 0 ? `<span class="ch-cat" style="color:var(--orange)">⚠${staleN}</span>` : ""}
       ${ch.points ? `<span class="ch-pts">${ch.points}pt</span>` : ""}
     `;
@@ -302,18 +323,21 @@ function selectChallenge(name) {
 function enableCommands(name, ch) {
   const solved = ch.status === "solved";
   const active = ch.status === "active";
+  const remoteOnly = ch.source === "remote" && !ch.local_preloaded;
   $("selectedBadge").textContent  = name;
   $("selectedBadge").style.display = "";
-  $("swarmMeta").textContent = `${name} — ${ch.status}`;
-  $("spawnBtn").disabled        = solved || active;
+  const metaSuffix = remoteOnly ? " — ☁ remote-only (run ctf-import first)" : "";
+  $("swarmMeta").textContent = `${name} — ${ch.status}${metaSuffix}`;
+  // Spawning a remote-only challenge fails because there's no challenge_dir on disk.
+  $("spawnBtn").disabled        = solved || active || remoteOnly;
   $("killBtn").disabled         = !active;
-  $("restartBtn").disabled      = solved;
-  $("priorityOnBtn").disabled   = false;
-  $("priorityOffBtn").disabled  = false;
+  $("restartBtn").disabled      = solved || remoteOnly;
+  $("priorityOnBtn").disabled   = remoteOnly;
+  $("priorityOffBtn").disabled  = remoteOnly;
   $("checkInstanceBtn").disabled = false;
   $("submitFlagBtn").disabled   = false;
   $("markSolvedBtn").disabled   = solved;
-  $("broadcastBtn").disabled    = false;
+  $("broadcastBtn").disabled    = !active;
   $("strategicBtn").disabled    = !active;
   $("tacticalBtn").disabled     = !active;
   $("saveResultBtn").disabled   = false;
@@ -622,8 +646,12 @@ $("fetchChallengesBtn").addEventListener("click", async () => {
   btn.disabled = false; btn.textContent = "🔄 Fetch";
   if (r.ok) {
     const n = r.body.count ?? r.body.challenges?.length ?? 0;
-    logActivity(`Fetched ${n} challenge(s) from platform`, "al-ok");
-    pushEvent(`🔄 Fetched ${n} challenges from CTFd`, "info");
+    const remoteOnly = (r.body.challenges ?? []).filter(c => (c?.source ?? "local") !== "local").length;
+    logActivity(`Fetched ${n} challenge(s) — ${remoteOnly} remote-only`, "al-ok");
+    pushEvent(`🔄 Fetched ${n} challenges (${remoteOnly} not yet imported to disk)`, "info");
+    // Force an immediate snapshot refresh so the newly cached remote challenges
+    // appear in the left panel without waiting for the next SSE tick.
+    pollSnapshot();
   } else {
     logActivity(`Fetch failed: ${r.body.error ?? r.status}`, "al-err");
   }

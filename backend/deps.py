@@ -89,3 +89,7 @@ class CoordinatorDeps:
     human_event_log: asyncio.Queue = field(
         default_factory=lambda: asyncio.Queue(maxsize=500)
     )
+    # Last CTFd /api/v1/challenges payload cached by the Fetch button, so the UI
+    # can surface remote-only challenges that aren't yet imported to disk.
+    # Key is challenge name, value is the raw record dict (name, category, value, …).
+    remote_challenge_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
