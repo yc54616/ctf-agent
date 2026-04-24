@@ -260,10 +260,12 @@ function renderChallengeList() {
     const item   = document.createElement("div");
     item.className    = "challenge-item" + (name === S.selectedName ? " active" : "");
     item.dataset.name = name;
-    const isRemoteOnly = ch.source === "remote" && !ch.local_preloaded;
+    // Remote-only = discovered via CTFd but not yet on disk (auto-import failed
+    // or was skipped).  Spawn would fail without a challenge_dir.
+    const isRemoteOnly = !ch.local_preloaded && ch.status === "idle";
     item.innerHTML = `
       <span class="ch-status-dot ${chStatusCls(ch.status)}"></span>
-      <span class="ch-name" title="${esc(name)}${isRemoteOnly ? " (remote-only — run ctf-import to pull files)" : ""}">${esc(name)}</span>
+      <span class="ch-name" title="${esc(name)}${isRemoteOnly ? " (remote-only — import failed; re-click Fetch)" : ""}">${esc(name)}</span>
       ${ch.category ? `<span class="ch-cat">${esc(ch.category)}</span>` : ""}
       ${isRemoteOnly ? `<span class="ch-cat" style="color:var(--purple)" title="Not yet imported to disk">☁</span>` : ""}
       ${staleN > 0 ? `<span class="ch-cat" style="color:var(--orange)">⚠${staleN}</span>` : ""}
@@ -323,7 +325,7 @@ function selectChallenge(name) {
 function enableCommands(name, ch) {
   const solved = ch.status === "solved";
   const active = ch.status === "active";
-  const remoteOnly = ch.source === "remote" && !ch.local_preloaded;
+  const remoteOnly = !ch.local_preloaded && ch.status === "idle";
   $("selectedBadge").textContent  = name;
   $("selectedBadge").style.display = "";
   const metaSuffix = remoteOnly ? " — ☁ remote-only (run ctf-import first)" : "";
@@ -641,16 +643,32 @@ $("parseForm").addEventListener("submit", async e => {
    ══════════════════════════════════════════════════════════════════════════ */
 $("fetchChallengesBtn").addEventListener("click", async () => {
   const btn = $("fetchChallengesBtn");
-  btn.disabled = true; btn.textContent = "⏳ Fetching…";
+  btn.disabled = true; btn.textContent = "⏳ Fetching + importing…";
+  // Auto-import is on by default; the server downloads attachments + writes
+  // metadata.yml for each remote challenge under challenges/<ctfd-host>/.
   const r = await api("/api/runtime/fetch-challenges");
   btn.disabled = false; btn.textContent = "🔄 Fetch";
   if (r.ok) {
     const n = r.body.count ?? r.body.challenges?.length ?? 0;
-    const remoteOnly = (r.body.challenges ?? []).filter(c => (c?.source ?? "local") !== "local").length;
-    logActivity(`Fetched ${n} challenge(s) — ${remoteOnly} remote-only`, "al-ok");
-    pushEvent(`🔄 Fetched ${n} challenges (${remoteOnly} not yet imported to disk)`, "info");
-    // Force an immediate snapshot refresh so the newly cached remote challenges
-    // appear in the left panel without waiting for the next SSE tick.
+    const summary = r.body.import_summary ?? { imported: [], skipped: [], failed: [] };
+    const imp = (summary.imported ?? []).length;
+    const skip = (summary.skipped ?? []).length;
+    const fail = (summary.failed ?? []).length;
+    const parts = [`${n} total`];
+    if (imp)  parts.push(`${imp} imported`);
+    if (skip) parts.push(`${skip} already on disk`);
+    if (fail) parts.push(`${fail} failed`);
+    const summaryText = parts.join(", ");
+    logActivity(`Fetched: ${summaryText}`, fail > 0 ? "al-err" : "al-ok");
+    pushEvent(`🔄 ${summaryText}${summary.error ? ` (${summary.error})` : ""}`,
+              fail > 0 ? "warn" : "success");
+    if (fail > 0) {
+      const firstFew = (summary.failed ?? []).slice(0, 3).map(f =>
+        Array.isArray(f) ? `${f[0]}: ${f[1]}` : String(f)
+      ).join("; ");
+      logActivity(`Import errors: ${firstFew}`, "al-err");
+    }
+    // Force an immediate snapshot refresh so newly imported challenges appear.
     pollSnapshot();
   } else {
     logActivity(`Fetch failed: ${r.body.error ?? r.status}`, "al-err");

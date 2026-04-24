@@ -398,6 +398,13 @@ async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
         return json.dumps(result, indent=2)
 
     solved |= restored_solved
+    # Cache the RAW remote challenge dicts (with files/hints/connection_info)
+    # so the Fetch button's auto-import step can feed them to pull_challenge.
+    deps.remote_challenge_cache = {
+        str(ch.get("name", "")): ch
+        for ch in challenges
+        if ch.get("name")
+    }
     result = [
         {
             "name": ch.get("name", "?"),
@@ -410,13 +417,6 @@ async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
         }
         for ch in challenges
     ]
-    # Cache the remote-fetched list so the human-mode UI can surface remote-only
-    # challenges (not yet imported to disk) in the left panel.
-    deps.remote_challenge_cache = {
-        str(record.get("name", "")): record
-        for record in result
-        if record.get("name")
-    }
     seen = {str(record.get("name", "")) for record in result}
     result.extend(record for record in local_records if str(record.get("name", "")) not in seen)
     result.sort(key=_challenge_sort_key)
