@@ -2101,6 +2101,23 @@ async def _start_msg_server(
                 else:
                     deps.settings.remote_cookie_header = cleaned
                     deps.cookie_source = f"operator_api@{int(time.time())}"
+                    # Push the new cookie into the live CTFd client so the
+                    # poller + Fetch + submit paths use it immediately.  Without
+                    # this, only NEW clients would see the cookie and the
+                    # poller would keep failing with admin/admin login errors.
+                    set_cookie_fn = getattr(deps.ctfd, "set_cookie_header", None)
+                    if callable(set_cookie_fn):
+                        try:
+                            set_cookie_fn(cleaned)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug("CTFd client cookie update failed: %s", exc)
+                    # Reset the poller's exponential backoff so the effect is
+                    # visible on the next tick instead of after the ramp.
+                    poller = getattr(deps, "poller", None)
+                    if poller is not None:
+                        reset_fn = getattr(poller, "reset_backoff", None)
+                        if callable(reset_fn):
+                            reset_fn()
                     summary = _cookie_summary(deps)
                     # Optionally verify immediately.
                     probe_result: dict[str, Any] = {}
@@ -2124,6 +2141,20 @@ async def _start_msg_server(
             elif method == "DELETE" and path == "/api/runtime/cookie":
                 deps.settings.remote_cookie_header = ""
                 deps.cookie_source = ""
+                # Strip the cookie off the live CTFd client too so subsequent
+                # requests fall back to token / credential auth (or fail
+                # cleanly) instead of quietly reusing the old cookie.
+                set_cookie_fn = getattr(deps.ctfd, "set_cookie_header", None)
+                if callable(set_cookie_fn):
+                    try:
+                        set_cookie_fn("")
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("CTFd client cookie clear failed: %s", exc)
+                poller = getattr(deps, "poller", None)
+                if poller is not None:
+                    reset_fn = getattr(poller, "reset_backoff", None)
+                    if callable(reset_fn):
+                        reset_fn()
                 logger.info("Cookie header cleared via API")
                 _json_response("200 OK", {"ok": True, "cookie": _cookie_summary(deps)})
             elif method == "POST" and path == "/api/runtime/cookie/test":

@@ -46,12 +46,21 @@ class PlatformDescriptor:
         return normalize_platform_capabilities(self.capabilities)
 
 
-def _build_ctfd_client(_source: dict[str, Any], settings: Settings, _cookie_header: str) -> PlatformClient:
+def _build_ctfd_client(_source: dict[str, Any], settings: Settings, cookie_header: str) -> PlatformClient:
+    # Prefer the explicit cookie_header arg (passed by build_platform_client
+    # from the operator's active GUI state); fall back to settings so the
+    # --cookie-file path still works.
+    effective_cookie = str(
+        cookie_header
+        or getattr(settings, "remote_cookie_header", "")
+        or ""
+    ).strip()
     return CTFdClient(
         base_url=settings.ctfd_url,
         token=settings.ctfd_token,
         username=settings.ctfd_user,
         password=settings.ctfd_pass,
+        cookie_header=effective_cookie,
     )
 
 

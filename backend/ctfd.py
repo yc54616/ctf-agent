@@ -28,6 +28,11 @@ class CTFdClient:
     token: str = ""
     username: str = "admin"
     password: str = "admin"
+    # Optional raw "Cookie:" header value (e.g. "session=eyJ...; remember_token=…").
+    # When set, the client skips the username/password login flow entirely —
+    # the cookie IS the auth.  Operators paste this through the GUI
+    # ("CTFd Connection → Session Cookie").
+    cookie_header: str = ""
 
     _client: httpx.AsyncClient | None = field(default=None, repr=False)
     _csrf_token: str = ""
@@ -46,17 +51,52 @@ class CTFdClient:
         if self._client is None:
             # verify=False: CTFd instances often use self-signed certs or HTTP.
             # This is a CTF tool, not production infrastructure.
+            base_headers: dict[str, str] = {"User-Agent": USER_AGENT}
+            cookie = str(self.cookie_header or "").strip()
+            if cookie:
+                base_headers["Cookie"] = cookie
             self._client = httpx.AsyncClient(
                 base_url=self.base_url.rstrip("/"),
                 follow_redirects=False,
                 verify=False,
                 timeout=30.0,
-                headers={"User-Agent": USER_AGENT},
+                headers=base_headers,
             )
         return self._client
 
+    def set_cookie_header(self, cookie_header: str) -> None:
+        """Update the Cookie header used on outgoing requests.
+
+        Called by the coordinator HTTP handler after the operator saves a new
+        cookie through the GUI (``PUT /api/runtime/cookie``) — avoids having
+        to rebuild the whole httpx client + CTFdClient graph just to swap a
+        cookie.  Also resets the sticky-login flag so the next call re-uses
+        whatever session the new cookie proves.
+        """
+        cookie = str(cookie_header or "").strip()
+        self.cookie_header = cookie
+        self._csrf_token = ""
+        # Flip to "logged in" if a cookie is present, otherwise rely on the
+        # normal _ensure_logged_in() path (which also handles the token case).
+        self._logged_in = bool(cookie)
+        if self._client is not None:
+            if cookie:
+                self._client.headers["Cookie"] = cookie
+            else:
+                self._client.headers.pop("Cookie", None)
+
     async def _ensure_logged_in(self) -> None:
+        # Three auth modes, in order of preference:
+        #   1. Already logged in this session (sticky cookie from /login POST).
+        #   2. API token — attached as Authorization header by _base_headers.
+        #   3. Raw Cookie header passed in via constructor (GUI save).  Treat
+        #      the presence of a cookie as proof we're "logged in" so the
+        #      admin/admin fallback at the bottom of this function doesn't
+        #      run against real CTFd deployments.
         if self._logged_in or self.token:
+            return
+        if str(self.cookie_header or "").strip():
+            self._logged_in = True
             return
         client = await self._ensure_client()
 
