@@ -2007,15 +2007,21 @@ async def _start_msg_server(
                 # that sneak in when operators copy from DevTools' Response view.
                 cleaned = _sanitize_cookie_header(raw)
                 if not cleaned:
-                    _json_response(
-                        "400 Bad Request",
-                        {
-                            "error": (
-                                "cookie value is required — after stripping Set-Cookie "
-                                "attributes nothing usable remained"
-                            ),
-                        },
-                    )
+                    # Distinguish "pasted nothing" from "pasted a bare token with no name=".
+                    has_equals = "=" in raw
+                    if raw and not has_equals:
+                        msg = (
+                            "Invalid Cookie header: looks like you pasted just the cookie "
+                            "VALUE. The Cookie header needs the full 'name=value' pair, "
+                            "e.g. 'session=eyJhbG...'.  Copy from DevTools → Network → "
+                            "Request Headers → Cookie: line (not Application → Cookies)."
+                        )
+                    else:
+                        msg = (
+                            "cookie value is required — after stripping Set-Cookie "
+                            "attributes nothing usable remained"
+                        )
+                    _json_response("400 Bad Request", {"error": msg})
                 else:
                     deps.settings.remote_cookie_header = cleaned
                     deps.cookie_source = f"operator_api@{int(time.time())}"
