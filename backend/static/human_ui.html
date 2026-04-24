@@ -135,6 +135,7 @@
     <!-- Tab bar -->
     <div class="tab-bar" id="tabBar" style="display:none">
       <button class="tab-btn active" data-tab="overview">Overview</button>
+      <button class="tab-btn" data-tab="reports">Reports</button>
       <button class="tab-btn" data-tab="advisor">Advisor</button>
       <button class="tab-btn" data-tab="intervene">Intervene</button>
       <button class="tab-btn" data-tab="health">Health</button>
@@ -155,6 +156,43 @@
       <section class="section" id="findingsSection" style="display:none">
         <h3 class="section-title">Shared Findings</h3>
         <div class="finding-list" id="findingList"></div>
+      </section>
+    </div>
+
+    <!-- TAB: Reports — shared channel where lanes publish discoveries /
+         experiments / blockers and the advisor publishes synthesis / hints.
+         Flag candidates get special rendering with inline action buttons. -->
+    <div class="tab-pane" id="tab-reports">
+      <section class="section">
+        <h3 class="section-title">
+          Solve Reports
+          <span class="section-controls">
+            <label class="checkbox-label" style="font-size:12px;margin-right:8px">
+              <input type="checkbox" id="reportsAllChallenges"> all challenges
+            </label>
+            <span id="reportsKindFilter" class="reports-kind-filter">
+              <button class="kind-btn active" data-kind="">all</button>
+              <button class="kind-btn" data-kind="flag_candidate" title="flag candidates — unique actions">🏁 flag</button>
+              <button class="kind-btn" data-kind="discovery">🔍 discovery</button>
+              <button class="kind-btn" data-kind="experiment">🧪 experiment</button>
+              <button class="kind-btn" data-kind="hypothesis">💡 hypothesis</button>
+              <button class="kind-btn" data-kind="blocker">🚧 blocker</button>
+              <button class="kind-btn" data-kind="synthesis">🧠 synthesis</button>
+              <button class="kind-btn" data-kind="hint">→ hint</button>
+              <button class="kind-btn" data-kind="candidate_review">verdict</button>
+              <button class="kind-btn" data-kind="lane_note">other</button>
+            </span>
+          </span>
+        </h3>
+        <p class="cmd-meta">
+          Unified report feed. Lanes push discoveries / experiments, the advisor
+          publishes synthesis + hints + verdicts. Click <strong>Reply to lane</strong>
+          to preload the tactical hint form with that lane. Flag candidates have
+          inline Approve / Reject / Submit buttons.
+        </p>
+        <div class="reports-feed" id="reportsFeed">
+          <div class="empty">No reports yet.</div>
+        </div>
       </section>
     </div>
 

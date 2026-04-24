@@ -639,6 +639,105 @@ textarea { resize: vertical; }
   color: var(--fg);
 }
 
+/* Solve reports feed — lanes + advisor share this channel */
+.reports-kind-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.reports-kind-filter .kind-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.reports-kind-filter .kind-btn:hover { background: var(--surface); color: var(--fg); }
+.reports-kind-filter .kind-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.reports-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 75vh;
+  overflow-y: auto;
+}
+.report-row {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.report-row.kind-discovery       { border-left-color: var(--green); }
+.report-row.kind-experiment      { border-left-color: var(--accent); }
+.report-row.kind-hypothesis      { border-left-color: var(--purple); }
+.report-row.kind-blocker         { border-left-color: var(--orange); }
+.report-row.kind-synthesis       { border-left-color: var(--purple); background: rgba(128, 90, 213, 0.08); }
+.report-row.kind-hint            { border-left-color: var(--orange); }
+.report-row.kind-candidate_review { border-left-color: var(--accent); }
+.report-row.kind-flag_candidate {
+  border-left: 3px solid var(--yellow, #f6c945);
+  background: rgba(246, 201, 69, 0.08);
+  box-shadow: 0 0 0 1px rgba(246, 201, 69, 0.3);
+}
+.report-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.report-kind-badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+.report-title {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.report-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  color: var(--fg);
+  margin-top: 3px;
+}
+.report-actions {
+  display: flex;
+  gap: 5px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.report-actions .btn-success,
+.report-actions .btn-danger,
+.report-actions .btn-accent,
+.report-actions .ghost-btn {
+  padding: 2px 10px;
+  font-size: 11px;
+}
+.report-flag-chip {
+  display: inline-block;
+  background: rgba(246, 201, 69, 0.15);
+  color: var(--yellow, #f6c945);
+  border: 1px solid rgba(246, 201, 69, 0.4);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  word-break: break-all;
+}
+
 /* Live advisor reports panel (Intervene tab) */
 .reports-list {
   display: flex;
