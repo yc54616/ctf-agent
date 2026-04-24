@@ -1272,15 +1272,32 @@ async def do_bump_agent(deps: CoordinatorDeps, challenge_name: str, model_spec: 
         "Emit a `notify_coordinator` tool call on your VERY NEXT step with "
         "your immediate response.  IMPORTANT: the human only sees "
         "notify_coordinator tool calls in their GUI — agentMessage / "
-        "reasoning text is invisible to them.  After this single response "
-        "resume your normal task; this is NOT a standing directive, just "
-        "a transient prompt."
+        "reasoning text is invisible to them.\n\n"
+        "RECOVERY: your current turn was interrupted for this prompt, so "
+        "any in-flight tool call was aborted.  After your notify_coordinator "
+        "response:\n"
+        "  1. Re-read the last few messages in your conversation history "
+        "(they're preserved across the interrupt).\n"
+        "  2. Identify the line of work you were pursuing before the "
+        "interrupt.\n"
+        "  3. Continue from that point — re-issue the tool call that was "
+        "aborted if needed.\n"
+        "Do NOT restart from scratch.  This is a transient prompt, NOT a "
+        "standing directive."
     )
-    operator_bump = getattr(solver, "bump_operator", None)
-    if callable(operator_bump):
-        operator_bump(tagged)
+    # Transient/one-shot path → instant interrupt (kills current turn so
+    # the hint is consumed in ~2-5s instead of waiting 5-60s for the
+    # current turn to finish).  Falls back to normal bump_operator if
+    # the solver backend doesn't expose an interrupt.
+    instant_fn = getattr(solver, "interrupt_and_bump_operator", None)
+    if callable(instant_fn):
+        instant_fn(tagged)
     else:
-        solver.bump(tagged)
+        operator_bump = getattr(solver, "bump_operator", None)
+        if callable(operator_bump):
+            operator_bump(tagged)
+        else:
+            solver.bump(tagged)
     # Publish the human's bump as a visible report so the operator sees
     # their own intervention land in the feed.  Without this the message
     # silently went into the solver's commands queue — if the lane chose
@@ -1396,12 +1413,26 @@ async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, criti
         + "\n\nEmit a `notify_coordinator` tool call on your VERY NEXT "
         "step acknowledging + your immediate response.  IMPORTANT: "
         "agentMessage / reasoning text is invisible to the human — "
-        "only notify_coordinator tool calls reach them.  After this "
-        "single response resume solving; this is a transient prompt, "
-        "NOT a standing rule."
+        "only notify_coordinator tool calls reach them.\n\n"
+        "RECOVERY: your current turn was interrupted for this override, "
+        "so any in-flight tool call was aborted.  After your "
+        "notify_coordinator response:\n"
+        "  1. Re-read the last few messages in your conversation history "
+        "(they're preserved across the interrupt).\n"
+        "  2. Factor in the override's guidance.\n"
+        "  3. Continue your solving from where you left off — re-issue "
+        "the aborted tool call if needed, but adjust course if the "
+        "override redirects you.\n"
+        "Do NOT restart from scratch.  This is a transient prompt, NOT "
+        "a standing rule."
     )
     for model_spec, solver in swarm.solvers.items():
-        bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
+        # Transient/one-shot → instant interrupt (kills current turn).
+        bump_fn = (
+            getattr(solver, "interrupt_and_bump_operator", None)
+            or getattr(solver, "bump_operator", None)
+            or getattr(solver, "bump", None)
+        )
         if callable(bump_fn):
             bump_fn(stronger_prompt)
             bumped.append(model_spec)
@@ -1517,24 +1548,36 @@ async def do_request_status_report(
     prompt = (
         "[ONE-SHOT HUMAN STATUS REQUEST — answer this ONCE on your very "
         "next step, then do NOT keep referring to it in future reasoning]\n\n"
-        "DROP whatever tool call you were about to run.  Your IMMEDIATE "
-        "next step MUST be a `notify_coordinator` tool call (NOT "
-        "agentMessage / reasoning — those are invisible to both the "
-        "human AND the advisor) with a short status using exactly this "
-        "structure:\n"
+        "Your IMMEDIATE next step MUST be a `notify_coordinator` tool "
+        "call (NOT agentMessage / reasoning — those are invisible to "
+        "both the human AND the advisor) with a short status using "
+        "exactly this structure:\n"
         "  • Currently: <what you're working on right now>\n"
         "  • Tried: <1–2 things you tried>\n"
         "  • Learned: <what you know so far>\n"
         "  • Blocked: <blocker, if any>\n"
         "  • Next: <what you'll try next>\n\n"
         "Keep it under ~8 lines.  The advisor will aggregate every "
-        "lane's reply into a single report for the human.  After this "
-        "ONE notify_coordinator call, resume solving normally — this "
-        "is a transient prompt, NOT a standing rule."
+        "lane's reply into a single report for the human.\n\n"
+        "RECOVERY: your current turn was interrupted for this request, "
+        "so any in-flight tool call was aborted.  After your "
+        "notify_coordinator response:\n"
+        "  1. Re-read the last few messages in your conversation history "
+        "(they're preserved across the interrupt).\n"
+        "  2. Identify the line of work you were pursuing before.\n"
+        "  3. Continue from that point — re-issue the aborted tool call "
+        "if needed.  Do NOT restart from scratch.\n"
+        "This is a transient prompt, NOT a standing rule."
     )
     for spec in active_lanes:
         solver = swarm.solvers.get(spec)
-        bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
+        # Report-now is transient/one-shot → instant interrupt so we get
+        # lane replies in ~2-5s instead of waiting 5-60s for turn boundaries.
+        bump_fn = (
+            getattr(solver, "interrupt_and_bump_operator", None)
+            or getattr(solver, "bump_operator", None)
+            or getattr(solver, "bump", None)
+        )
         if callable(bump_fn):
             try:
                 bump_fn(prompt)

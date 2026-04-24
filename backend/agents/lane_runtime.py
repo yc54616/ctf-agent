@@ -446,6 +446,35 @@ class LaneRuntime:
                 )
             return
 
+        if cmd_type == "operator_interrupt_bump":
+            # Instant-response variant: kills current codex turn so the
+            # bump is consumed within ~2-5s instead of waiting for the
+            # current turn to finish.  Used for transient operator
+            # interventions (Strategic Override, Tactical Hint,
+            # Broadcast, Report-now) where immediate lane feedback
+            # matters more than preserving the in-flight tool call.
+            insights = str(command.get("insights") or "").strip()
+            if insights:
+                interrupt_fn = getattr(self._solver, "interrupt_and_bump_operator", None)
+                if callable(interrupt_fn):
+                    interrupt_fn(insights)
+                else:
+                    # Fallback: normal bump_operator (waits for turn end).
+                    bump_operator = getattr(self._solver, "bump_operator", None)
+                    if callable(bump_operator):
+                        bump_operator(insights)
+                    else:
+                        self._solver.bump(insights)
+                append_jsonl(
+                    self.control_paths.events_path,
+                    {
+                        "type": "advisory_applied", "ts": time.time(),
+                        "source": "operator", "channel": "instant",
+                        "insights": insights,
+                    },
+                )
+            return
+
         if cmd_type == "auto_bump":
             insights = str(command.get("insights") or "").strip()
             if insights:
