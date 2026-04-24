@@ -17,6 +17,9 @@ const S = {
   activeTab: "overview",
   queueOpen: false,
   advisorReports: [],
+  solveReports: [],
+  reportsKindFilter: "",
+  reportsAllChallenges: false,
   ctfdSummary: null,
   ctfdLastProbe: null,
   pollerStatus: null,
@@ -79,6 +82,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (tab === "health"    && S.selectedName) renderHealth();
     if (tab === "config"    && S.selectedName) loadConfig();
     if (tab === "intervene")                    renderReports();
+    if (tab === "reports")                      renderSolveReports();
   });
 });
 
@@ -241,7 +245,9 @@ function applySnapshot(snap) {
   renderQueue(snap.pending_challenge_entries ?? []);
   // Cache latest reports for filter toggle + re-render on challenge selection.
   S.advisorReports = snap.advisor_reports ?? [];
+  S.solveReports   = snap.solve_reports   ?? [];
   if (S.activeTab === "intervene") renderReports();
+  if (S.activeTab === "reports")   renderSolveReports();
 
   // Keep the CTFd status dot in sync with the background poller — a dot
   // stuck on "ok" while the poller has been failing for minutes was a real
@@ -489,6 +495,109 @@ async function loadAdvisoryHistory() {
     list.appendChild(item);
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Reports tab — shared solve-report feed (lanes + advisor → human)
+   ══════════════════════════════════════════════════════════════════════════ */
+const KIND_ICONS = {
+  discovery: "🔍", experiment: "🧪", hypothesis: "💡", blocker: "🚧",
+  synthesis: "🧠", hint: "→",
+  candidate_review: "⚖", flag_candidate: "🏁", lane_note: "·",
+};
+
+function renderSolveReports() {
+  const feed = $("reportsFeed");
+  if (!feed) return;
+  let reports = S.solveReports ?? [];
+  if (!S.reportsAllChallenges && S.selectedName) {
+    reports = reports.filter(r => !r.challenge_name || r.challenge_name === S.selectedName);
+  }
+  if (S.reportsKindFilter) {
+    reports = reports.filter(r => r.kind === S.reportsKindFilter);
+  }
+  // Newest first, cap at 120 so the feed stays responsive.
+  reports = [...reports].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)).slice(0, 120);
+  if (!reports.length) {
+    feed.innerHTML = '<div class="empty">No reports match the current filter.</div>';
+    return;
+  }
+  feed.innerHTML = "";
+  for (const r of reports) {
+    const kind = String(r.kind ?? "lane_note");
+    const icon = KIND_ICONS[kind] ?? "·";
+    const lane = r.lane_id ? shortModel(r.lane_id) : "";
+    const when = r.ts ? new Date(r.ts * 1000).toLocaleTimeString() : "";
+    const ch   = r.challenge_name ?? "";
+    const flagFromRefs = (r.refs ?? []).find(ref => String(ref).startsWith("candidate:"));
+    const flag = flagFromRefs ? String(flagFromRefs).slice("candidate:".length) : "";
+
+    const row = document.createElement("div");
+    row.className = `report-row kind-${esc(kind)}`;
+    row.innerHTML = `
+      <div class="report-row-head">
+        <span class="report-kind-badge">${icon} ${esc(kind.replace(/_/g, " "))}</span>
+        ${when ? `<span>${esc(when)}</span>` : ""}
+        ${lane ? `<span>${esc(lane)}</span>` : ""}
+        ${S.reportsAllChallenges && ch ? `<span>${esc(ch)}</span>` : ""}
+        ${r.status && r.status !== "open" ? `<span style="color:var(--muted)">[${esc(r.status)}]</span>` : ""}
+      </div>
+      ${r.title ? `<div class="report-title">${esc(r.title)}</div>` : ""}
+      ${r.body  ? `<div class="report-body">${esc(r.body)}</div>` : ""}
+      <div class="report-actions">
+        ${kind === "flag_candidate" && flag ? `
+          <div style="flex-basis:100%;margin-bottom:4px"><span class="report-flag-chip">${esc(flag)}</span></div>
+          <button class="btn-success" data-flag="${esc(flag)}" data-action="approve">✓ Approve</button>
+          <button class="btn-danger"  data-flag="${esc(flag)}" data-action="reject">✗ Reject</button>
+          <button class="btn-accent"  data-flag="${esc(flag)}" data-action="submit">→ Submit to platform</button>
+        ` : ""}
+        ${lane && kind !== "flag_candidate" ? `
+          <button class="ghost-btn report-reply-btn" data-lane="${esc(r.lane_id)}" data-ch="${esc(ch)}">↩ Reply to lane</button>
+        ` : ""}
+      </div>
+    `;
+    feed.appendChild(row);
+  }
+  // Wire inline flag actions for flag_candidate rows.
+  feed.querySelectorAll("[data-action]").forEach(btn =>
+    btn.addEventListener("click", () => handleCandidate(btn.dataset.action, btn.dataset.flag))
+  );
+  feed.querySelectorAll(".report-reply-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const lane = btn.dataset.lane;
+      const ch   = btn.dataset.ch;
+      if (ch && ch !== S.selectedName && S.challenges[ch]) selectChallenge(ch);
+      // Jump to Intervene tab + preload tactical hint form.
+      document.querySelector('.tab-btn[data-tab="intervene"]')?.click();
+      const sel = $("tacticalLaneSelect");
+      if (sel && lane) {
+        let opt = Array.from(sel.options).find(o => o.value === lane);
+        if (!opt) {
+          opt = document.createElement("option");
+          opt.value = lane; opt.textContent = shortModel(lane);
+          sel.appendChild(opt);
+        }
+        sel.value = lane;
+      }
+      $("tacticalInput").focus();
+      $("tacticalInput").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+}
+
+// Filter buttons
+document.querySelectorAll("#reportsKindFilter .kind-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    S.reportsKindFilter = btn.dataset.kind || "";
+    document.querySelectorAll("#reportsKindFilter .kind-btn").forEach(b =>
+      b.classList.toggle("active", b === btn)
+    );
+    renderSolveReports();
+  });
+});
+$("reportsAllChallenges")?.addEventListener("change", e => {
+  S.reportsAllChallenges = e.target.checked;
+  renderSolveReports();
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
    Intervene tab — live advisor reports panel

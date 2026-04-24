@@ -523,6 +523,7 @@ async def _spawn_swarm_now(deps: CoordinatorDeps, challenge_name: str) -> str:
         no_submit=(deps.no_submit or bool(getattr(meta, "no_submit", False))),
         local_mode=deps.local_mode,
         coordinator_inbox=deps.coordinator_inbox,
+        solve_reports_log=deps.solve_reports,
     )
     deps.swarms[challenge_name] = swarm
 

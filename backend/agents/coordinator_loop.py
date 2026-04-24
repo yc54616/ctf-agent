@@ -953,6 +953,7 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "pending_challenge_entries": legacy.get("pending_challenge_entries", []),
         "known_challenges": _known_challenges_snapshot(deps),
         "advisor_reports": list(getattr(deps, "advisor_reports", []))[-30:],
+        "solve_reports": list(getattr(deps, "solve_reports", []))[-80:],
         "results": results,
         "known_challenge_count": legacy.get("known_challenge_count", 0),
         "known_solved_count": legacy.get("known_solved_count", 0),

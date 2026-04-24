@@ -63,6 +63,38 @@ MANIFEST_ENTRY_LIMIT = 8
 MAX_RESTART_TRACE_COPIES = 3
 MAX_RESTART_HANDOFF_COPY_ENTRIES = 8
 ADVISOR_LISTENER_INTERVAL_SECONDS = 2.0
+
+# Keyword buckets for classifying a lane's free-text notify_coordinator()
+# message into a solve-report kind so the Reports tab can filter meaningfully.
+# Order matters: the FIRST match wins, so more specific kinds come first.
+_REPORT_CLASSIFICATION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("blocker", (
+        "stuck", "can't", "cannot", "blocked", "dead end", "no idea",
+        "give up", "gave up", "unable", "failing", "doesn't work",
+    )),
+    ("experiment", (
+        "tried", "ran ", "executed ", "tested", "experiment",
+        "result:", "output:", "stdout", "stderr", "returned ",
+        "exit code", "segfault", "crash", "attempted",
+    )),
+    ("hypothesis", (
+        "i think", "likely ", "probably ", "suspect", "hypothesis",
+        "might be", "could be", "may be", "possibly", "theory",
+    )),
+    ("discovery", (
+        "found ", "discovered", "noticed", "observed", "identified",
+        "spotted", "see that", "contains ", "reveals ", "indicates ",
+    )),
+)
+
+
+def _classify_lane_note(message: str) -> str:
+    """Classify a free-text lane note into a solve-report kind."""
+    text = (message or "").lower()[:1000]
+    for kind, needles in _REPORT_CLASSIFICATION_RULES:
+        if any(needle in text for needle in needles):
+            return kind
+    return "lane_note"
 ADVISOR_COORDINATOR_TIMEOUT_SECONDS = 8.0
 ADVISOR_LANE_HINT_TIMEOUT_SECONDS = 30.0
 ADVISOR_TIMEOUT_BACKOFF_AFTER_CONSECUTIVE_TIMEOUTS = 2
@@ -521,6 +553,10 @@ class ChallengeSwarm:
     no_submit: bool = False
     local_mode: bool = False
     coordinator_inbox: asyncio.Queue | None = None
+    # Shared reports log (deps.solve_reports).  When provided, publish_report()
+    # appends structured {kind, title, body, lane_id, ts, id} entries here so
+    # the GUI and the advisor monitoring loop both observe the same stream.
+    solve_reports_log: "deque[dict[str, Any]] | None" = None
 
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     solvers: dict[str, SolverProtocol] = field(default_factory=dict)
@@ -1987,6 +2023,59 @@ class ChallengeSwarm:
 
         raise ValueError(f"Unsupported solver provider in model spec: {model_spec}")
 
+    # ── Solve reports (shared channel: lanes + advisor → human UI) ─────────
+    _VALID_REPORT_KINDS = frozenset({
+        "discovery",        # lane: "I found X" (structural observation about the challenge)
+        "experiment",       # lane: "I tried Y and got Z" (empirical result)
+        "hypothesis",       # lane or advisor: "I think X implies Y"
+        "blocker",          # lane: "I'm stuck because X"
+        "synthesis",        # advisor: consolidated summary of recent lane reports
+        "hint",             # advisor: targeted suggestion to a specific lane
+        "candidate_review", # advisor: verdict on a flag candidate
+        "flag_candidate",   # lane: a flag-shaped string worth submitting — special UI
+        "lane_note",        # catch-all for uncategorised lane notifications
+    })
+
+    def publish_report(
+        self,
+        *,
+        kind: str,
+        title: str,
+        body: str = "",
+        lane_id: str = "",
+        refs: list[str] | None = None,
+    ) -> str:
+        """Append a structured report to the shared solve-reports channel.
+
+        Called by lanes (for discovery / experiment / hypothesis / blocker
+        entries) AND by the advisor (for synthesis / hint / candidate_review).
+        Returns the generated report ID so the caller can reference it later.
+
+        ``solve_reports_log`` is the deque on ``deps.solve_reports`` — we keep
+        a direct reference on the swarm so solvers don't need a deps handle.
+        Silent no-op if the log isn't wired (e.g. unit tests).
+        """
+        if self.solve_reports_log is None:
+            return ""
+        if kind not in self._VALID_REPORT_KINDS:
+            logger.debug("publish_report: unknown kind %r, coercing to lane_note", kind)
+            kind = "lane_note"
+        import uuid
+        report_id = uuid.uuid4().hex[:12]
+        entry = {
+            "id": report_id,
+            "ts": time.time(),
+            "challenge_name": self.meta.name,
+            "lane_id": lane_id or "swarm",
+            "kind": kind,
+            "title": str(title or "").strip()[:220],
+            "body": str(body or "").strip()[:4000],
+            "refs": list(refs or [])[:8],
+            "status": "open",
+        }
+        self.solve_reports_log.append(entry)
+        return report_id
+
     def _make_notify_fn(self, model_spec: str):
         """Create a callback that pushes solver messages to the coordinator inbox.
 
@@ -2001,6 +2090,18 @@ class ChallengeSwarm:
         async def _notify(message: str) -> None:
             if not self.coordinator_inbox:
                 return
+            # Every lane→coordinator note also lands in the shared reports
+            # channel so the Reports tab shows a chronological view of what
+            # each lane is doing, not just the advisor's synthesised view.
+            # Heuristic classification of the note text into discovery /
+            # experiment / blocker / lane_note so the UI can filter.
+            kind = _classify_lane_note(message)
+            self.publish_report(
+                kind=kind,
+                title=self._first_sentence(message),
+                body=message,
+                lane_id=model_spec,
+            )
             if self.no_submit:
                 # Human mode: non-blocking path.  Deliver solver message first,
                 # run advisor annotation in the background so its verdict still
@@ -2248,6 +2349,26 @@ class ChallengeSwarm:
             if cleaned_evidence and cleaned_evidence not in candidate.evidence_snippets:
                 candidate.evidence_snippets.append(cleaned_evidence[:500])
             candidate.advisor_decision = ""
+
+        # Flag candidates get a dedicated report kind so the GUI can render
+        # them with inline Approve / Reject / Submit buttons instead of
+        # losing them in the generic feed.  Only publish ONCE per distinct
+        # flag (is_new) — subsequent source lanes update the existing report
+        # by advisor_review, not by flooding the feed with duplicates.
+        if is_new:
+            self.publish_report(
+                kind="flag_candidate",
+                title=f"FLAG CANDIDATE: {normalized[:80]}",
+                body=(
+                    f"Flag: {normalized}\n"
+                    f"Source: {model_spec}\n"
+                    f"Confidence: {confidence or 'medium'}\n"
+                    f"Step: {step_count}\n"
+                    + (f"\nEvidence:\n{cleaned_evidence[:1200]}" if cleaned_evidence else "")
+                ),
+                lane_id=model_spec,
+                refs=[f"candidate:{normalized}"],
+            )
             candidate.advisor_note = ""
             if cleaned_evidence:
                 pointer_path, _size_bytes = self._persist_shared_text_pointer(
@@ -2385,6 +2506,15 @@ class ChallengeSwarm:
         )
         candidate.advisor_note = (review.note if review else "").strip()[:500]
         candidate.status = "pending_coordinator"
+        # Publish candidate verdict as a report so the human sees advisor's
+        # call on every flag the lanes surface.
+        self.publish_report(
+            kind="candidate_review",
+            title=f"verdict {candidate.advisor_decision}: {candidate.raw_flag[:60]}",
+            body=candidate.advisor_note or f"Flag: {candidate.raw_flag}",
+            lane_id=source_model,
+            refs=[f"candidate:{candidate.raw_flag}"],
+        )
 
         for model_spec, pointer_path in list(candidate.evidence_pointer_paths.items()):
             evidence_text = self._read_shared_pointer_text(pointer_path)
@@ -2896,7 +3026,26 @@ class ChallengeSwarm:
         self.last_advisor_note = advice
         self.last_coordinator_advisor_note = advice
         self.advisor_coordinator_count += 1
+        # Also publish as a structured report so the human UI's Reports tab
+        # builds a consistent series of advisor-synthesis entries alongside
+        # raw lane notes.  Title is the first sentence for scannability.
+        self.publish_report(
+            kind="synthesis",
+            title=self._first_sentence(advice),
+            body=advice,
+            lane_id=model_spec,
+        )
         return f"{message}\n\n[Advisor] {advice}"
+
+    @staticmethod
+    def _first_sentence(text: str, *, cap: int = 180) -> str:
+        """Best-effort one-liner for report titles."""
+        text = " ".join(str(text or "").split())
+        for sep in (". ", "? ", "! ", " — "):
+            idx = text.find(sep)
+            if 20 <= idx <= cap:
+                return text[: idx + 1].rstrip()
+        return text[:cap].rstrip()
 
     def _gather_sibling_insights(self, exclude_model: str) -> str:
         parts: list[str] = []
@@ -3481,6 +3630,15 @@ class ChallengeSwarm:
             self.lane_advisor_notes[model_spec] = advice
             self.last_advisor_note = advice
             self.advisor_lane_hint_count += 1
+            # Publish the lane hint as a structured report so the human can
+            # see what the advisor just told this lane, in the same feed as
+            # all other reports.
+            self.publish_report(
+                kind="hint",
+                title=f"→ {model_spec}: {self._first_sentence(advice)}",
+                body=advice,
+                lane_id=model_spec,
+            )
             advisory_msg = f"Private advisor note for this lane:\n{advice}"
             advisory_bump = getattr(solver, "bump_advisory", None)
             if callable(advisory_bump):

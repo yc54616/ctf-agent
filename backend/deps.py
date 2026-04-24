@@ -111,3 +111,13 @@ class CoordinatorDeps:
     # the HTTP handler can surface its status in the snapshot and reset its
     # exponential backoff after a ctfd-config change.  ``None`` in local_mode.
     poller: Any | None = None
+
+    # Shared "solve reports" stream — a structured channel where lanes post
+    # discovery / experiment notes, the advisor posts synthesis / hints, and
+    # the human UI renders the combined feed for intervene-by-report workflow.
+    # Entries: {id, ts, challenge_name, lane_id, kind, title, body, refs, status}.
+    # Kind ∈ {discovery, experiment, hypothesis, blocker, synthesis, hint, candidate_review, lane_note}.
+    # maxlen=500 so long-running swarms don't balloon memory.
+    solve_reports: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=500)
+    )
