@@ -706,10 +706,11 @@ $("parseForm").addEventListener("submit", async e => {
       ? ` [auth: ${[auth.cookie ? "cookie" : "", auth.token ? "token" : ""].filter(Boolean).join("+")}]`
       : " [no auth]";
     const compLabel = r.body.competition_name ? " — " + r.body.competition_name : "";
-    res.textContent = `Found ${n} challenge(s)${compLabel}${authLabel}`;
-    res.className   = "parse-result " + (n === 0 ? "error" : "ok");
-    if (n === 0 && !(auth.cookie || auth.token)) {
-      res.textContent += " — try Fetch instead, or paste a session cookie in CTFd Connection first.";
+    const note = r.body.note ? `\n${r.body.note}` : "";
+    res.innerText = `Found ${n} challenge(s)${compLabel}${authLabel}${note}`;
+    res.className = "parse-result " + (n === 0 ? "error" : "ok");
+    if (n === 0 && !(auth.cookie || auth.token) && !note) {
+      res.innerText += " — try Fetch instead, or paste a session cookie in CTFd Connection first.";
     }
     logActivity(`Parsed: ${n} challenges${authLabel}`, n === 0 ? "al-err" : "al-ok");
   } else {
@@ -907,7 +908,21 @@ function renderCookieStatus(summary, probe) {
   if (summary.configured) {
     parts.push(`<div>Length: ${summary.length} chars · Cookies: ${summary.cookie_count}</div>`);
     if (summary.cookie_names?.length) {
-      parts.push(`<div>${summary.cookie_names.map(n => `<span class="cookie-chip">${esc(n)}</span>`).join("")}</div>`);
+      parts.push(`<div>${summary.cookie_names.map(n => {
+        const isAuth = ["session", "remember_token", "remember_me"].includes(n.toLowerCase());
+        const isBot  = n.toLowerCase().startsWith("cf_") || n.toLowerCase().startsWith("__cf_")
+                    || ["ctf_clearance", "_ga", "_gid", "_gat", "_gcl_au"].includes(n.toLowerCase());
+        const style = isAuth ? "color:var(--green);border-color:var(--green)"
+                    : isBot  ? "color:var(--orange);border-color:var(--orange)"
+                    : "";
+        const title = isAuth ? "CTFd auth cookie"
+                    : isBot  ? "CloudFlare / analytics — NOT auth"
+                    : "";
+        return `<span class="cookie-chip" ${style ? `style="${style}"` : ""} title="${esc(title)}">${esc(n)}</span>`;
+      }).join("")}</div>`);
+    }
+    if (summary.warning) {
+      parts.push(`<div style="color:var(--orange);margin-top:4px;padding:4px 6px;background:rgba(0,0,0,0.2);border-radius:3px">⚠ ${esc(summary.warning)}</div>`);
     }
     if (summary.source) parts.push(`<div>Source: ${esc(summary.source)}</div>`);
   }

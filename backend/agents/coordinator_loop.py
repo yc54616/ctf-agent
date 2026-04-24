@@ -1066,11 +1066,24 @@ async def _rebuild_ctfd_client(deps: CoordinatorDeps, *, base_url: str, token: s
     return {"ok": True}
 
 
+# Cookies that are NOT CTFd auth but still legitimately present — operators
+# who paste their full browser Cookie header will have some of these.  We only
+# warn when NONE of the known auth cookies appear.
+_KNOWN_AUTH_COOKIE_NAMES = {"session", "remember_token", "remember_me"}
+_KNOWN_BOT_COOKIE_NAMES = {
+    "ctf_clearance", "cf_clearance", "__cf_bm", "__cf_waitingroom",
+    "cf_chl_2", "cf_chl_prog", "cf_chl_rc_i", "cf_chl_rc_m",
+    "_ga", "_gid", "_gat", "_gcl_au",
+}
+
+
 def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
     """Return a safe, UI-ready summary of the currently configured CTFd cookie.
 
     Never returns the raw cookie value — only metadata suitable for display
     (length, number of cookie pairs, names present, first-seen timestamp).
+    Also flags the common mistake of loading a CloudFlare / bot-check cookie
+    without the actual CTFd ``session=`` pair.
     """
     raw = str(getattr(deps.settings, "remote_cookie_header", "") or "").strip()
     base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
@@ -1085,11 +1098,39 @@ def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
             continue
         names.append(chunk.split("=", 1)[0])
 
+    lower_names = {n.lower() for n in names}
+    has_auth_cookie = bool(lower_names & _KNOWN_AUTH_COOKIE_NAMES)
+    bot_only = (
+        bool(lower_names)
+        and not has_auth_cookie
+        and all(
+            (name.lower() in _KNOWN_BOT_COOKIE_NAMES)
+            or name.lower().startswith(("cf_", "__cf_"))
+            for name in names
+        )
+    )
+    warning = ""
+    if bot_only:
+        warning = (
+            "Cookie has CloudFlare / bot-check entries but no CTFd session "
+            "cookie.  Log in at the CTFd site in your browser first, then copy "
+            "the Cookie header — you should see a 'session=...' pair.  "
+            "ctf_clearance / cf_clearance alone is NOT auth."
+        )
+    elif names and not has_auth_cookie:
+        warning = (
+            "No 'session' or 'remember_token' cookie in the pasted header.  "
+            "CTFd expects a 'session=...' pair — did you copy the cookie "
+            "before logging in?"
+        )
+
     return {
         "configured": bool(raw),
         "length": len(raw),
         "cookie_count": len(names),
         "cookie_names": names[:16],
+        "has_auth_cookie": has_auth_cookie,
+        "warning": warning,
         "base_url": base_url,
         "platform": platform,
         "username": username,
@@ -2338,8 +2379,6 @@ async def _start_msg_server(
                         from backend.agents.url_parser_agent import parse_challenge_url
                         # Reuse the operator's CTFd creds so private challenges
                         # pages return real content instead of a login redirect.
-                        # Caller can pass explicit_cookie / explicit_token to
-                        # override (e.g. when parsing a different host).
                         cookie_header = str(
                             data.get("cookie")
                             or getattr(deps.settings, "remote_cookie_header", "")
@@ -2350,15 +2389,81 @@ async def _start_msg_server(
                             or getattr(deps.settings, "ctfd_token", "")
                             or ""
                         )
-                        parsed = await asyncio.wait_for(
-                            parse_challenge_url(
-                                url,
-                                cookie_header=cookie_header,
-                                auth_token=auth_token,
-                            ),
-                            timeout=60,
-                        )
-                        _json_response("200 OK", parsed)
+
+                        # Shortcut: if the pasted URL targets the currently
+                        # configured CTFd host, bypass the HTML→LLM path and
+                        # call the CTFd API directly.  CTFd's /challenges page
+                        # is a React SPA whose raw HTML contains no challenge
+                        # data — only the JS bundle — so LLM parsing always
+                        # returns 0.  Fetching via the CTFd client gives us
+                        # real structured records.
+                        same_host = False
+                        try:
+                            from urllib.parse import urlparse
+                            parsed_url_host = (urlparse(url).hostname or "").lower()
+                            ctfd_host = (urlparse(
+                                getattr(deps.ctfd, "base_url", "")
+                                or getattr(deps.settings, "ctfd_url", "")
+                                or ""
+                            ).hostname or "").lower()
+                            same_host = bool(parsed_url_host and parsed_url_host == ctfd_host)
+                        except Exception:  # noqa: BLE001
+                            same_host = False
+
+                        use_api = same_host and not deps.local_mode and not data.get("force_html")
+                        api_payload: dict[str, Any] | None = None
+                        if use_api:
+                            try:
+                                from backend.agents.coordinator_core import do_fetch_challenges
+                                raw = await asyncio.wait_for(do_fetch_challenges(deps), timeout=30)
+                                records = json.loads(raw)
+                                api_payload = {
+                                    "source_url": url,
+                                    "competition_name": getattr(deps.ctfd, "label", "") or "CTFd",
+                                    "challenges": records,
+                                    "auth_used": {
+                                        "cookie": bool(cookie_header),
+                                        "token": bool(auth_token),
+                                    },
+                                    "note": (
+                                        "URL matches configured CTFd host; used "
+                                        "/api/v1/challenges instead of HTML scrape "
+                                        "(Parse URL and Fetch are equivalent here)."
+                                    ),
+                                    "markdown_summary": "",
+                                    "raw_text_preview": "",
+                                }
+                            except Exception as exc:  # noqa: BLE001 — fall back to HTML parse
+                                logger.info(
+                                    "parse-challenge-url: CTFd API shortcut failed (%s), falling back to HTML",
+                                    exc,
+                                )
+
+                        if api_payload is not None:
+                            _json_response("200 OK", api_payload)
+                        else:
+                            parsed = await asyncio.wait_for(
+                                parse_challenge_url(
+                                    url,
+                                    cookie_header=cookie_header,
+                                    auth_token=auth_token,
+                                ),
+                                timeout=60,
+                            )
+                            # If HTML parse came back empty but we're pointed at a
+                            # CTFd host, nudge the user toward Fetch.
+                            if (
+                                same_host
+                                and isinstance(parsed, dict)
+                                and not parsed.get("challenges")
+                            ):
+                                parsed["note"] = (
+                                    "HTML parse found 0 challenges — CTFd's "
+                                    "/challenges page is a JS-rendered SPA with no "
+                                    "challenges in the raw HTML. Use the 🔄 Fetch "
+                                    "button (left panel) which hits CTFd's API directly."
+                                )
+                            _json_response("200 OK", parsed)
                     except asyncio.TimeoutError:
                         _json_response(
                             "504 Gateway Timeout",
