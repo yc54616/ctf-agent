@@ -36,6 +36,33 @@ class PlatformPoller:
     _current_interval_s: float = field(default=0.0, init=False, repr=False)
     _last_error_text: str = field(default="", init=False, repr=False)
     _suppressed_warning_count: int = field(default=0, init=False, repr=False)
+    _last_poll_ok_at: float = field(default=0.0, init=False, repr=False)
+    _last_poll_error_at: float = field(default=0.0, init=False, repr=False)
+
+    def status(self) -> dict[str, object]:
+        """UI-safe poller state snapshot."""
+        return {
+            "platform": platform_label(self.ctfd),
+            "interval_s": float(self._current_interval_s or self.interval_s),
+            "failure_count": int(self._failure_count),
+            "last_error": str(self._last_error_text or ""),
+            "last_ok_at": float(self._last_poll_ok_at or 0.0),
+            "last_error_at": float(self._last_poll_error_at or 0.0),
+            "known_challenges": len(self._known_challenges),
+            "known_solved": len(self._known_solved),
+            "healthy": self._failure_count == 0 and self._last_poll_ok_at > 0,
+        }
+
+    def reset_backoff(self) -> None:
+        """Clear failure count so the next tick retries immediately.
+
+        Call this after the CTFd URL / token / cookie is updated via the API
+        so the operator doesn't wait for the existing exponential backoff.
+        """
+        self._failure_count = 0
+        self._current_interval_s = float(self.interval_s)
+        self._last_error_text = ""
+        self._suppressed_warning_count = 0
 
     async def start(self) -> None:
         """Do initial poll (silent — no events) and start the background loop."""
@@ -141,6 +168,7 @@ class PlatformPoller:
             self._record_poll_failure(e)
 
     def _mark_poll_success(self) -> None:
+        import time as _time
         if self._failure_count > 0:
             logger.info(
                 "%s poll recovered after %d failures",
@@ -151,9 +179,12 @@ class PlatformPoller:
         self._current_interval_s = float(self.interval_s)
         self._last_error_text = ""
         self._suppressed_warning_count = 0
+        self._last_poll_ok_at = _time.time()
 
     def _record_poll_failure(self, exc: Exception, *, initial: bool = False) -> None:
+        import time as _time
         self._failure_count += 1
+        self._last_poll_error_at = _time.time()
         self._current_interval_s = min(
             float(self.interval_s) * (POLL_BACKOFF_MULTIPLIER ** self._failure_count),
             MAX_POLL_BACKOFF_SECONDS,

@@ -501,6 +501,9 @@ async def run_event_loop(
     if not deps.local_mode:
         poller = CTFdPoller(ctfd=ctfd, interval_s=5.0)
         await poller.start()
+    # Expose the poller on deps so HTTP handlers can re-wire it after a
+    # ctfd-config change and surface its status in the snapshot.
+    deps.poller = poller
 
     # Start operator message HTTP endpoint
     msg_server = await _start_msg_server(deps.operator_inbox, deps, deps.msg_port)
@@ -699,6 +702,7 @@ async def run_event_loop(
             except RuntimeError as exc:
                 if not _is_loop_closed_error(exc):
                     raise
+            deps.poller = None
         if cleanup_runtime_on_exit:
             await cleanup_coordinator_runtime(
                 deps,
@@ -966,6 +970,20 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "local_mode": bool(deps.local_mode),
         "human_mode": bool(getattr(deps, "human_mode", False)),
         "mode": "human" if getattr(deps, "human_mode", False) else "llm",
+        "poller_status": (
+            deps.poller.status()
+            if getattr(deps, "poller", None) is not None
+            and callable(getattr(deps.poller, "status", None))
+            else {
+                "healthy": True,
+                "failure_count": 0,
+                "last_error": "",
+                "interval_s": 0,
+                "known_challenges": 0,
+                "known_solved": 0,
+                "platform": "local" if deps.local_mode else "remote",
+            }
+        ),
     }
 
 
@@ -1028,29 +1046,24 @@ def _ctfd_summary(deps: CoordinatorDeps) -> dict[str, Any]:
 async def _rebuild_ctfd_client(deps: CoordinatorDeps, *, base_url: str, token: str) -> dict[str, Any]:
     """Rebuild ``deps.ctfd`` with a new URL / token combo at runtime.
 
-    Best-effort: closes the old httpx client (if any), replaces the client
-    in-place on deps, and updates settings so subsequent swarm spawns see
-    the new values.  Returns ``{ok, error?}``.
+    Closes the previous httpx client, replaces the client on deps, updates
+    settings, AND rewires the background poller to the new client so it
+    stops hitting "Cannot send a request, as the client has been closed".
+    Resets the poller's exponential backoff so the switch takes effect on
+    the next tick instead of waiting minutes.
     """
     base_url = base_url.strip().rstrip("/")
     token = token.strip()
     if not base_url:
         return {"ok": False, "error": "base_url is required"}
 
-    # Close the previous client cleanly.
-    close_fn = getattr(deps.ctfd, "close", None)
-    if callable(close_fn):
-        try:
-            await close_fn()
-        except Exception as exc:  # noqa: BLE001 — best-effort
-            logger.debug("Previous CTFd client close failed: %s", exc)
-
-    # Update settings first so factory-style lookups pick up new values.
-    deps.settings.ctfd_url = base_url
-    deps.settings.ctfd_token = token
-
+    # Build the NEW client first so we can keep the old one alive until the
+    # swap succeeds — prevents a window where deps.ctfd is None.
     try:
         from backend.platforms.factory import build_platform_client
+        # Update settings before building so platform factory sees the new URL/token.
+        deps.settings.ctfd_url = base_url
+        deps.settings.ctfd_token = token
         new_client = build_platform_client(
             settings=deps.settings,
             challenge_metas=deps.challenge_metas,
@@ -1061,7 +1074,29 @@ async def _rebuild_ctfd_client(deps: CoordinatorDeps, *, base_url: str, token: s
         logger.warning("CTFd client rebuild failed: %s", exc)
         return {"ok": False, "error": f"Rebuild failed: {exc}"}
 
+    old_client = deps.ctfd
     deps.ctfd = new_client
+
+    # Point the poller at the new client BEFORE closing the old one so an
+    # in-flight poll doesn't hit a closed client mid-tick.
+    poller = getattr(deps, "poller", None)
+    if poller is not None:
+        try:
+            poller.ctfd = new_client
+            reset_fn = getattr(poller, "reset_backoff", None)
+            if callable(reset_fn):
+                reset_fn()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Poller rewire failed: %s", exc)
+
+    # Now it's safe to close the previous client.
+    close_fn = getattr(old_client, "close", None)
+    if callable(close_fn):
+        try:
+            await close_fn()
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.debug("Previous CTFd client close failed: %s", exc)
+
     logger.info("CTFd client reconfigured (base_url=%s, token=%s)", base_url, "***" if token else "none")
     return {"ok": True}
 

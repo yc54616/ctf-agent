@@ -17,6 +17,9 @@ const S = {
   activeTab: "overview",
   queueOpen: false,
   advisorReports: [],
+  ctfdSummary: null,
+  ctfdLastProbe: null,
+  pollerStatus: null,
 };
 
 const $ = id => document.getElementById(id);
@@ -239,6 +242,14 @@ function applySnapshot(snap) {
   // Cache latest reports for filter toggle + re-render on challenge selection.
   S.advisorReports = snap.advisor_reports ?? [];
   if (S.activeTab === "intervene") renderReports();
+
+  // Keep the CTFd status dot in sync with the background poller — a dot
+  // stuck on "ok" while the poller has been failing for minutes was a real
+  // source of confusion.  S.ctfdSummary is seeded by /api/runtime/ctfd-config.
+  S.pollerStatus = snap.poller_status ?? null;
+  if (S.ctfdSummary) {
+    renderCtfdStatus(S.ctfdSummary, S.ctfdLastProbe, S.pollerStatus);
+  }
 
   if (S.selectedName && S.challenges[S.selectedName]) {
     renderCenterPanel(S.challenges[S.selectedName]);
@@ -821,7 +832,7 @@ $("markSolvedForm").addEventListener("submit", async e => {
 /* ══════════════════════════════════════════════════════════════════════════
    CTFd connection (URL + API token)
    ══════════════════════════════════════════════════════════════════════════ */
-function renderCtfdStatus(summary, probe) {
+function renderCtfdStatus(summary, probe, pollerStatus) {
   if (!summary) return;
   const dot   = $("ctfdDot");
   const host  = $("ctfdHostLabel");
@@ -832,6 +843,12 @@ function renderCtfdStatus(summary, probe) {
   if (summary.local_mode) { cls = "missing"; title = "Local mode — no remote CTFd"; }
   if (probe?.ok)                     { cls = "ok";      title = `OK (user: ${probe.user || "unknown"})`; }
   else if (probe && probe.ok === false) { cls = "invalid"; title = probe.error || title; }
+  // Poller health overrides — if poll is failing that's a more accurate real-time signal
+  // than the last manual probe (which may be stale).
+  if (pollerStatus && pollerStatus.failure_count > 0 && !summary.local_mode) {
+    cls = "invalid";
+    title = `Poll failing: ${pollerStatus.last_error || "unknown"} (${pollerStatus.failure_count} consecutive)`;
+  }
   dot.className = "cookie-dot " + cls;
   dot.title = title;
 
@@ -843,11 +860,29 @@ function renderCtfdStatus(summary, probe) {
   }
   // Don't stomp user-edited URL while they're typing — only seed empty fields.
   if (!url.value) url.value = summary.base_url || "";
+
+  // Render a poll-error banner directly in the ctfdResult area when the
+  // background poller is failing.  Makes "Poll error" visible in the GUI
+  // instead of being buried in console logs.
+  const resultEl = $("ctfdResult");
+  if (resultEl && pollerStatus && pollerStatus.failure_count > 0 && !summary.local_mode) {
+    resultEl.className = "intervention-result error";
+    const interval = Math.round(pollerStatus.interval_s || 0);
+    resultEl.textContent =
+      `⚠ Background poller failing (${pollerStatus.failure_count} consecutive, retry in ${interval}s): ${pollerStatus.last_error || "unknown"}`;
+  } else if (resultEl && resultEl.textContent.startsWith("⚠ Background poller")) {
+    // Clear the banner once the poller recovers.
+    resultEl.textContent = "";
+    resultEl.className = "intervention-result";
+  }
 }
 
 async function loadCtfdStatus() {
   const r = await api("/api/runtime/ctfd-config");
-  if (r.ok) renderCtfdStatus(r.body);
+  if (r.ok) {
+    S.ctfdSummary = r.body;
+    renderCtfdStatus(r.body, S.ctfdLastProbe, S.pollerStatus);
+  }
 }
 
 $("ctfdSaveBtn")?.addEventListener("click", async () => {
@@ -860,7 +895,9 @@ $("ctfdSaveBtn")?.addEventListener("click", async () => {
   const r = await api("/api/runtime/ctfd-config", { method: "PUT", body: JSON.stringify(payload) });
   btn.disabled = false; btn.textContent = orig;
   if (r.ok) {
-    renderCtfdStatus(r.body.ctfd, r.body.probe);
+    S.ctfdSummary = r.body.ctfd;
+    S.ctfdLastProbe = r.body.probe;
+    renderCtfdStatus(r.body.ctfd, r.body.probe, S.pollerStatus);
     // Refresh cookie card in case the probe revealed anything.
     loadCookieStatus();
     $("ctfdTokenInput").value = ""; // clear plaintext from the field
