@@ -810,6 +810,76 @@ $("markSolvedForm").addEventListener("submit", async e => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+   CTFd connection (URL + API token)
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderCtfdStatus(summary, probe) {
+  if (!summary) return;
+  const dot   = $("ctfdDot");
+  const host  = $("ctfdHostLabel");
+  const url   = $("ctfdUrlInput");
+
+  let cls = summary.configured ? "unknown" : "missing";
+  let title = summary.base_url ? `Connected to ${summary.base_url}` : "No CTFd URL configured";
+  if (summary.local_mode) { cls = "missing"; title = "Local mode — no remote CTFd"; }
+  if (probe?.ok)                     { cls = "ok";      title = `OK (user: ${probe.user || "unknown"})`; }
+  else if (probe && probe.ok === false) { cls = "invalid"; title = probe.error || title; }
+  dot.className = "cookie-dot " + cls;
+  dot.title = title;
+
+  if (summary.base_url) {
+    try { host.textContent = new URL(summary.base_url).host || summary.base_url; }
+    catch { host.textContent = summary.base_url; }
+  } else {
+    host.textContent = summary.local_mode ? "local mode" : "—";
+  }
+  // Don't stomp user-edited URL while they're typing — only seed empty fields.
+  if (!url.value) url.value = summary.base_url || "";
+}
+
+async function loadCtfdStatus() {
+  const r = await api("/api/runtime/ctfd-config");
+  if (r.ok) renderCtfdStatus(r.body);
+}
+
+$("ctfdSaveBtn")?.addEventListener("click", async () => {
+  const url   = $("ctfdUrlInput").value.trim();
+  const token = $("ctfdTokenInput").value;
+  if (!url) { flashResult("ctfdResult", "Enter a CTFd URL.", false); return; }
+  const btn = $("ctfdSaveBtn");
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = "Saving + testing…";
+  const payload = token ? { url, token, test: true } : { url, test: true };
+  const r = await api("/api/runtime/ctfd-config", { method: "PUT", body: JSON.stringify(payload) });
+  btn.disabled = false; btn.textContent = orig;
+  if (r.ok) {
+    renderCtfdStatus(r.body.ctfd, r.body.probe);
+    // Refresh cookie card in case the probe revealed anything.
+    loadCookieStatus();
+    $("ctfdTokenInput").value = ""; // clear plaintext from the field
+    const probe = r.body.probe;
+    const msg = probe?.ok ? `Connected as ${probe.user || "?"}` : probe?.error || "Saved (no probe)";
+    flashResult("ctfdResult", msg, probe?.ok !== false);
+    logActivity(`CTFd config saved → ${r.body.ctfd.base_url}`, probe?.ok === false ? "al-err" : "al-ok");
+    pushEvent(`🔗 CTFd connection updated → ${r.body.ctfd.base_url}`, "info");
+    pollSnapshot(); // so /fetch-challenges etc. reflect new host
+  } else {
+    flashResult("ctfdResult", r.body.error ?? "Save failed", false);
+  }
+});
+
+$("ctfdClearTokenBtn")?.addEventListener("click", async () => {
+  if (!confirm("Clear the CTFd API token?")) return;
+  const r = await api("/api/runtime/ctfd-config?field=token", { method: "DELETE" });
+  if (r.ok) {
+    renderCtfdStatus(r.body.ctfd);
+    $("ctfdTokenInput").value = "";
+    flashResult("ctfdResult", "Token cleared.", true);
+    logActivity("CTFd token cleared", "al-info");
+  } else {
+    flashResult("ctfdResult", r.body.error ?? "Clear failed", false);
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
    CTFd session cookie management
    ══════════════════════════════════════════════════════════════════════════ */
 function renderCookieStatus(summary, probe) {
@@ -955,6 +1025,7 @@ function init() {
   connectSnapSse();
   connectEventSse();
   pollSnapshot();
+  loadCtfdStatus();
   loadCookieStatus();
 }
 init();

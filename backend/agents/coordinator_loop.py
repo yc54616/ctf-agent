@@ -639,6 +639,7 @@ async def run_event_loop(
 
             # Periodic status update — only when there are active swarms or other events
             now = asyncio.get_running_loop().time()
+            is_human = bool(getattr(deps, "human_mode", False))
             if now - last_status >= status_interval:
                 last_status = now
                 active = [n for n, t in deps.swarm_tasks.items() if not t.done()]
@@ -648,16 +649,24 @@ async def run_event_loop(
                     f"STATUS: {len(solved_set)} solved, {len(unsolved_set)} unsolved, "
                     f"{len(active)} active swarms. Cost: ${cost_tracker.total_cost_usd:.2f}"
                 )
-                # Only send to coordinator if there's something happening
-                if active or parts:
-                    parts.append(status_line)
-                else:
-                    logger.info(f"Event -> coordinator: {status_line}")
+                # In human mode the operator already sees these metrics live in the
+                # top bar via SSE snapshots — don't spam the event feed / log with them.
+                # In LLM mode, only forward when there's something happening.
+                if not is_human:
+                    if active or parts:
+                        parts.append(status_line)
+                    else:
+                        logger.debug("Status (idle, not forwarded): %s", status_line)
 
             if parts:
                 parts = _dedupe_preserve_order(parts)
                 msg = "\n\n".join(parts)
-                logger.info("Event -> coordinator: %s", msg[:200])
+                if is_human:
+                    # Human mode — there is no AI coordinator.  `turn_fn` just
+                    # forwards the message onto the operator's SSE stream.
+                    logger.debug("Event -> human UI: %s", msg[:200])
+                else:
+                    logger.info("Event -> coordinator: %s", msg[:200])
                 await turn_fn(msg)
                 if deps.shutdown_event.is_set():
                     shutdown_reason = deps.shutdown_reason or "coordinator shutdown requested"
@@ -997,6 +1006,64 @@ def _pending_swarms_snapshot(
             },
         }
     return pending
+
+
+def _ctfd_summary(deps: CoordinatorDeps) -> dict[str, Any]:
+    """Return a UI-safe summary of the current CTFd connection (never leaks tokens)."""
+    base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
+    platform = str(getattr(deps.ctfd, "platform", "") or "remote")
+    username = str(getattr(deps.settings, "ctfd_user", "") or "")
+    token_raw = str(getattr(deps.settings, "ctfd_token", "") or "")
+    return {
+        "configured": bool(base_url),
+        "base_url": base_url,
+        "platform": platform,
+        "username": username,
+        "token_present": bool(token_raw),
+        "token_length": len(token_raw),
+        "local_mode": bool(deps.local_mode),
+    }
+
+
+async def _rebuild_ctfd_client(deps: CoordinatorDeps, *, base_url: str, token: str) -> dict[str, Any]:
+    """Rebuild ``deps.ctfd`` with a new URL / token combo at runtime.
+
+    Best-effort: closes the old httpx client (if any), replaces the client
+    in-place on deps, and updates settings so subsequent swarm spawns see
+    the new values.  Returns ``{ok, error?}``.
+    """
+    base_url = base_url.strip().rstrip("/")
+    token = token.strip()
+    if not base_url:
+        return {"ok": False, "error": "base_url is required"}
+
+    # Close the previous client cleanly.
+    close_fn = getattr(deps.ctfd, "close", None)
+    if callable(close_fn):
+        try:
+            await close_fn()
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.debug("Previous CTFd client close failed: %s", exc)
+
+    # Update settings first so factory-style lookups pick up new values.
+    deps.settings.ctfd_url = base_url
+    deps.settings.ctfd_token = token
+
+    try:
+        from backend.platforms.factory import build_platform_client
+        new_client = build_platform_client(
+            settings=deps.settings,
+            challenge_metas=deps.challenge_metas,
+            cookie_header=str(getattr(deps.settings, "remote_cookie_header", "") or ""),
+            local_mode=deps.local_mode,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("CTFd client rebuild failed: %s", exc)
+        return {"ok": False, "error": f"Rebuild failed: {exc}"}
+
+    deps.ctfd = new_client
+    logger.info("CTFd client reconfigured (base_url=%s, token=%s)", base_url, "***" if token else "none")
+    return {"ok": True}
 
 
 def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
@@ -1669,6 +1736,51 @@ async def _start_msg_server(
                             payload["restart_requested"] = True
                             payload["restart_result"] = await do_restart_challenge(deps, challenge_name)
                         _json_response("200 OK", payload)
+            elif method == "GET" and path == "/api/runtime/ctfd-config":
+                # UI-safe snapshot of the current CTFd URL + token state.
+                _json_response("200 OK", {"ok": True, **_ctfd_summary(deps)})
+            elif method == "PUT" and path == "/api/runtime/ctfd-config" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                url = str(data.get("url") or data.get("base_url") or "").strip()
+                # Keep existing token if caller omits the field; empty string clears it.
+                token_field_provided = "token" in data
+                token = str(data.get("token") or "").strip()
+                if not url:
+                    _json_response("400 Bad Request", {"error": "url is required"})
+                else:
+                    final_token = token if token_field_provided else str(getattr(deps.settings, "ctfd_token", "") or "")
+                    rebuild = await _rebuild_ctfd_client(deps, base_url=url, token=final_token)
+                    if not rebuild.get("ok"):
+                        _json_response("500 Internal Server Error", {"error": rebuild.get("error", "rebuild failed")})
+                    else:
+                        probe: dict[str, Any] = {}
+                        if bool(data.get("test", True)):
+                            probe = await _probe_cookie(
+                                deps,
+                                str(getattr(deps.settings, "remote_cookie_header", "") or ""),
+                            )
+                        _json_response(
+                            "200 OK",
+                            {"ok": True, "ctfd": _ctfd_summary(deps), "probe": probe},
+                        )
+            elif method == "DELETE" and path == "/api/runtime/ctfd-config":
+                # Clear only the token — keep the URL (leaving local_mode flip for CLI).
+                query_params = query
+                field_to_clear = str(query_params.get("field", "token")).lower()
+                if field_to_clear == "token":
+                    deps.settings.ctfd_token = ""
+                    rebuild = await _rebuild_ctfd_client(
+                        deps,
+                        base_url=str(getattr(deps.settings, "ctfd_url", "") or ""),
+                        token="",
+                    )
+                    _json_response("200 OK", {"ok": True, "ctfd": _ctfd_summary(deps), "rebuild": rebuild})
+                else:
+                    _json_response("400 Bad Request", {"error": f"Unsupported field: {field_to_clear}"})
             elif method == "GET" and path == "/api/runtime/cookie":
                 # Status snapshot (never leaks the raw cookie value).
                 _json_response("200 OK", {"ok": True, **_cookie_summary(deps)})

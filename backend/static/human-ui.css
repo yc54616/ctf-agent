@@ -541,6 +541,66 @@ textarea { resize: vertical; }
   line-height: 1.5;
 }
 
+/* CTFd connection block (top-left panel, collapsible) */
+.ctfd-section {
+  margin: 6px 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  font-size: 12px;
+}
+.ctfd-section summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+}
+.ctfd-section summary::-webkit-details-marker { display: none; }
+.ctfd-section summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 10px;
+  margin-right: 4px;
+  transition: transform 0.15s;
+}
+.ctfd-section[open] summary::before {
+  transform: rotate(90deg);
+}
+.ctfd-status-compact {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: normal;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ctfd-host {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctfd-body {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ctfd-subhead {
+  font-size: 12px;
+  margin: 8px 0 2px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 /* CTFd cookie card (right panel) */
 .cookie-dot {
   display: inline-block;
