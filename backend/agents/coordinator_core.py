@@ -1231,7 +1231,20 @@ def _schedule_advisor_on_operator_message(swarm, *, source_label: str, message: 
                 "in mind when you next synthesise guidance.  No need to act on "
                 "it directly — the solvers have already been bumped."
             )
-            await build_synth(first_lane, prompt)
+            # User-triggered → long timeout so advisor isn't skipped for
+            # "TimeoutError" when Claude needs 30-60s to reply.
+            await build_synth(
+                first_lane,
+                prompt,
+                timeout_seconds=180.0,
+                operation_label="operator-hears-through-advisor",
+            )
+        except TypeError:
+            # Older swarm builds without the timeout kwarg — fall through.
+            try:
+                await build_synth(first_lane, prompt)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("advisor-on-operator-message (legacy) failed: %s", exc)
         except Exception as exc:  # noqa: BLE001
             logger.debug("advisor-on-operator-message failed: %s", exc)
 
@@ -1624,7 +1637,15 @@ async def do_request_status_report(
                     + ("\n".join(lane_state_lines) if lane_state_lines else "(no active lanes)")
                 )
                 first_lane = active_lanes[0] if active_lanes else "swarm"
-                result = await build_synth(first_lane, synth_prompt)
+                try:
+                    result = await build_synth(
+                        first_lane, synth_prompt,
+                        timeout_seconds=180.0,
+                        operation_label="report-now synthesis",
+                    )
+                except TypeError:
+                    # Older swarms without the timeout kwarg.
+                    result = await build_synth(first_lane, synth_prompt)
                 if not str(result or "").strip() or str(result).strip() == synth_prompt.strip():
                     logger.debug("advisor returned no synthesis for report-now")
             except Exception as exc:  # noqa: BLE001

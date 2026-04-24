@@ -95,8 +95,17 @@ def _classify_lane_note(message: str) -> str:
         if any(needle in text for needle in needles):
             return kind
     return "lane_note"
-ADVISOR_COORDINATOR_TIMEOUT_SECONDS = 8.0
-ADVISOR_LANE_HINT_TIMEOUT_SECONDS = 30.0
+ADVISOR_COORDINATOR_TIMEOUT_SECONDS = 60.0   # was 8.0 — Claude routinely needs
+                                             # 20-40s for meta prompts (Report-now
+                                             # synthesis, intervene annotations).
+                                             # 8s timed out almost everything.
+ADVISOR_LANE_HINT_TIMEOUT_SECONDS = 90.0     # was 30.0 — lane hints use long
+                                             # context (sibling insights +
+                                             # manifest + artifact previews).
+ADVISOR_USER_TRIGGERED_TIMEOUT_SECONDS = 180.0   # operator presses a button → wait
+                                                 # up to 3 min for the LLM reply
+                                                 # rather than losing it to
+                                                 # timeout skip + backoff.
 ADVISOR_TIMEOUT_BACKOFF_AFTER_CONSECUTIVE_TIMEOUTS = 2
 ADVISOR_TIMEOUT_BACKOFF_BASE_SECONDS = 20.0
 ADVISOR_TIMEOUT_BACKOFF_MAX_SECONDS = 60.0
@@ -3015,11 +3024,31 @@ class ChallengeSwarm:
         if self.flag_candidates:
             await self._persist_runtime_state()
 
-    async def _build_advised_coordinator_message(self, model_spec: str, message: str) -> str:
+    async def _build_advised_coordinator_message(
+        self,
+        model_spec: str,
+        message: str,
+        *,
+        timeout_seconds: float | None = None,
+        operation_label: str = "coordinator annotation",
+    ) -> str:
+        """Run the advisor on a coordinator-bound message.
+
+        Default timeout is ADVISOR_COORDINATOR_TIMEOUT_SECONDS (60 s),
+        long enough for Claude to respond to normal solver notify
+        annotations.  User-triggered paths (Report-now, intervene)
+        should pass ``timeout_seconds=ADVISOR_USER_TRIGGERED_TIMEOUT_SECONDS``
+        (180 s) — they come with larger prompts and the human is
+        explicitly waiting for the result.
+        """
+        effective_timeout = (
+            float(timeout_seconds) if timeout_seconds is not None
+            else ADVISOR_COORDINATOR_TIMEOUT_SECONDS
+        )
         advice = await self._run_advisor_call(
             model_spec,
-            timeout_seconds=ADVISOR_COORDINATOR_TIMEOUT_SECONDS,
-            operation_label="coordinator annotation",
+            timeout_seconds=effective_timeout,
+            operation_label=operation_label,
             call=lambda advisor: advisor.annotate_coordinator_message(
                 source_model=model_spec,
                 challenge_brief=self._advisor_challenge_brief(),
@@ -3695,7 +3724,14 @@ class ChallengeSwarm:
                         "Acknowledge briefly and keep this in mind when you next "
                         "summarise progress or hint any lane."
                     )
-                    await build_synth(first_lane, prompt)
+                    try:
+                        await build_synth(
+                            first_lane, prompt,
+                            timeout_seconds=ADVISOR_USER_TRIGGERED_TIMEOUT_SECONDS,
+                            operation_label="standing-directive ack",
+                        )
+                    except TypeError:
+                        await build_synth(first_lane, prompt)
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("advisor-on-directive failed: %s", exc)
 
