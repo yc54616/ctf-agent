@@ -1001,6 +1001,66 @@ class CodexSolver:
         self.loop_detector.reset()
         self.tracer.event("bump", source="operator", insights=insights[:500])
 
+    def interrupt_and_bump_operator(self, insights: str) -> None:
+        """INSTANT intervention — bump + force current turn to end right now.
+
+        Unlike bump_operator() which waits for the current turn to finish
+        naturally (can be 5-60s), this kills the codex subprocess so the
+        outer _run_solver_loop immediately sees run_until_done_or_gave_up
+        return.  The next iteration calls start() (creates fresh
+        subprocess, reuses persisted thread_id so conversation history
+        survives) and _consume_turn_prompt() picks up the bump as the
+        new turn's input.
+
+        Trade-off: any in-flight tool call is abandoned.  Acceptable for
+        transient operator questions / Report-now where the human wants
+        an immediate answer more than they want the current bash grep
+        to finish.
+
+        Leaves the solver in a state where the outer loop's natural
+        restart path handles reinitialisation — we never touch
+        _stopped_process_models (that flag is for terminal stop only).
+        """
+        # Slot the message first so the next turn consumes it.
+        if self._operator_bump_insights and insights not in self._operator_bump_insights:
+            self._operator_bump_insights = f"{self._operator_bump_insights}\n\n---\n\n{insights}"
+        else:
+            self._operator_bump_insights = insights
+        self._advisory_bump_insights = None
+        self._bump_insights = None
+        self.loop_detector.reset()
+        self.tracer.event(
+            "bump", source="operator", channel="instant",
+            insights=insights[:500],
+        )
+        # Schedule subprocess termination — can't await here (sync method).
+        # _read_loop will see EOF on stdout, set _turn_done, and
+        # run_until_done_or_gave_up returns.  Outer loop iterates and
+        # calls start() again.  End-to-end latency ≈ 2-5s (subprocess
+        # spawn) instead of the 5-60s turn-boundary wait.
+        proc = self._proc
+        if proc is not None:
+            try:
+                import asyncio as _asyncio
+                _asyncio.create_task(self._interrupt_proc_async(proc))
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "[%s] interrupt scheduling failed: %s",
+                    self.agent_name, exc,
+                )
+
+    async def _interrupt_proc_async(self, proc) -> None:
+        """Async helper: terminate subprocess so current turn ends fast."""
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001 — already dead is fine
+            pass
+        # Also set the done event in case stdout close doesn't fire fast enough.
+        try:
+            self._turn_done.set()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _result(self, status: str) -> SolverResult:
         self.tracer.event("finish", status=status, flag=self._flag, confirmed=self._confirmed)
         return SolverResult(

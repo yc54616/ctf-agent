@@ -216,6 +216,19 @@ class InSandboxRuntimeSolver:
             {"type": "operator_bump", "ts": time.time(), "insights": insights},
         )
 
+    def interrupt_and_bump_operator(self, insights: str) -> None:
+        """Forward to the in-sandbox solver via a dedicated command type.
+
+        lane_runtime picks up ``operator_interrupt_bump`` and calls the
+        solver's ``interrupt_and_bump_operator`` method, which kills the
+        current codex turn so the bump is consumed within seconds
+        instead of waiting for turn_complete.
+        """
+        append_jsonl(
+            self._control.commands_path,
+            {"type": "operator_interrupt_bump", "ts": time.time(), "insights": insights},
+        )
+
     def get_runtime_status(self) -> dict[str, object]:
         heartbeat = self._load_heartbeat()
         terminal_result = self._load_terminal_result()
