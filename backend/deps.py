@@ -106,3 +106,8 @@ class CoordinatorDeps:
     # UI can display "set via --cookie-file at startup" vs "set via API at …".
     # Never contains the cookie value itself — that lives in settings.remote_cookie_header.
     cookie_source: str = ""
+
+    # Background CTFd poller — run_event_loop stashes its PlatformPoller here so
+    # the HTTP handler can surface its status in the snapshot and reset its
+    # exponential backoff after a ctfd-config change.  ``None`` in local_mode.
+    poller: Any | None = None
