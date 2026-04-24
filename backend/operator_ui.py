@@ -17,6 +17,10 @@ _UI_ASSETS = {
     "operator_ui.html": "text/html; charset=utf-8",
     "operator_ui.css": "text/css; charset=utf-8",
     "operator_ui.js": "application/javascript; charset=utf-8",
+    # Human coordinator UI
+    "human_ui.html": "text/html; charset=utf-8",
+    "human-ui.css": "text/css; charset=utf-8",
+    "human-ui.js": "application/javascript; charset=utf-8",
 }
 
 

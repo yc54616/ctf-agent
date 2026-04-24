@@ -241,6 +241,8 @@ def build_deps(
         max_concurrent_challenges=getattr(settings, "max_concurrent_challenges", 10),
         challenge_dirs=challenge_dirs or {},
         challenge_metas=challenge_metas or {},
+        msg_host=getattr(settings, "ui_host", "127.0.0.1"),
+        msg_port=getattr(settings, "ui_port", 0),
     )
 
     # Pre-load already-pulled challenges, including nested competition folders.
@@ -425,6 +427,7 @@ async def run_event_loop(
     status_interval: int = 60,
     propagate_fatal: bool = False,
     cleanup_runtime_on_exit: bool = True,
+    auto_spawn: bool = True,
 ) -> dict[str, Any]:
     """Run the shared coordinator event loop.
 
@@ -433,7 +436,11 @@ async def run_event_loop(
         ctfd: Remote platform client (for poller).
         cost_tracker: Cost tracker.
         turn_fn: Async function that sends a message to the coordinator LLM.
+            In human mode this is a no-op logging function.
         status_interval: Seconds between status updates.
+        auto_spawn: When True (default / LLM mode) unsolved challenges are
+            spawned automatically.  Set to False in human mode so the human
+            decides which challenges to tackle via the operator UI.
     """
     poller: PlatformPoller | None = None
     if not deps.local_mode:
@@ -474,8 +481,10 @@ async def run_event_loop(
     try:
         await turn_fn(initial_msg)
 
-        # Auto-spawn swarms for unsolved challenges if coordinator LLM didn't
-        await _auto_spawn_unsolved(deps, poller)
+        # Auto-spawn swarms for unsolved challenges if coordinator LLM didn't.
+        # Skipped in human mode — the human picks challenges via the operator UI.
+        if auto_spawn:
+            await _auto_spawn_unsolved(deps, poller)
 
         last_status = asyncio.get_running_loop().time()
 
@@ -520,8 +529,9 @@ async def run_event_loop(
             for evt in events:
                 if evt.kind == "new_challenge":
                     parts.append(f"NEW CHALLENGE: '{evt.challenge_name}' appeared. Spawn a swarm.")
-                    # Auto-spawn for new challenges
-                    await _auto_spawn_one(deps, evt.challenge_name)
+                    # Auto-spawn for new challenges (skipped in human mode).
+                    if auto_spawn:
+                        await _auto_spawn_one(deps, evt.challenge_name)
                 elif evt.kind == "challenge_solved":
                     parts.append(f"SOLVED: '{evt.challenge_name}' — swarm auto-killed.")
 
@@ -884,6 +894,8 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "ui_alerts": ui_alerts,
         "no_submit": bool(deps.no_submit),
         "local_mode": bool(deps.local_mode),
+        "human_mode": bool(getattr(deps, "human_mode", False)),
+        "mode": "human" if getattr(deps, "human_mode", False) else "llm",
     }
 
 
@@ -957,8 +969,10 @@ async def _start_msg_server(
     """Start a tiny HTTP server that accepts operator messages and exposes status."""
 
     from backend.agents.coordinator_core import (
+        do_advisor_intervene,
         do_approve_flag_candidate,
         do_bump_agent,
+        do_clear_challenge_history,
         do_mark_challenge_solved,
         do_reject_flag_candidate,
         do_restart_challenge,
@@ -1044,6 +1058,14 @@ async def _start_msg_server(
                     "/ui": "operator_ui.html",
                     "/ui.css": "operator_ui.css",
                     "/ui.js": "operator_ui.js",
+                }[path]
+                content_type, text = load_ui_asset(asset_name)
+                _write_response("200 OK", text.encode("utf-8"), content_type)
+            elif method == "GET" and path in {"/human", "/human-ui.css", "/human-ui.js"}:
+                asset_name = {
+                    "/human": "human_ui.html",
+                    "/human-ui.css": "human-ui.css",
+                    "/human-ui.js": "human-ui.js",
                 }[path]
                 content_type, text = load_ui_asset(asset_name)
                 _write_response("200 OK", text.encode("utf-8"), content_type)
@@ -1259,12 +1281,12 @@ async def _start_msg_server(
                 except json.JSONDecodeError:
                     data = {}
                 try:
-                    raw_max_active = data.get("max_active")
+                    raw_max_active = data.get("max_active") if data.get("max_active") is not None else data.get("max")
                     if raw_max_active is None:
                         raise TypeError
                     max_active = int(raw_max_active)
                 except (TypeError, ValueError):
-                    _json_response("400 Bad Request", {"error": "max_active must be an integer"})
+                    _json_response("400 Bad Request", {"error": "max_active (or max) must be an integer"})
                 else:
                     result = await do_set_max_concurrent_challenges(deps, max_active)
                     if result.startswith("max_active must be"):
@@ -1402,6 +1424,247 @@ async def _start_msg_server(
                         payload = _challenge_config_payload(deps, challenge_name)
                         assert payload is not None
                         _json_response("200 OK", payload)
+
+            # ── Human-coordinator endpoints ────────────────────────────────────
+            elif method == "GET" and path == "/api/runtime/fetch-challenges":
+                # Fetch all challenges from the platform (CTFd) or local dirs.
+                from backend.agents.coordinator_core import do_fetch_challenges
+                try:
+                    result_json = await asyncio.wait_for(do_fetch_challenges(deps), timeout=30)
+                    challenges_list = json.loads(result_json)
+                    _json_response(
+                        "200 OK",
+                        {"ok": True, "challenges": challenges_list, "count": len(challenges_list)},
+                    )
+                except asyncio.TimeoutError:
+                    _json_response("504 Gateway Timeout", {"error": "Challenge fetch timed out (>30 s)"})
+                except Exception as exc:
+                    _json_response("500 Internal Server Error", {"error": str(exc)})
+
+            elif method == "GET" and path == "/api/runtime/challenge-queue":
+                # Return the pending swarm queue with positions and reasons.
+                from backend.agents.coordinator_core import _pending_swarm_entries
+                entries = _pending_swarm_entries(deps)
+                _json_response(
+                    "200 OK",
+                    {
+                        "ok": True,
+                        "queue": entries,
+                        "count": len(entries),
+                        "max_concurrent": deps.max_concurrent_challenges,
+                        "active_count": sum(
+                            1 for t in deps.swarm_tasks.values() if not t.done()
+                        ),
+                    },
+                )
+
+            elif method == "GET" and path == "/api/runtime/solver-trace":
+                challenge_name = str(query.get("challenge_name", "")).strip()
+                model_spec = str(query.get("model_spec", "")).strip()
+                try:
+                    last_n = int(query.get("last_n", 20))
+                except (ValueError, TypeError):
+                    last_n = 20
+                if not challenge_name or not model_spec:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and model_spec are required"},
+                    )
+                else:
+                    from backend.agents.coordinator_core import do_read_solver_trace
+                    text = await do_read_solver_trace(deps, challenge_name, model_spec, last_n)
+                    if text.startswith("No swarm") or text.startswith("No solver"):
+                        _json_response("404 Not Found", {"ok": False, "error": text})
+                    else:
+                        _json_response(
+                            "200 OK",
+                            {
+                                "ok": True,
+                                "challenge_name": challenge_name,
+                                "model_spec": model_spec,
+                                "last_n": last_n,
+                                "trace": text,
+                            },
+                        )
+
+            elif method == "POST" and path == "/api/runtime/submit-flag" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                flag = str(data.get("flag", "")).strip()
+                if not challenge_name or not flag:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and flag are required"},
+                    )
+                else:
+                    from backend.agents.coordinator_core import do_submit_flag
+                    # Human operator explicitly requests submission → force=True bypasses
+                    # the no_submit guard that prevents solver auto-submission.
+                    result = await do_submit_flag(
+                        deps, challenge_name, flag, force=True
+                    )
+                    if result.startswith("LOCAL MODE"):
+                        _json_response("409 Conflict", {"ok": False, "error": result})
+                    elif result.startswith("SUBMIT BLOCKED"):
+                        _json_response("409 Conflict", {"ok": False, "error": result})
+                    elif result.startswith("submit_flag error"):
+                        _json_response(
+                            "500 Internal Server Error", {"ok": False, "error": result}
+                        )
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "POST" and path == "/api/runtime/spawn-swarm" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    from backend.agents.coordinator_core import do_spawn_swarm
+                    result = await do_spawn_swarm(deps, challenge_name)
+                    if result.startswith("No ") or result.startswith("Could not"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "POST" and path == "/api/runtime/kill-swarm" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    from backend.agents.coordinator_core import do_kill_swarm
+                    result = await do_kill_swarm(deps, challenge_name)
+                    if result.startswith("No swarm"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "POST" and path == "/api/runtime/broadcast" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                message = str(data.get("message", "")).strip()
+                if not challenge_name or not message:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and message are required"},
+                    )
+                else:
+                    from backend.agents.coordinator_core import do_broadcast
+                    result = await do_broadcast(deps, challenge_name, message)
+                    if result.startswith("No swarm"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "POST" and path == "/api/runtime/advisor-intervene" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                critique = str(data.get("critique", "") or data.get("message", "")).strip()
+                if not challenge_name or not critique:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and critique (or message) are required"},
+                    )
+                else:
+                    result = await do_advisor_intervene(deps, challenge_name, critique)
+                    if result.startswith("No swarm"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "POST" and path == "/api/runtime/clear-challenge-history" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                delete_traces = bool(data.get("delete_traces", False))
+                if not challenge_name:
+                    _json_response("400 Bad Request", {"error": "challenge_name is required"})
+                else:
+                    result = await do_clear_challenge_history(
+                        deps, challenge_name, delete_traces=delete_traces
+                    )
+                    if "still active" in result:
+                        _json_response("409 Conflict", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "POST" and path == "/api/runtime/parse-challenge-url" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=30)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                url = str(data.get("url", "")).strip()
+                if not url:
+                    _json_response("400 Bad Request", {"error": "url is required"})
+                else:
+                    try:
+                        from backend.agents.url_parser_agent import parse_challenge_url
+                        parsed = await asyncio.wait_for(
+                            parse_challenge_url(url), timeout=60
+                        )
+                        _json_response("200 OK", parsed)
+                    except asyncio.TimeoutError:
+                        _json_response(
+                            "504 Gateway Timeout",
+                            {"error": "URL parsing timed out after 60s"},
+                        )
+                    except Exception as exc:
+                        _json_response(
+                            "500 Internal Server Error",
+                            {"error": f"URL parsing failed: {exc}"},
+                        )
+
+            elif method == "GET" and path == "/api/runtime/human-events":
+                # SSE stream of coordinator events for human-mode display
+                writer.write(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Type: text/event-stream\r\n"
+                    b"Cache-Control: no-cache\r\n"
+                    b"Connection: keep-alive\r\n"
+                    b"\r\n"
+                )
+                await writer.drain()
+                while not writer.is_closing() and not reader.at_eof():
+                    # Drain any queued events
+                    sent = 0
+                    while True:
+                        try:
+                            evt_data = deps.human_event_log.get_nowait()
+                            payload = json.dumps(evt_data)
+                            writer.write(f"event: coordinator\ndata: {payload}\n\n".encode())
+                            sent += 1
+                        except asyncio.QueueEmpty:
+                            break
+                    if sent == 0:
+                        writer.write(b": keepalive\n\n")
+                    await writer.drain()
+                    await asyncio.sleep(1)
+
             else:
                 _json_response(
                     "400 Bad Request",
@@ -1421,6 +1684,7 @@ async def _start_msg_server(
                                 "DELETE /api/runtime/challenge-config?challenge_name=..."
                             ),
                             "ui": "GET /ui",
+                            "human_ui": "GET /human",
                             "runtime_traces": (
                                 "GET /api/runtime/traces?challenge_name=...&lane_id=..."
                             ),
@@ -1462,6 +1726,35 @@ async def _start_msg_server(
                             "check_instance": (
                                 'POST /api/runtime/check-instance {"challenge_name": "...", "restart_on_success": true}'
                             ),
+                            # Human-coordinator endpoints
+                            "spawn_swarm": (
+                                'POST /api/runtime/spawn-swarm {"challenge_name": "..."}'
+                            ),
+                            "kill_swarm": (
+                                'POST /api/runtime/kill-swarm {"challenge_name": "..."}'
+                            ),
+                            "submit_flag": (
+                                'POST /api/runtime/submit-flag {"challenge_name": "...", "flag": "FLAG{...}"}'
+                            ),
+                            "solver_trace": (
+                                "GET /api/runtime/solver-trace"
+                                "?challenge_name=...&model_spec=...&last_n=20"
+                            ),
+                            "broadcast": (
+                                'POST /api/runtime/broadcast {"challenge_name": "...", "message": "..."}'
+                            ),
+                            "parse_challenge_url": (
+                                'POST /api/runtime/parse-challenge-url {"url": "https://..."}'
+                            ),
+                            "human_events": "GET /api/runtime/human-events  (SSE stream of coordinator events)",
+                            "advisor_intervene": (
+                                'POST /api/runtime/advisor-intervene {"challenge_name": "...", "critique": "..."}'
+                            ),
+                            "clear_challenge_history": (
+                                'POST /api/runtime/clear-challenge-history {"challenge_name": "...", "delete_traces": false}'
+                            ),
+                            "fetch_challenges": "GET /api/runtime/fetch-challenges",
+                            "challenge_queue": "GET /api/runtime/challenge-queue",
                         },
                     },
                 )
@@ -1476,10 +1769,20 @@ async def _start_msg_server(
             except Exception:
                 pass
 
+    host = getattr(deps, "msg_host", "127.0.0.1") or "127.0.0.1"
     try:
-        server = await asyncio.start_server(_handle, "127.0.0.1", port)
+        server = await asyncio.start_server(_handle, host, port)
         actual_port = server.sockets[0].getsockname()[1]
-        logger.info(f"Operator message endpoint listening on http://127.0.0.1:{actual_port}/ui")
+        display_host = "127.0.0.1" if host == "0.0.0.0" else host
+        logger.info(
+            "Operator UI: http://%s:%d/ui  |  Human UI: http://%s:%d/human",
+            display_host, actual_port, display_host, actual_port,
+        )
+        if host == "0.0.0.0":
+            logger.warning(
+                "UI bound to 0.0.0.0 — accessible from all network interfaces. "
+                "Ensure this host is behind a firewall or VPN."
+            )
         return server
     except OSError as e:
         logger.warning(f"Could not start operator message endpoint: {e}")

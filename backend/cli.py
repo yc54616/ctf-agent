@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.table import Table
 
 from backend.agents.codex_coordinator import run_codex_coordinator
+from backend.agents.human_coordinator import run_human_coordinator
 from backend.agents.coordinator_core import (
     PENDING_REASON_PRIORITY_WAITING,
     restore_pending_swarms_from_results,
@@ -1075,13 +1076,15 @@ def _validate_runtime_auth(
     coordinator_backend: str,
 ) -> None:
     """Validate home-directory auth sources needed for this run."""
-    needs_codex = True
+    is_human_mode = coordinator_backend == "human"
+    # Human mode uses Claude only for the URL parser (optional), not the coordinator
+    needs_codex = not is_human_mode
     needs_claude = False
     needs_gemini = False
 
-    if coordinator_backend != "codex":
+    if coordinator_backend not in {"codex", "human"}:
         logging.getLogger(__name__).warning(
-            "Ignoring unsupported coordinator backend %s; Codex coordinator is required.",
+            "Ignoring unsupported coordinator backend %s; using Codex coordinator.",
             coordinator_backend,
         )
 
@@ -1144,7 +1147,12 @@ def _validate_runtime_auth(
     help="Advanced/compatibility only: skip all remote fetch/submit operations",
 )
 @click.option("--coordinator-model", default=None, help="Model for coordinator (default: backend-specific)")
-@click.option("--coordinator", default="codex", type=click.Choice(["codex"]), help="Coordinator backend")
+@click.option(
+    "--coordinator",
+    default="human",
+    type=click.Choice(["human", "codex"]),
+    help="Coordinator backend: 'human' (operator-driven, default) or 'codex' (LLM auto-pilot)",
+)
 @click.option("--max-challenges", default=10, type=int, help="Max challenges solved concurrently")
 @click.option(
     "--restore",
@@ -1194,11 +1202,14 @@ def main(
         sys.exit(1)
 
     console.print("[bold]CTF Agent v2[/bold]")
+    console.print(f"  Coordinator: {'human (operator-driven)' if coordinator == 'human' else coordinator}")
     console.print(f"  Mode: {'local' if local_mode else 'remote'}")
     console.print(f"  CTFd sync: {'disabled' if local_mode else settings.ctfd_url}")
     if cookie_header:
         console.print(f"  Cookie auth: {cookie_path}")
-    if local_mode:
+    if coordinator == "human":
+        console.print("  Submission: human approval required (--coordinator human forces no-submit)")
+    elif local_mode:
         console.print("  Submission: operator approval only")
     elif no_submit:
         console.print("  Submission: disabled (--no-submit)")
@@ -1290,14 +1301,19 @@ async def _run_coordinator(
                 reset_summary.solve_lane_dirs,
                 reset_summary.trace_files,
             )
-    resolved_backend = "codex"
+    is_human_mode = coordinator_backend == "human"
+    resolved_backend = "human" if is_human_mode else "codex"
     console.print(f"[bold]Starting coordinator ({resolved_backend}, Ctrl+C to stop)...[/bold]\n")
+
+    # In human mode no_submit is always forced to True (human approves all candidates)
+    effective_no_submit_for_deps = True if is_human_mode else no_submit
+
     if cookie_header:
         ctfd, cost_tracker, deps = build_deps(
             settings,
             model_specs,
             challenges_dir,
-            no_submit,
+            effective_no_submit_for_deps,
             local_mode,
             cookie_header,
         )
@@ -1306,7 +1322,7 @@ async def _run_coordinator(
             settings,
             model_specs,
             challenges_dir,
-            no_submit,
+            effective_no_submit_for_deps,
             local_mode,
         )
     if restore_mode:
@@ -1329,19 +1345,33 @@ async def _run_coordinator(
     installed_signals = _install_shutdown_signal_handlers(deps)
 
     try:
-        results = await run_codex_coordinator(
-            settings=settings,
-            model_specs=model_specs,
-            challenges_root=challenges_dir,
-            no_submit=no_submit,
-            local_mode=local_mode,
-            coordinator_model=coordinator_model,
-            msg_port=msg_port,
-            ctfd=ctfd,
-            cost_tracker=cost_tracker,
-            deps=deps,
-            cleanup_runtime_on_exit=False,
-        )
+        if is_human_mode:
+            results = await run_human_coordinator(
+                settings=settings,
+                model_specs=model_specs,
+                challenges_root=challenges_dir,
+                local_mode=local_mode,
+                msg_port=msg_port,
+                ctfd=ctfd,
+                cost_tracker=cost_tracker,
+                deps=deps,
+                cleanup_runtime_on_exit=False,
+                cookie_header=cookie_header,
+            )
+        else:
+            results = await run_codex_coordinator(
+                settings=settings,
+                model_specs=model_specs,
+                challenges_root=challenges_dir,
+                no_submit=no_submit,
+                local_mode=local_mode,
+                coordinator_model=coordinator_model,
+                msg_port=msg_port,
+                ctfd=ctfd,
+                cost_tracker=cost_tracker,
+                deps=deps,
+                cleanup_runtime_on_exit=False,
+            )
     finally:
         _remove_shutdown_signal_handlers(installed_signals)
         await cleanup_coordinator_runtime(
@@ -1468,6 +1498,348 @@ def status(port: int, host: str, once: bool, text_view: bool, json_output: bool,
             time.sleep(2)
     except KeyboardInterrupt:
         return
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Human coordinator CLI commands
+# All commands talk to the running coordinator over HTTP (default port 9400).
+#
+# Usage examples:
+#   ctf-spawn   web-login
+#   ctf-kill    web-login
+#   ctf-restart web-login
+#   ctf-approve web-login "FLAG{abc123}"
+#   ctf-reject  web-login "FLAG{abc123}"
+#   ctf-submit  web-login "FLAG{abc123}"
+#   ctf-mark    web-login "FLAG{abc123}" --note "found via SQLi"
+#   ctf-broadcast web-login "ASLR is disabled — try buffer overflow"
+#   ctf-parse   https://ctf.example.com/challenges
+#   ctf-trace   web-login codex/gpt-5.4 --last 30
+#   ctf-priority web-login --on
+#   ctf-max     5
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_fetch(host: str, port: int, path: str) -> dict:
+    """GET request returning parsed JSON."""
+    import json as _json
+    import urllib.request as _req
+
+    with _req.urlopen(f"http://{host}:{port}{path}", timeout=10) as resp:
+        return _json.loads(resp.read())
+
+
+def _require_ok(data: dict, label: str) -> None:
+    """Print error and exit if the API call failed."""
+    if not data.get("ok", True):
+        console.print(f"[red]{label} failed:[/red] {data.get('error', data)}")
+        sys.exit(1)
+
+
+# ── Swarm management ──────────────────────────────────────────────────────────
+
+@click.command("spawn")
+@click.argument("challenge_name")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def spawn(challenge_name: str, port: int, host: str) -> None:
+    """Start solver agents for CHALLENGE_NAME."""
+    try:
+        data = _post_operator_json(
+            host, port, "/api/runtime/spawn-swarm", {"challenge_name": challenge_name}
+        )
+        _require_ok(data, "spawn")
+        console.print(f"[green]Spawned:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+@click.command("kill")
+@click.argument("challenge_name")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def kill(challenge_name: str, port: int, host: str) -> None:
+    """Kill all running solver agents for CHALLENGE_NAME."""
+    try:
+        data = _post_operator_json(
+            host, port, "/api/runtime/kill-swarm", {"challenge_name": challenge_name}
+        )
+        _require_ok(data, "kill")
+        console.print(f"[green]Killed:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+@click.command("restart")
+@click.argument("challenge_name")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def restart(challenge_name: str, port: int, host: str) -> None:
+    """Restart the swarm for CHALLENGE_NAME (preserves saved notes)."""
+    try:
+        data = _post_operator_json(
+            host, port, "/api/runtime/restart-challenge", {"challenge_name": challenge_name}
+        )
+        _require_ok(data, "restart")
+        console.print(f"[green]Restarted:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+# ── Flag management ───────────────────────────────────────────────────────────
+
+@click.command("approve")
+@click.argument("challenge_name")
+@click.argument("flag")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def approve(challenge_name: str, flag: str, port: int, host: str) -> None:
+    """Approve a flag candidate for CHALLENGE_NAME (marks solved, no auto-submit in local mode)."""
+    try:
+        data = _post_operator_json(
+            host,
+            port,
+            "/api/runtime/approve-candidate",
+            {"challenge_name": challenge_name, "flag": flag},
+        )
+        _require_ok(data, "approve")
+        console.print(f"[green]Approved:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+@click.command("reject")
+@click.argument("challenge_name")
+@click.argument("flag")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def reject(challenge_name: str, flag: str, port: int, host: str) -> None:
+    """Reject a flag candidate for CHALLENGE_NAME (solvers will keep trying)."""
+    try:
+        data = _post_operator_json(
+            host,
+            port,
+            "/api/runtime/reject-candidate",
+            {"challenge_name": challenge_name, "flag": flag},
+        )
+        _require_ok(data, "reject")
+        console.print(f"[green]Rejected:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+@click.command("submit")
+@click.argument("challenge_name")
+@click.argument("flag")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def submit_flag_cmd(challenge_name: str, flag: str, port: int, host: str) -> None:
+    """Directly submit FLAG to the remote platform for CHALLENGE_NAME.
+
+    Bypasses the no-submit guard — use when you know the flag is correct
+    and want to submit immediately without going through the candidate queue.
+    Blocked in local mode (no remote platform).
+    """
+    try:
+        data = _post_operator_json(
+            host,
+            port,
+            "/api/runtime/submit-flag",
+            {"challenge_name": challenge_name, "flag": flag},
+        )
+        _require_ok(data, "submit")
+        console.print(f"[green]Submit result:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+@click.command("mark")
+@click.argument("challenge_name")
+@click.argument("flag")
+@click.option("--note", default="", help="Optional note (e.g. 'found via SQLi')")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def mark(challenge_name: str, flag: str, note: str, port: int, host: str) -> None:
+    """Mark CHALLENGE_NAME as solved with FLAG without submitting to the platform.
+
+    Use when you solved the challenge outside the system (e.g. manually) and
+    just want to record the result.
+    """
+    try:
+        data = _post_operator_json(
+            host,
+            port,
+            "/api/runtime/mark-solved",
+            {"challenge_name": challenge_name, "flag": flag, "note": note},
+        )
+        _require_ok(data, "mark")
+        console.print(f"[green]Marked:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+# ── Solver communication ──────────────────────────────────────────────────────
+
+@click.command("broadcast")
+@click.argument("challenge_name")
+@click.argument("message")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def broadcast_cmd(challenge_name: str, message: str, port: int, host: str) -> None:
+    """Broadcast MESSAGE to all solver agents working on CHALLENGE_NAME.
+
+    Unlike ctf-bump (which targets one lane), broadcast goes to every solver
+    on the challenge and appears in their shared findings on the next turn.
+    """
+    try:
+        data = _post_operator_json(
+            host,
+            port,
+            "/api/runtime/broadcast",
+            {"challenge_name": challenge_name, "message": message},
+        )
+        _require_ok(data, "broadcast")
+        console.print(f"[green]Broadcast sent:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+@click.command("trace")
+@click.argument("challenge_name")
+@click.argument("model_spec")
+@click.option("--last", "last_n", default=20, type=int, help="Number of recent trace events to show")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def trace_cmd(challenge_name: str, model_spec: str, last_n: int, port: int, host: str) -> None:
+    """Show the last N trace events from MODEL_SPEC solving CHALLENGE_NAME.
+
+    Example: ctf-trace web-login codex/gpt-5.4 --last 30
+    """
+    try:
+        path = (
+            f"/api/runtime/solver-trace"
+            f"?challenge_name={challenge_name}"
+            f"&model_spec={model_spec}"
+            f"&last_n={last_n}"
+        )
+        data = _get_fetch(host, port, path)
+        if not data.get("ok", True):
+            console.print(f"[red]Failed:[/red] {data.get('error', data)}")
+            sys.exit(1)
+        console.print(
+            f"[bold]Trace:[/bold] {challenge_name} / {model_spec} "
+            f"(last {last_n})\n"
+        )
+        console.print(data.get("trace", "(empty)"))
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+# ── Problem / challenge management ────────────────────────────────────────────
+
+@click.command("parse")
+@click.argument("url")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+@click.option("--json-output", is_flag=True, help="Print raw JSON instead of markdown")
+def parse_url(url: str, port: int, host: str, json_output: bool) -> None:
+    """Fetch URL and parse it into structured CTF challenge info.
+
+    The URL can be a CTFd challenge page, DreamHack problem page, GitHub repo,
+    or any page listing CTF challenges.  A Claude model extracts challenge
+    names, categories, descriptions, file attachments, and connection info.
+
+    Example: ctf-parse https://ctf.example.com/challenges#web-login
+    """
+    import json as _json
+
+    console.print(f"[dim]Fetching and parsing {url} …[/dim]")
+    try:
+        data = _post_operator_json(host, port, "/api/runtime/parse-challenge-url", {"url": url})
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+    if "error" in data and not data.get("challenges"):
+        console.print(f"[red]Parse error:[/red] {data['error']}")
+        sys.exit(1)
+
+    if json_output:
+        console.print_json(_json.dumps(data))
+        return
+
+    console.print(data.get("markdown_summary", "(no summary)"))
+    challenges = data.get("challenges") or []
+    if challenges:
+        console.print(
+            f"\n[bold]{len(challenges)} challenge(s) parsed.[/bold] "
+            "Use [cyan]ctf-spawn <name>[/cyan] to start solving."
+        )
+
+
+# ── Queue / concurrency controls ─────────────────────────────────────────────
+
+@click.command("priority")
+@click.argument("challenge_name")
+@click.option("--on/--off", default=True, help="Set (--on) or clear (--off) priority waiting")
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def priority_cmd(challenge_name: str, on: bool, port: int, host: str) -> None:
+    """Set or clear priority-waiting status for CHALLENGE_NAME.
+
+    Priority challenges jump to the front of the spawn queue and pause any
+    currently running swarm for the challenge so it restarts immediately.
+
+    Examples:
+      ctf-priority web-login --on   # move to front, pause if running
+      ctf-priority web-login --off  # restore to normal queue position
+    """
+    try:
+        data = _post_operator_json(
+            host,
+            port,
+            "/api/runtime/set-challenge-priority",
+            {"challenge_name": challenge_name, "priority": on},
+        )
+        _require_ok(data, "priority")
+        console.print(f"[green]Priority updated:[/green] {data.get('result', '')}")
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
+
+
+@click.command("max")
+@click.argument("n", type=int)
+@click.option("--port", default=9400, type=int, help="Coordinator port")
+@click.option("--host", default="127.0.0.1", help="Coordinator host")
+def max_challenges_cmd(n: int, port: int, host: str) -> None:
+    """Set the maximum number of challenges that can run concurrently to N.
+
+    Increasing the limit auto-starts queued challenges if capacity allows.
+    Decreasing is a soft cap: running swarms drain naturally.
+
+    Example: ctf-max 5
+    """
+    try:
+        data = _post_operator_json(
+            host, port, "/api/runtime/set-max-challenges", {"max_active": n}
+        )
+        _require_ok(data, "max")
+        console.print(
+            f"[green]Limit updated:[/green] {data.get('result', '')} "
+            f"(now {data.get('max_concurrent_challenges', n)})"
+        )
+    except Exception as e:
+        console.print(f"[red]Failed:[/red] {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

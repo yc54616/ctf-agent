@@ -20,9 +20,30 @@ dependencies = [
 [project.scripts]
 ctf-solve = "backend.cli:main"
 ctf-import = "backend.import_cli:main"
-ctf-bump = "backend.cli:bump"
-ctf-msg = "backend.cli:msg"
 ctf-status = "backend.cli:status"
+
+# ── LLM-mode operator tools ──────────────────────────────────────────────────
+ctf-msg = "backend.cli:msg"
+ctf-bump = "backend.cli:bump"
+
+# ── Human-coordinator commands (work in both human and LLM mode) ─────────────
+# Swarm management
+ctf-spawn    = "backend.cli:spawn"
+ctf-kill     = "backend.cli:kill"
+ctf-restart  = "backend.cli:restart"
+# Flag handling
+ctf-approve  = "backend.cli:approve"
+ctf-reject   = "backend.cli:reject"
+ctf-submit   = "backend.cli:submit_flag_cmd"
+ctf-mark     = "backend.cli:mark"
+# Solver communication
+ctf-broadcast = "backend.cli:broadcast_cmd"
+ctf-trace    = "backend.cli:trace_cmd"
+# Problem discovery
+ctf-parse    = "backend.cli:parse_url"
+# Queue controls
+ctf-priority = "backend.cli:priority_cmd"
+ctf-max      = "backend.cli:max_challenges_cmd"
 
 [build-system]
 requires = ["hatchling"]

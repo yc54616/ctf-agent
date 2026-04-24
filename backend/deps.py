@@ -57,7 +57,8 @@ class CoordinatorDeps:
     local_mode: bool = False
     max_concurrent_challenges: int = 10
 
-    msg_port: int = 0  # 0 = auto-pick free port
+    msg_port: int = 0        # 0 = auto-pick free port
+    msg_host: str = "127.0.0.1"  # "0.0.0.0" for remote access
 
     # Runtime state
     coordinator_inbox: asyncio.Queue[CoordinatorQueueEvent] = field(default_factory=asyncio.Queue)
@@ -80,3 +81,11 @@ class CoordinatorDeps:
     ctfd_refresh_backoff_reason: str = ""
     shutdown_reason: str = ""
     shutdown_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    # Human coordinator mode
+    human_mode: bool = False
+    # Ring buffer of coordinator events for human-facing SSE stream.
+    # maxsize=500 — put_nowait drops new events when full (events are also logged).
+    human_event_log: asyncio.Queue = field(
+        default_factory=lambda: asyncio.Queue(maxsize=500)
+    )

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     claude_auth_path: str = ""
     gemini_auth_path: str = ""
 
+    # Operator UI
+    # Set to "0.0.0.0" to allow remote access (only do this behind a firewall/VPN).
+    ui_host: str = "127.0.0.1"
+    ui_port: int = 0   # 0 = auto-pick a free port
+
     # Infra
     sandbox_image: str = "ctf-sandbox"
     max_concurrent_challenges: int = 10
