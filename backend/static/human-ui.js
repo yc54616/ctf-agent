@@ -915,6 +915,7 @@ function renderCookieStatus(summary, probe) {
   if (summary.token_present) parts.push(`<div>API token: configured</div>`);
   if (probe?.ok) {
     parts.push(`<div style="color:var(--green)">✅ Probe OK · user: ${esc(probe.user || "?")}</div>`);
+    if (probe.note)      parts.push(`<div style="font-size:10px;color:var(--muted)">${esc(probe.note)}</div>`);
     if (probe.final_url) parts.push(`<div style="font-size:10px;color:var(--muted)">landed on ${esc(probe.final_url)}</div>`);
   }
   if (probe && probe.ok === false) {
@@ -922,7 +923,17 @@ function renderCookieStatus(summary, probe) {
     if (probe.body_preview) {
       parts.push(`<div style="font-size:10px;color:var(--muted);white-space:pre-wrap">server said: ${esc(probe.body_preview)}</div>`);
     }
-    if (probe.probe_url) parts.push(`<div style="font-size:10px;color:var(--muted)">probed: ${esc(probe.probe_url)}</div>`);
+    // Per-attempt breakdown so the operator can see which path failed and why.
+    const attempts = Array.isArray(probe.attempts) ? probe.attempts : [];
+    if (attempts.length) {
+      const rows = attempts.map(a => {
+        const statusTxt = a.status ? String(a.status) : "—";
+        const color = a.ok ? "var(--green)" : "var(--muted)";
+        return `<div style="font-size:10px;color:${color}">  • ${esc(a.label || a.url || "")}: <strong>${esc(statusTxt)}</strong> ${a.error ? "— " + esc(a.error) : ""}</div>`;
+      }).join("");
+      parts.push(`<div style="font-size:10px;color:var(--muted);margin-top:2px">attempts:</div>${rows}`);
+    }
+    if (probe.probe_url) parts.push(`<div style="font-size:10px;color:var(--muted)">primary endpoint: ${esc(probe.probe_url)}</div>`);
   }
   info.innerHTML = parts.join("");
 }
