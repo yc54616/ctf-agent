@@ -53,6 +53,49 @@
       <div class="parse-result" id="parseResult"></div>
     </div>
 
+    <!-- CTFd Connection (URL + API token + session cookie, all in one place) -->
+    <details class="ctfd-section" id="ctfdSection">
+      <summary>
+        <span>CTFd Connection</span>
+        <span class="ctfd-status-compact">
+          <span id="ctfdDot" class="cookie-dot missing" title="no connection"></span>
+          <span id="ctfdHostLabel" class="ctfd-host">—</span>
+        </span>
+      </summary>
+      <div class="ctfd-body">
+        <!-- URL + API token -->
+        <div class="config-field">
+          <label>CTFd URL</label>
+          <input id="ctfdUrlInput" type="url" placeholder="https://ctf.example.com">
+        </div>
+        <div class="config-field">
+          <label>API token <span class="cmd-meta" style="font-weight:normal">(optional; for submit / fetch)</span></label>
+          <input id="ctfdTokenInput" type="password" placeholder="ctfd_xxxxxxxx" autocomplete="off">
+        </div>
+        <div class="btn-row" style="margin-top:4px">
+          <button class="btn-accent" id="ctfdSaveBtn">💾 Save + Test</button>
+          <button class="ghost-btn small" id="ctfdClearTokenBtn" title="Clear API token only">clear token</button>
+        </div>
+        <div class="intervention-result" id="ctfdResult"></div>
+
+        <!-- Session cookie (moved here from right panel) -->
+        <h4 class="ctfd-subhead">Session Cookie
+          <span id="cookieDot" class="cookie-dot missing" title="No session cookie loaded"></span>
+        </h4>
+        <p class="cmd-meta" id="cookieMeta" style="margin-top:0">Raw Cookie header used by solvers for authenticated requests.</p>
+        <div class="cookie-status" id="cookieStatus">—</div>
+        <textarea id="cookieInput" rows="2"
+          placeholder="session=abc123; remember_token=…  (DevTools → Network → copy Cookie header)"></textarea>
+        <div class="btn-row" style="margin-top:6px">
+          <button class="btn-accent" id="cookieSaveBtn">💾 Save</button>
+          <button class="ghost-btn"  id="cookieTestBtn">🔌 Test</button>
+          <button class="btn-danger small" id="cookieClearBtn">🗑 Clear</button>
+        </div>
+        <label class="checkbox-label" style="margin-top:4px"><input type="checkbox" id="cookieTestOnSave" checked> test after saving</label>
+        <div class="intervention-result" id="cookieResult"></div>
+      </div>
+    </details>
+
     <!-- Challenge list -->
     <div class="challenge-list" id="challengeList">
       <div class="empty">Loading…</div>

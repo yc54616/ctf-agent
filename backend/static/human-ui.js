@@ -810,6 +810,162 @@ $("markSolvedForm").addEventListener("submit", async e => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+   CTFd connection (URL + API token)
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderCtfdStatus(summary, probe) {
+  if (!summary) return;
+  const dot   = $("ctfdDot");
+  const host  = $("ctfdHostLabel");
+  const url   = $("ctfdUrlInput");
+
+  let cls = summary.configured ? "unknown" : "missing";
+  let title = summary.base_url ? `Connected to ${summary.base_url}` : "No CTFd URL configured";
+  if (summary.local_mode) { cls = "missing"; title = "Local mode — no remote CTFd"; }
+  if (probe?.ok)                     { cls = "ok";      title = `OK (user: ${probe.user || "unknown"})`; }
+  else if (probe && probe.ok === false) { cls = "invalid"; title = probe.error || title; }
+  dot.className = "cookie-dot " + cls;
+  dot.title = title;
+
+  if (summary.base_url) {
+    try { host.textContent = new URL(summary.base_url).host || summary.base_url; }
+    catch { host.textContent = summary.base_url; }
+  } else {
+    host.textContent = summary.local_mode ? "local mode" : "—";
+  }
+  // Don't stomp user-edited URL while they're typing — only seed empty fields.
+  if (!url.value) url.value = summary.base_url || "";
+}
+
+async function loadCtfdStatus() {
+  const r = await api("/api/runtime/ctfd-config");
+  if (r.ok) renderCtfdStatus(r.body);
+}
+
+$("ctfdSaveBtn")?.addEventListener("click", async () => {
+  const url   = $("ctfdUrlInput").value.trim();
+  const token = $("ctfdTokenInput").value;
+  if (!url) { flashResult("ctfdResult", "Enter a CTFd URL.", false); return; }
+  const btn = $("ctfdSaveBtn");
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = "Saving + testing…";
+  const payload = token ? { url, token, test: true } : { url, test: true };
+  const r = await api("/api/runtime/ctfd-config", { method: "PUT", body: JSON.stringify(payload) });
+  btn.disabled = false; btn.textContent = orig;
+  if (r.ok) {
+    renderCtfdStatus(r.body.ctfd, r.body.probe);
+    // Refresh cookie card in case the probe revealed anything.
+    loadCookieStatus();
+    $("ctfdTokenInput").value = ""; // clear plaintext from the field
+    const probe = r.body.probe;
+    const msg = probe?.ok ? `Connected as ${probe.user || "?"}` : probe?.error || "Saved (no probe)";
+    flashResult("ctfdResult", msg, probe?.ok !== false);
+    logActivity(`CTFd config saved → ${r.body.ctfd.base_url}`, probe?.ok === false ? "al-err" : "al-ok");
+    pushEvent(`🔗 CTFd connection updated → ${r.body.ctfd.base_url}`, "info");
+    pollSnapshot(); // so /fetch-challenges etc. reflect new host
+  } else {
+    flashResult("ctfdResult", r.body.error ?? "Save failed", false);
+  }
+});
+
+$("ctfdClearTokenBtn")?.addEventListener("click", async () => {
+  if (!confirm("Clear the CTFd API token?")) return;
+  const r = await api("/api/runtime/ctfd-config?field=token", { method: "DELETE" });
+  if (r.ok) {
+    renderCtfdStatus(r.body.ctfd);
+    $("ctfdTokenInput").value = "";
+    flashResult("ctfdResult", "Token cleared.", true);
+    logActivity("CTFd token cleared", "al-info");
+  } else {
+    flashResult("ctfdResult", r.body.error ?? "Clear failed", false);
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CTFd session cookie management
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderCookieStatus(summary, probe) {
+  const dot   = $("cookieDot");
+  const info  = $("cookieStatus");
+  if (!summary) return;
+
+  let cls = summary.configured ? "unknown" : "missing";
+  let title = summary.configured ? "Cookie loaded — probe to verify" : "No session cookie loaded";
+  if (probe?.ok) { cls = "ok"; title = `Valid (user: ${probe.user || "unknown"})`; }
+  else if (probe && probe.ok === false) { cls = "invalid"; title = probe.error || "Probe failed"; }
+  dot.className = "cookie-dot " + cls;
+  dot.title = title;
+
+  const parts = [];
+  parts.push(`<div><strong>${summary.configured ? "Configured" : "Not configured"}</strong> · ${esc(summary.platform || "remote")} · <code>${esc(summary.base_url || "—")}</code></div>`);
+  if (summary.configured) {
+    parts.push(`<div>Length: ${summary.length} chars · Cookies: ${summary.cookie_count}</div>`);
+    if (summary.cookie_names?.length) {
+      parts.push(`<div>${summary.cookie_names.map(n => `<span class="cookie-chip">${esc(n)}</span>`).join("")}</div>`);
+    }
+    if (summary.source) parts.push(`<div>Source: ${esc(summary.source)}</div>`);
+  }
+  if (summary.username)      parts.push(`<div>CTFd user: ${esc(summary.username)}</div>`);
+  if (summary.token_present) parts.push(`<div>API token: configured</div>`);
+  if (probe?.ok)   parts.push(`<div style="color:var(--green)">✅ Probe OK · user: ${esc(probe.user || "?")}</div>`);
+  if (probe && probe.ok === false) parts.push(`<div style="color:var(--red)">❌ ${esc(probe.error || "probe failed")}</div>`);
+  info.innerHTML = parts.join("");
+}
+
+async function loadCookieStatus() {
+  const r = await api("/api/runtime/cookie");
+  if (r.ok) renderCookieStatus(r.body);
+  else      logActivity(`Cookie status fetch failed: ${r.body.error ?? r.status}`, "al-err");
+}
+
+$("cookieSaveBtn")?.addEventListener("click", async () => {
+  const cookie = $("cookieInput").value;
+  if (!cookie.trim()) { flashResult("cookieResult", "Paste a Cookie header first.", false); return; }
+  const test = $("cookieTestOnSave").checked;
+  const btn  = $("cookieSaveBtn");
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = test ? "Saving + testing…" : "Saving…";
+  const r = await api("/api/runtime/cookie", { method: "PUT", body: JSON.stringify({ cookie, test }) });
+  btn.disabled = false; btn.textContent = orig;
+  if (r.ok) {
+    renderCookieStatus(r.body.cookie, r.body.probe);
+    $("cookieInput").value = "";
+    const probeMsg = r.body.probe?.ok ? " (probe OK)" : r.body.probe?.error ? ` (probe: ${r.body.probe.error})` : "";
+    flashResult("cookieResult", `Saved ${r.body.cookie.length} chars` + probeMsg, r.body.probe?.ok !== false);
+    logActivity(`Cookie saved (${r.body.cookie.cookie_count} cookies)${probeMsg}`, r.body.probe?.ok === false ? "al-err" : "al-ok");
+    pushEvent(`🍪 Session cookie updated (${r.body.cookie.cookie_count} cookies)`, "info");
+  } else {
+    flashResult("cookieResult", r.body.error ?? "Save failed", false);
+    logActivity(`Cookie save failed: ${r.body.error ?? r.status}`, "al-err");
+  }
+});
+
+$("cookieTestBtn")?.addEventListener("click", async () => {
+  const btn = $("cookieTestBtn");
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = "Testing…";
+  const r = await api("/api/runtime/cookie/test", { method: "POST" });
+  btn.disabled = false; btn.textContent = orig;
+  if (r.ok) {
+    renderCookieStatus(r.body.cookie, r.body.probe);
+    const msg = r.body.probe?.ok ? `OK — user: ${r.body.probe.user || "?"}` : r.body.probe?.error || "probe failed";
+    flashResult("cookieResult", msg, r.body.probe?.ok === true);
+    logActivity(`Cookie probe: ${msg}`, r.body.probe?.ok === true ? "al-ok" : "al-err");
+  } else {
+    flashResult("cookieResult", r.body.error ?? "Probe failed", false);
+  }
+});
+
+$("cookieClearBtn")?.addEventListener("click", async () => {
+  if (!confirm("Clear the session cookie? Solvers will lose authenticated access.")) return;
+  const r = await api("/api/runtime/cookie", { method: "DELETE" });
+  if (r.ok) {
+    renderCookieStatus(r.body.cookie);
+    flashResult("cookieResult", "Cookie cleared.", true);
+    logActivity("Cookie cleared", "al-info");
+    pushEvent("🍪 Session cookie cleared", "warn");
+  } else {
+    flashResult("cookieResult", r.body.error ?? "Clear failed", false);
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
    Broadcast
    ══════════════════════════════════════════════════════════════════════════ */
 $("broadcastForm").addEventListener("submit", async e => {
@@ -869,5 +1025,7 @@ function init() {
   connectSnapSse();
   connectEventSse();
   pollSnapshot();
+  loadCtfdStatus();
+  loadCookieStatus();
 }
 init();

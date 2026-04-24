@@ -101,3 +101,8 @@ class CoordinatorDeps:
     advisor_reports: deque[dict[str, Any]] = field(
         default_factory=lambda: deque(maxlen=200)
     )
+
+    # Provenance string for the currently-configured CTFd session cookie so the
+    # UI can display "set via --cookie-file at startup" vs "set via API at …".
+    # Never contains the cookie value itself — that lives in settings.remote_cookie_header.
+    cookie_source: str = ""

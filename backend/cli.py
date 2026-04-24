@@ -1204,9 +1204,16 @@ def main(
     console.print("[bold]CTF Agent v2[/bold]")
     console.print(f"  Coordinator: {'human (operator-driven)' if coordinator == 'human' else coordinator}")
     console.print(f"  Mode: {'local' if local_mode else 'remote'}")
-    console.print(f"  CTFd sync: {'disabled' if local_mode else settings.ctfd_url}")
+    if local_mode:
+        console.print("  CTFd sync: disabled")
+    else:
+        url_hint = settings.ctfd_url or "(not set — configure in GUI)"
+        token_hint = " [token set]" if settings.ctfd_token else " [no token — set in GUI]"
+        console.print(f"  CTFd sync: {url_hint}{token_hint}")
     if cookie_header:
         console.print(f"  Cookie auth: {cookie_path}")
+    elif coordinator == "human" and not local_mode:
+        console.print("  Cookie auth: none (paste in GUI if needed)")
     if coordinator == "human":
         console.print("  Submission: human approval required (--coordinator human forces no-submit)")
     elif local_mode:
@@ -1325,6 +1332,9 @@ async def _run_coordinator(
             effective_no_submit_for_deps,
             local_mode,
         )
+    # Record provenance so the operator UI can show how the cookie arrived.
+    if cookie_header:
+        deps.cookie_source = f"--cookie-file {cookie_path}" if cookie_path else "--cookie-file"
     if restore_mode:
         restored = restore_pending_swarms_from_results(deps)
         if restored:

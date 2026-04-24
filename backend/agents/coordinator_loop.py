@@ -639,6 +639,7 @@ async def run_event_loop(
 
             # Periodic status update — only when there are active swarms or other events
             now = asyncio.get_running_loop().time()
+            is_human = bool(getattr(deps, "human_mode", False))
             if now - last_status >= status_interval:
                 last_status = now
                 active = [n for n, t in deps.swarm_tasks.items() if not t.done()]
@@ -648,16 +649,24 @@ async def run_event_loop(
                     f"STATUS: {len(solved_set)} solved, {len(unsolved_set)} unsolved, "
                     f"{len(active)} active swarms. Cost: ${cost_tracker.total_cost_usd:.2f}"
                 )
-                # Only send to coordinator if there's something happening
-                if active or parts:
-                    parts.append(status_line)
-                else:
-                    logger.info(f"Event -> coordinator: {status_line}")
+                # In human mode the operator already sees these metrics live in the
+                # top bar via SSE snapshots — don't spam the event feed / log with them.
+                # In LLM mode, only forward when there's something happening.
+                if not is_human:
+                    if active or parts:
+                        parts.append(status_line)
+                    else:
+                        logger.debug("Status (idle, not forwarded): %s", status_line)
 
             if parts:
                 parts = _dedupe_preserve_order(parts)
                 msg = "\n\n".join(parts)
-                logger.info("Event -> coordinator: %s", msg[:200])
+                if is_human:
+                    # Human mode — there is no AI coordinator.  `turn_fn` just
+                    # forwards the message onto the operator's SSE stream.
+                    logger.debug("Event -> human UI: %s", msg[:200])
+                else:
+                    logger.info("Event -> coordinator: %s", msg[:200])
                 await turn_fn(msg)
                 if deps.shutdown_event.is_set():
                     shutdown_reason = deps.shutdown_reason or "coordinator shutdown requested"
@@ -997,6 +1006,153 @@ def _pending_swarms_snapshot(
             },
         }
     return pending
+
+
+def _ctfd_summary(deps: CoordinatorDeps) -> dict[str, Any]:
+    """Return a UI-safe summary of the current CTFd connection (never leaks tokens)."""
+    base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
+    platform = str(getattr(deps.ctfd, "platform", "") or "remote")
+    username = str(getattr(deps.settings, "ctfd_user", "") or "")
+    token_raw = str(getattr(deps.settings, "ctfd_token", "") or "")
+    return {
+        "configured": bool(base_url),
+        "base_url": base_url,
+        "platform": platform,
+        "username": username,
+        "token_present": bool(token_raw),
+        "token_length": len(token_raw),
+        "local_mode": bool(deps.local_mode),
+    }
+
+
+async def _rebuild_ctfd_client(deps: CoordinatorDeps, *, base_url: str, token: str) -> dict[str, Any]:
+    """Rebuild ``deps.ctfd`` with a new URL / token combo at runtime.
+
+    Best-effort: closes the old httpx client (if any), replaces the client
+    in-place on deps, and updates settings so subsequent swarm spawns see
+    the new values.  Returns ``{ok, error?}``.
+    """
+    base_url = base_url.strip().rstrip("/")
+    token = token.strip()
+    if not base_url:
+        return {"ok": False, "error": "base_url is required"}
+
+    # Close the previous client cleanly.
+    close_fn = getattr(deps.ctfd, "close", None)
+    if callable(close_fn):
+        try:
+            await close_fn()
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.debug("Previous CTFd client close failed: %s", exc)
+
+    # Update settings first so factory-style lookups pick up new values.
+    deps.settings.ctfd_url = base_url
+    deps.settings.ctfd_token = token
+
+    try:
+        from backend.platforms.factory import build_platform_client
+        new_client = build_platform_client(
+            settings=deps.settings,
+            challenge_metas=deps.challenge_metas,
+            cookie_header=str(getattr(deps.settings, "remote_cookie_header", "") or ""),
+            local_mode=deps.local_mode,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("CTFd client rebuild failed: %s", exc)
+        return {"ok": False, "error": f"Rebuild failed: {exc}"}
+
+    deps.ctfd = new_client
+    logger.info("CTFd client reconfigured (base_url=%s, token=%s)", base_url, "***" if token else "none")
+    return {"ok": True}
+
+
+def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
+    """Return a safe, UI-ready summary of the currently configured CTFd cookie.
+
+    Never returns the raw cookie value — only metadata suitable for display
+    (length, number of cookie pairs, names present, first-seen timestamp).
+    """
+    raw = str(getattr(deps.settings, "remote_cookie_header", "") or "").strip()
+    base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
+    platform = str(getattr(deps.ctfd, "platform", "") or "remote")
+    username = str(getattr(deps.settings, "ctfd_user", "") or "")
+    token_present = bool(str(getattr(deps.settings, "ctfd_token", "") or "").strip())
+
+    names: list[str] = []
+    for chunk in raw.split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        names.append(chunk.split("=", 1)[0])
+
+    return {
+        "configured": bool(raw),
+        "length": len(raw),
+        "cookie_count": len(names),
+        "cookie_names": names[:16],
+        "base_url": base_url,
+        "platform": platform,
+        "username": username,
+        "token_present": token_present,
+        "source": str(getattr(deps, "cookie_source", "") or ""),
+    }
+
+
+async def _probe_cookie(deps: CoordinatorDeps, cookie_header: str) -> dict[str, Any]:
+    """GET CTFd's /users/me with the given Cookie header to verify validity.
+
+    Returns a dict describing the probe outcome.  Does not mutate deps.
+    """
+    base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
+    if not base_url:
+        return {"ok": False, "error": "No CTFd URL configured"}
+
+    import httpx
+
+    probe_url = base_url.rstrip("/") + "/api/v1/users/me"
+    headers: dict[str, str] = {"User-Agent": "ctf-agent/cookie-probe"}
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+    token = str(getattr(deps.settings, "ctfd_token", "") or "").strip()
+    if token:
+        headers["Authorization"] = f"Token {token}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=False) as client:
+            resp = await client.get(probe_url, headers=headers)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"Request failed: {exc}"}
+
+    status = resp.status_code
+    if status == 200:
+        body = {}
+        try:
+            body = resp.json()
+        except Exception:  # noqa: BLE001
+            pass
+        user = ""
+        if isinstance(body, dict):
+            data = body.get("data") or {}
+            if isinstance(data, dict):
+                user = str(data.get("name") or data.get("username") or "")
+        return {"ok": True, "status": status, "user": user, "probe_url": probe_url}
+
+    # 302 redirect to /login means cookie is invalid
+    if status in {301, 302, 303, 307, 308}:
+        location = resp.headers.get("location", "")
+        return {
+            "ok": False,
+            "status": status,
+            "error": f"Redirected to {location or 'unknown'} — session likely expired",
+            "probe_url": probe_url,
+        }
+
+    if status == 403:
+        return {"ok": False, "status": status, "error": "403 Forbidden — cookie invalid or lacking access", "probe_url": probe_url}
+    if status == 401:
+        return {"ok": False, "status": status, "error": "401 Unauthorized — cookie invalid", "probe_url": probe_url}
+
+    return {"ok": False, "status": status, "error": f"Unexpected HTTP {status}", "probe_url": probe_url}
 
 
 async def _auto_import_remote_challenges(
@@ -1580,6 +1736,90 @@ async def _start_msg_server(
                             payload["restart_requested"] = True
                             payload["restart_result"] = await do_restart_challenge(deps, challenge_name)
                         _json_response("200 OK", payload)
+            elif method == "GET" and path == "/api/runtime/ctfd-config":
+                # UI-safe snapshot of the current CTFd URL + token state.
+                _json_response("200 OK", {"ok": True, **_ctfd_summary(deps)})
+            elif method == "PUT" and path == "/api/runtime/ctfd-config" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                url = str(data.get("url") or data.get("base_url") or "").strip()
+                # Keep existing token if caller omits the field; empty string clears it.
+                token_field_provided = "token" in data
+                token = str(data.get("token") or "").strip()
+                if not url:
+                    _json_response("400 Bad Request", {"error": "url is required"})
+                else:
+                    final_token = token if token_field_provided else str(getattr(deps.settings, "ctfd_token", "") or "")
+                    rebuild = await _rebuild_ctfd_client(deps, base_url=url, token=final_token)
+                    if not rebuild.get("ok"):
+                        _json_response("500 Internal Server Error", {"error": rebuild.get("error", "rebuild failed")})
+                    else:
+                        probe: dict[str, Any] = {}
+                        if bool(data.get("test", True)):
+                            probe = await _probe_cookie(
+                                deps,
+                                str(getattr(deps.settings, "remote_cookie_header", "") or ""),
+                            )
+                        _json_response(
+                            "200 OK",
+                            {"ok": True, "ctfd": _ctfd_summary(deps), "probe": probe},
+                        )
+            elif method == "DELETE" and path == "/api/runtime/ctfd-config":
+                # Clear only the token — keep the URL (leaving local_mode flip for CLI).
+                query_params = query
+                field_to_clear = str(query_params.get("field", "token")).lower()
+                if field_to_clear == "token":
+                    deps.settings.ctfd_token = ""
+                    rebuild = await _rebuild_ctfd_client(
+                        deps,
+                        base_url=str(getattr(deps.settings, "ctfd_url", "") or ""),
+                        token="",
+                    )
+                    _json_response("200 OK", {"ok": True, "ctfd": _ctfd_summary(deps), "rebuild": rebuild})
+                else:
+                    _json_response("400 Bad Request", {"error": f"Unsupported field: {field_to_clear}"})
+            elif method == "GET" and path == "/api/runtime/cookie":
+                # Status snapshot (never leaks the raw cookie value).
+                _json_response("200 OK", {"ok": True, **_cookie_summary(deps)})
+            elif method == "PUT" and path == "/api/runtime/cookie" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                raw = str(data.get("cookie") or "").strip()
+                # Strip leading "Cookie:" prefix if the user pasted the full header line.
+                if raw.lower().startswith("cookie:"):
+                    raw = raw[len("cookie:"):].strip()
+                if not raw:
+                    _json_response("400 Bad Request", {"error": "cookie value is required (body: {\"cookie\": \"…\"})"})
+                else:
+                    deps.settings.remote_cookie_header = raw
+                    deps.cookie_source = f"operator_api@{int(time.time())}"
+                    summary = _cookie_summary(deps)
+                    # Optionally verify immediately.
+                    probe_result: dict[str, Any] = {}
+                    if bool(data.get("test")):
+                        probe_result = await _probe_cookie(deps, raw)
+                    logger.info(
+                        "Cookie header updated via API (%d chars, %d cookies)",
+                        summary["length"], summary["cookie_count"],
+                    )
+                    _json_response("200 OK", {"ok": True, "cookie": summary, "probe": probe_result})
+            elif method == "DELETE" and path == "/api/runtime/cookie":
+                deps.settings.remote_cookie_header = ""
+                deps.cookie_source = ""
+                logger.info("Cookie header cleared via API")
+                _json_response("200 OK", {"ok": True, "cookie": _cookie_summary(deps)})
+            elif method == "POST" and path == "/api/runtime/cookie/test":
+                # Probe the currently-configured cookie (doesn't accept an override).
+                probe_result = await _probe_cookie(
+                    deps, str(getattr(deps.settings, "remote_cookie_header", "") or "")
+                )
+                _json_response("200 OK", {"ok": True, "probe": probe_result, "cookie": _cookie_summary(deps)})
             elif method == "PATCH" and path == "/api/runtime/challenge-config" and content_length > 0:
                 body = await asyncio.wait_for(reader.read(content_length), timeout=5)
                 try:
