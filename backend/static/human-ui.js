@@ -361,22 +361,35 @@ function enableCommands(name, ch) {
   $("checkInstanceBtn").disabled = false;
   $("submitFlagBtn").disabled   = false;
   $("markSolvedBtn").disabled   = solved;
-  $("broadcastBtn").disabled    = !active;
-  $("strategicBtn").disabled    = !active;
-  $("tacticalBtn").disabled     = !active;
+  // Intervene buttons: always clickable.  The backend has the canonical
+  // knowledge of whether a swarm is running (deps.swarms.get(name)).  The
+  // front-end was over-eager — users saw dead buttons even when swarms
+  // were running because the status classifier hadn't caught up yet, or
+  // because the selected challenge happened to be in a transient state.
+  // Backend responds with a clear error if there's genuinely no swarm;
+  // we surface that via the existing flashResult path.
+  $("broadcastBtn").disabled    = false;
+  $("strategicBtn").disabled    = false;
+  $("tacticalBtn").disabled     = false;
   $("saveResultBtn").disabled   = false;
   $("clearHistoryBtn").disabled = active;
   $("bumpAllStaleBtn").disabled = !active;
 
-  // Contextual tooltips + banner so operators know WHY intervene buttons
-  // are grey instead of just seeing a dead button.
-  const interveneReason = active ? ""
-      : solved ? "Disabled: challenge already solved."
-      : remoteOnly ? "Disabled: challenge is remote-only — import it first, then Spawn."
-      : "Disabled: no active swarm. Click Spawn in the right panel first.";
-  $("strategicBtn").title = interveneReason || "Broadcast strategic critique to advisor + all lanes";
-  $("tacticalBtn").title  = interveneReason || "Send a targeted hint to one solver lane";
-  $("broadcastBtn").title = interveneReason || "Post a finding every solver reads next turn";
+  // Informational tooltips + banner — the banner is now advisory only,
+  // not gating.  If the swarm really isn't there, the backend will say so.
+  const interveneHint = active ? ""
+      : solved ? "Challenge already solved — intervention usually not useful."
+      : remoteOnly ? "Remote-only challenge — Spawn unavailable until imported."
+      : "No active swarm detected on this tab (status may be stale). Backend will confirm on send.";
+  $("strategicBtn").title = interveneHint
+    ? `${interveneHint}  —  Click to send anyway; backend will respond with success or error.`
+    : "Broadcast strategic critique to advisor + all lanes";
+  $("tacticalBtn").title  = interveneHint
+    ? `${interveneHint}  —  Click to send anyway; backend will respond with success or error.`
+    : "Send a targeted hint to one solver lane";
+  $("broadcastBtn").title = interveneHint
+    ? `${interveneHint}  —  Click to send anyway; backend will respond with success or error.`
+    : "Post a finding every solver reads next turn";
   const banner = $("interveneInactiveBanner");
   if (banner) {
     if (active) {
@@ -384,10 +397,10 @@ function enableCommands(name, ch) {
     } else {
       banner.style.display = "";
       banner.innerHTML = solved
-        ? '✅ Challenge already solved. Intervention not needed.'
+        ? '✅ Challenge already solved. Intervention usually not needed, but Send is still enabled.'
         : remoteOnly
-        ? '⚠ This challenge is <strong>remote-only</strong>. Import it with <code>ctf-import</code> or let the swarm auto-import on Fetch, then click <strong>Spawn</strong>.'
-        : '⚠ Intervention requires an <strong>active swarm</strong>. Click <strong>Spawn</strong> in the right panel first, or switch to a challenge that\'s already running.';
+        ? '☁ This challenge is <strong>remote-only</strong>. Intervention will fail with "no swarm running" until you <code>ctf-import</code> + Spawn.  Send is still enabled — feel free to try.'
+        : '⚠ This tab shows <strong>no active swarm</strong> (status may be stale or a different challenge is selected). <strong>Send is still enabled</strong> — if swarms are running the backend will accept; if not it will tell you.';
     }
   }
 }
@@ -622,7 +635,9 @@ $("reportsAllChallenges")?.addEventListener("change", e => {
   renderSolveReports();
 });
 
-// "Report now" — ask every lane for a self-report + advisor synthesis
+// "Report now" — ask the advisor to aggregate recent lane reports into a
+// human-facing narrative.  Lanes are not interrupted; we rely on whatever
+// they've already posted into deps.solve_reports at their own pace.
 $("requestReportBtn")?.addEventListener("click", async () => {
   const name = S.selectedName;
   if (!name) { flashResult("strategicResult", "Select a challenge first.", false); return; }
@@ -635,19 +650,16 @@ $("requestReportBtn")?.addEventListener("click", async () => {
   const btn = $("requestReportBtn");
   btn.disabled = true;
   const orig = btn.textContent;
-  btn.textContent = "⏳ Requesting…";
+  btn.textContent = "⏳ Synthesising…";
   const r = await api("/api/runtime/request-status-report", {
     method: "POST",
-    body: JSON.stringify({ challenge_name: name, prompt_lanes: true }),
+    body: JSON.stringify({ challenge_name: name, report_window: 40 }),
   });
   btn.disabled = false;
   btn.textContent = orig;
   if (r.ok) {
-    logActivity(`Report requested for ${name}: ${r.body.result ?? "queued"}`, "al-ok");
-    // Every entry from this path is real LLM output (lane self-reports write
-    // into the feed as each solver's next step returns; advisor synthesis
-    // arrives when its LLM call completes).  No mechanical snapshot.
-    pushEvent(`📊 Report requested — lanes will pause → report → resume. Expect entries in 5–30s.`, "info");
+    logActivity(`Advisor synthesis requested for ${name}: ${r.body.result ?? "queued"}`, "al-ok");
+    pushEvent(`📊 Advisor synthesising from recent lane reports — result in 5–30s. Lanes were NOT interrupted.`, "info");
   } else {
     logActivity(`Report request failed: ${r.body.error ?? r.status}`, "al-err");
     pushEvent(`⚠ ${r.body.error ?? "Report request failed"}`, "warn");

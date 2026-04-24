@@ -2421,7 +2421,10 @@ async def _start_msg_server(
                 except json.JSONDecodeError:
                     data = {}
                 challenge_name = str(data.get("challenge_name", "")).strip()
-                prompt_lanes = bool(data.get("prompt_lanes", True))
+                try:
+                    report_window = int(data.get("report_window") or 40)
+                except (TypeError, ValueError):
+                    report_window = 40
                 if not challenge_name:
                     _json_response(
                         "400 Bad Request",
@@ -2429,7 +2432,7 @@ async def _start_msg_server(
                     )
                 else:
                     result = await do_request_status_report(
-                        deps, challenge_name, prompt_lanes=prompt_lanes,
+                        deps, challenge_name, report_window=report_window,
                     )
                     if result.startswith("No swarm"):
                         _json_response("404 Not Found", {"ok": False, "error": result})
