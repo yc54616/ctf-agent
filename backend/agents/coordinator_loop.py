@@ -1344,13 +1344,20 @@ async def _start_msg_server(
     )
 
     async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        def _write_response(status: str, body: bytes, content_type: str) -> None:
+        def _write_response(
+            status: str,
+            body: bytes,
+            content_type: str,
+            *,
+            extra_headers: str = "",
+        ) -> None:
             writer.write(
                 (
                     f"HTTP/1.1 {status}\r\n"
                     f"Content-Type: {content_type}\r\n"
                     f"Content-Length: {len(body)}\r\n"
                     "Connection: close\r\n"
+                    f"{extra_headers}"
                     "\r\n"
                 ).encode()
                 + body
@@ -1431,7 +1438,19 @@ async def _start_msg_server(
                     "/human-ui.js": "human-ui.js",
                 }[path]
                 content_type, text = load_ui_asset(asset_name)
-                _write_response("200 OK", text.encode("utf-8"), content_type)
+                # Force browsers to re-fetch these on every load so UI edits
+                # land immediately (no need for users to Ctrl+Shift+R).
+                no_cache = (
+                    "Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                    "Pragma: no-cache\r\n"
+                    "Expires: 0\r\n"
+                )
+                _write_response(
+                    "200 OK",
+                    text.encode("utf-8"),
+                    content_type,
+                    extra_headers=no_cache,
+                )
             elif method == "GET" and path == "/api/runtime/traces":
                 challenge_name = str(query.get("challenge_name", "")).strip()
                 lane_id = str(query.get("lane_id", "")).strip()
