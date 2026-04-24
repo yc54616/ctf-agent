@@ -706,10 +706,11 @@ $("parseForm").addEventListener("submit", async e => {
       ? ` [auth: ${[auth.cookie ? "cookie" : "", auth.token ? "token" : ""].filter(Boolean).join("+")}]`
       : " [no auth]";
     const compLabel = r.body.competition_name ? " — " + r.body.competition_name : "";
-    res.textContent = `Found ${n} challenge(s)${compLabel}${authLabel}`;
-    res.className   = "parse-result " + (n === 0 ? "error" : "ok");
-    if (n === 0 && !(auth.cookie || auth.token)) {
-      res.textContent += " — try Fetch instead, or paste a session cookie in CTFd Connection first.";
+    const note = r.body.note ? `\n${r.body.note}` : "";
+    res.innerText = `Found ${n} challenge(s)${compLabel}${authLabel}${note}`;
+    res.className = "parse-result " + (n === 0 ? "error" : "ok");
+    if (n === 0 && !(auth.cookie || auth.token) && !note) {
+      res.innerText += " — try Fetch instead, or paste a session cookie in CTFd Connection first.";
     }
     logActivity(`Parsed: ${n} challenges${authLabel}`, n === 0 ? "al-err" : "al-ok");
   } else {
