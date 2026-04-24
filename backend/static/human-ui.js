@@ -367,6 +367,29 @@ function enableCommands(name, ch) {
   $("saveResultBtn").disabled   = false;
   $("clearHistoryBtn").disabled = active;
   $("bumpAllStaleBtn").disabled = !active;
+
+  // Contextual tooltips + banner so operators know WHY intervene buttons
+  // are grey instead of just seeing a dead button.
+  const interveneReason = active ? ""
+      : solved ? "Disabled: challenge already solved."
+      : remoteOnly ? "Disabled: challenge is remote-only — import it first, then Spawn."
+      : "Disabled: no active swarm. Click Spawn in the right panel first.";
+  $("strategicBtn").title = interveneReason || "Broadcast strategic critique to advisor + all lanes";
+  $("tacticalBtn").title  = interveneReason || "Send a targeted hint to one solver lane";
+  $("broadcastBtn").title = interveneReason || "Post a finding every solver reads next turn";
+  const banner = $("interveneInactiveBanner");
+  if (banner) {
+    if (active) {
+      banner.style.display = "none";
+    } else {
+      banner.style.display = "";
+      banner.innerHTML = solved
+        ? '✅ Challenge already solved. Intervention not needed.'
+        : remoteOnly
+        ? '⚠ This challenge is <strong>remote-only</strong>. Import it with <code>ctf-import</code> or let the swarm auto-import on Fetch, then click <strong>Spawn</strong>.'
+        : '⚠ Intervention requires an <strong>active swarm</strong>. Click <strong>Spawn</strong> in the right panel first, or switch to a challenge that\'s already running.';
+    }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -597,6 +620,38 @@ document.querySelectorAll("#reportsKindFilter .kind-btn").forEach(btn => {
 $("reportsAllChallenges")?.addEventListener("change", e => {
   S.reportsAllChallenges = e.target.checked;
   renderSolveReports();
+});
+
+// "Report now" — ask every lane for a self-report + advisor synthesis
+$("requestReportBtn")?.addEventListener("click", async () => {
+  const name = S.selectedName;
+  if (!name) { flashResult("strategicResult", "Select a challenge first.", false); return; }
+  const ch = S.challenges[name];
+  if (ch?.status !== "active") {
+    logActivity(`Report-now skipped: ${name} has no active swarm`, "al-err");
+    pushEvent(`⚠ Cannot request status report — swarm isn't running`, "warn");
+    return;
+  }
+  const btn = $("requestReportBtn");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "⏳ Requesting…";
+  const r = await api("/api/runtime/request-status-report", {
+    method: "POST",
+    body: JSON.stringify({ challenge_name: name, prompt_lanes: true }),
+  });
+  btn.disabled = false;
+  btn.textContent = orig;
+  if (r.ok) {
+    logActivity(`Status report requested for ${name}`, "al-ok");
+    pushEvent(`📊 Status report requested — synthesis + lane self-reports incoming`, "info");
+    // Force an immediate snapshot so the "STATUS SNAPSHOT" synthesis report
+    // appears in the Reports tab without waiting for the next SSE tick.
+    pollSnapshot();
+  } else {
+    logActivity(`Report request failed: ${r.body.error ?? r.status}`, "al-err");
+    pushEvent(`⚠ ${r.body.error ?? "Report request failed"}`, "warn");
+  }
 });
 
 /* ══════════════════════════════════════════════════════════════════════════

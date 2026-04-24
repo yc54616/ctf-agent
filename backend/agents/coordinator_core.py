@@ -1298,6 +1298,142 @@ async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, criti
     return f"Intervention sent to {len(bumped)} lane(s) on '{challenge_name}'"
 
 
+async def do_request_status_report(
+    deps: CoordinatorDeps,
+    challenge_name: str,
+    *,
+    prompt_lanes: bool = True,
+) -> str:
+    """Publish a "where are we right now?" report on demand.
+
+    Three things happen when the human presses the report-now button:
+
+    1. **Immediate swarm snapshot**: builds a ``synthesis`` report from the
+       swarm's current state (active lanes, step counts, lifecycle, last
+       advisor notes, flag candidates in review) so the human gets
+       something useful in the Reports tab even if the LLM is slow.
+
+    2. **Lane self-report bumps** (``prompt_lanes=True``): injects a
+       short "summarise your progress" message into every active lane so
+       each solver emits its own ``discovery`` / ``experiment`` / ``blocker``
+       entry on its next step — these arrive asynchronously.
+
+    3. **Async advisor synthesis** (fire-and-forget): if the advisor has
+       any working backend, schedule a consolidated synthesis report in
+       the background so it shows up once the LLM call completes.  No
+       UI wait — the operator keeps using the app, new reports stream in.
+    """
+    swarm = deps.swarms.get(challenge_name)
+    if not swarm:
+        return f"No swarm running for {challenge_name}"
+
+    import time as _time
+
+    # 1) Immediate state snapshot — structured, no LLM in the loop.
+    try:
+        status = swarm.get_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_status failed for %s: %s", challenge_name, exc)
+        status = {}
+    agents = status.get("agents", {}) if isinstance(status, dict) else {}
+    lane_lines: list[str] = []
+    for spec, agent in (agents or {}).items():
+        if not isinstance(agent, dict):
+            continue
+        lifecycle = str(agent.get("lifecycle") or agent.get("status") or "?")
+        steps = int(agent.get("step_count", 0) or 0)
+        cur = str(agent.get("current_command") or agent.get("activity") or "").strip()[:120]
+        finding = str(agent.get("findings") or "").strip()[:300]
+        parts = [f"  • {spec}: {lifecycle}, {steps} steps"]
+        if cur:
+            parts.append(f"    current: {cur}")
+        if finding:
+            parts.append(f"    last finding: {finding}")
+        lane_lines.append("\n".join(parts))
+
+    candidates = status.get("flag_candidates", {}) if isinstance(status, dict) else {}
+    candidate_lines: list[str] = []
+    if isinstance(candidates, dict):
+        for flag, rec in candidates.items():
+            if not isinstance(rec, dict):
+                continue
+            verdict = str(rec.get("advisor_decision") or "").strip() or "pending review"
+            source = ", ".join(rec.get("source_models") or []) if isinstance(rec.get("source_models"), list) else ""
+            candidate_lines.append(f"  • {flag} — verdict: {verdict}{f' (via {source})' if source else ''}")
+
+    publish_report = getattr(swarm, "publish_report", None)
+    if callable(publish_report):
+        body_parts = [f"Human requested status snapshot at {_time.strftime('%H:%M:%S')}"]
+        if lane_lines:
+            body_parts.append("Active lanes:\n" + "\n".join(lane_lines))
+        else:
+            body_parts.append("No active lanes.")
+        if candidate_lines:
+            body_parts.append("Flag candidates:\n" + "\n".join(candidate_lines))
+        last_advisor = str(status.get("coordinator_advisor_note") or status.get("advisor_note") or "").strip()
+        if last_advisor:
+            body_parts.append(f"Last advisor note:\n{last_advisor}")
+        publish_report(
+            kind="synthesis",
+            title=f"STATUS SNAPSHOT — {len(lane_lines)} lane(s), {len(candidate_lines)} candidate(s)",
+            body="\n\n".join(body_parts),
+            lane_id="swarm",
+        )
+
+    # 2) Bump each lane asking for a self-report on the next step.
+    bumped: list[str] = []
+    if prompt_lanes:
+        prompt = (
+            "[HUMAN STATUS REQUEST] Please post a short update via "
+            "notify_coordinator summarising: what you've tried so far, what "
+            "you learned, what you're blocked on, and what you'll try next. "
+            "Keep it under 6 bullets."
+        )
+        for spec, solver in swarm.solvers.items():
+            bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
+            if callable(bump_fn):
+                try:
+                    bump_fn(prompt)
+                    bumped.append(spec)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("status bump failed for %s: %s", spec, exc)
+
+    # 3) Fire-and-forget advisor consolidation (if advisor available + LLM mode).
+    schedule_fn = getattr(swarm, "_schedule_background", None)
+    build_synth = getattr(swarm, "_build_advised_coordinator_message", None)
+    if callable(schedule_fn) and callable(build_synth) and lane_lines:
+        async def _advisor_synth() -> None:
+            try:
+                # Feed the same state snapshot through the advisor so it can
+                # add its own synthesis on top of our mechanical one.
+                message = (
+                    "Human requested a consolidated status report.  Synthesise the "
+                    "following lane state into a coherent narrative: what's been "
+                    "ruled out, what's the best remaining lead, and what should "
+                    "happen next.\n\n"
+                    + "\n".join(lane_lines)
+                )
+                # Use the first active lane's spec as the "source" for the advisor
+                # call (advisor API requires a source_model even for swarm-wide asks).
+                first_lane = next(iter(swarm.solvers.keys()), "swarm")
+                await build_synth(first_lane, message)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("advisor synthesis request failed: %s", exc)
+        try:
+            schedule_fn(_advisor_synth())
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("could not schedule advisor synth: %s", exc)
+
+    logger.info(
+        "Status report requested for %s: snapshot published, bumped %d lane(s)",
+        challenge_name, len(bumped),
+    )
+    return (
+        f"Status snapshot published; bumped {len(bumped)} lane(s) — "
+        "lane self-reports + advisor synthesis will stream into the Reports tab."
+    )
+
+
 async def do_clear_challenge_history(
     deps: CoordinatorDeps,
     challenge_name: str,

@@ -1607,6 +1607,7 @@ async def _start_msg_server(
         do_clear_challenge_history,
         do_mark_challenge_solved,
         do_reject_flag_candidate,
+        do_request_status_report,
         do_restart_challenge,
         do_set_challenge_priority_waiting,
         do_set_max_concurrent_challenges,
@@ -2408,6 +2409,28 @@ async def _start_msg_server(
                     )
                 else:
                     result = await do_advisor_intervene(deps, challenge_name, critique)
+                    if result.startswith("No swarm"):
+                        _json_response("404 Not Found", {"ok": False, "error": result})
+                    else:
+                        _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "POST" and path == "/api/runtime/request-status-report" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                prompt_lanes = bool(data.get("prompt_lanes", True))
+                if not challenge_name:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name is required"},
+                    )
+                else:
+                    result = await do_request_status_report(
+                        deps, challenge_name, prompt_lanes=prompt_lanes,
+                    )
                     if result.startswith("No swarm"):
                         _json_response("404 Not Found", {"ok": False, "error": result})
                     else:
