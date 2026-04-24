@@ -264,13 +264,14 @@
         <div class="intervention-result" id="strategicResult"></div>
       </section>
 
-      <!-- Persistent / standing directives (re-bumped every 30s) -->
+      <!-- Persistent / standing directives (bumped once per add, lives in session memory) -->
       <section class="section">
-        <h3 class="section-title">Standing Directives → All Lanes (persistent)</h3>
+        <h3 class="section-title">Standing Directives → All Lanes</h3>
         <p class="cmd-meta">
-          <strong>Persistent</strong> — added to every lane and re-bumped every ~30 s until revoked,
-          so it stays in context even as the solver's history grows.  Use for rules you want to hold
+          <strong>Standing</strong> — bumped into every lane <em>once</em> when added, then relies
+          on the solver's session memory to keep respecting it.  Use for rules you want to hold
           for the whole session (e.g. <em>"always reply in Korean"</em>, <em>"never call SSRF tools"</em>).
+          If context compaction drops the directive later, revoke and re-add.
         </p>
         <form id="directiveForm">
           <textarea id="directiveInput" rows="2"

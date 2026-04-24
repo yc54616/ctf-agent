@@ -1231,7 +1231,20 @@ def _schedule_advisor_on_operator_message(swarm, *, source_label: str, message: 
                 "in mind when you next synthesise guidance.  No need to act on "
                 "it directly — the solvers have already been bumped."
             )
-            await build_synth(first_lane, prompt)
+            # User-triggered → long timeout so advisor isn't skipped for
+            # "TimeoutError" when Claude needs 30-60s to reply.
+            await build_synth(
+                first_lane,
+                prompt,
+                timeout_seconds=180.0,
+                operation_label="operator-hears-through-advisor",
+            )
+        except TypeError:
+            # Older swarm builds without the timeout kwarg — fall through.
+            try:
+                await build_synth(first_lane, prompt)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("advisor-on-operator-message (legacy) failed: %s", exc)
         except Exception as exc:  # noqa: BLE001
             logger.debug("advisor-on-operator-message failed: %s", exc)
 
@@ -1546,8 +1559,27 @@ async def do_request_status_report(
         async def _advisor_synth() -> None:
             try:
                 # Wait for lane replies to stream in before synthesising.
-                # 35s covers a normal codex step (~20–30s) with headroom.
-                await asyncio.sleep(35.0)
+                # 15s lets fast lanes reply; slower lanes catch the NEXT
+                # Report-now if the operator presses again.  Previously
+                # 35s + up to 180s advisor timeout = 215s total, too long
+                # for an operator who says "시간 거의 없다".
+                await asyncio.sleep(15.0)
+
+                # Clear any stale advisor-timeout backoff for THIS operation
+                # label so a prior slow call doesn't silently skip the
+                # user-triggered one.  Per-operation cooldown, not global,
+                # so this only touches the "report-now synthesis" key.
+                try:
+                    for attr in ("_advisor_timeout_backoff_until",
+                                 "_advisor_timeout_streaks",
+                                 "_advisor_timeout_backoff_buckets"):
+                        bucket = getattr(swarm, attr, None)
+                        if isinstance(bucket, dict):
+                            for key in list(bucket.keys()):
+                                if "report-now" in key:
+                                    bucket.pop(key, None)
+                except Exception:  # noqa: BLE001
+                    pass
 
                 # Re-read the reports AFTER the delay so we pick up the
                 # fresh replies the lanes just posted.
@@ -1624,7 +1656,15 @@ async def do_request_status_report(
                     + ("\n".join(lane_state_lines) if lane_state_lines else "(no active lanes)")
                 )
                 first_lane = active_lanes[0] if active_lanes else "swarm"
-                result = await build_synth(first_lane, synth_prompt)
+                try:
+                    result = await build_synth(
+                        first_lane, synth_prompt,
+                        timeout_seconds=180.0,
+                        operation_label="report-now synthesis",
+                    )
+                except TypeError:
+                    # Older swarms without the timeout kwarg.
+                    result = await build_synth(first_lane, synth_prompt)
                 if not str(result or "").strip() or str(result).strip() == synth_prompt.strip():
                     logger.debug("advisor returned no synthesis for report-now")
             except Exception as exc:  # noqa: BLE001

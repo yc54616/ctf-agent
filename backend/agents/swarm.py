@@ -95,8 +95,17 @@ def _classify_lane_note(message: str) -> str:
         if any(needle in text for needle in needles):
             return kind
     return "lane_note"
-ADVISOR_COORDINATOR_TIMEOUT_SECONDS = 8.0
-ADVISOR_LANE_HINT_TIMEOUT_SECONDS = 30.0
+ADVISOR_COORDINATOR_TIMEOUT_SECONDS = 60.0   # was 8.0 — Claude routinely needs
+                                             # 20-40s for meta prompts (Report-now
+                                             # synthesis, intervene annotations).
+                                             # 8s timed out almost everything.
+ADVISOR_LANE_HINT_TIMEOUT_SECONDS = 90.0     # was 30.0 — lane hints use long
+                                             # context (sibling insights +
+                                             # manifest + artifact previews).
+ADVISOR_USER_TRIGGERED_TIMEOUT_SECONDS = 180.0   # operator presses a button → wait
+                                                 # up to 3 min for the LLM reply
+                                                 # rather than losing it to
+                                                 # timeout skip + backoff.
 ADVISOR_TIMEOUT_BACKOFF_AFTER_CONSECUTIVE_TIMEOUTS = 2
 ADVISOR_TIMEOUT_BACKOFF_BASE_SECONDS = 20.0
 ADVISOR_TIMEOUT_BACKOFF_MAX_SECONDS = 60.0
@@ -3015,11 +3024,31 @@ class ChallengeSwarm:
         if self.flag_candidates:
             await self._persist_runtime_state()
 
-    async def _build_advised_coordinator_message(self, model_spec: str, message: str) -> str:
+    async def _build_advised_coordinator_message(
+        self,
+        model_spec: str,
+        message: str,
+        *,
+        timeout_seconds: float | None = None,
+        operation_label: str = "coordinator annotation",
+    ) -> str:
+        """Run the advisor on a coordinator-bound message.
+
+        Default timeout is ADVISOR_COORDINATOR_TIMEOUT_SECONDS (60 s),
+        long enough for Claude to respond to normal solver notify
+        annotations.  User-triggered paths (Report-now, intervene)
+        should pass ``timeout_seconds=ADVISOR_USER_TRIGGERED_TIMEOUT_SECONDS``
+        (180 s) — they come with larger prompts and the human is
+        explicitly waiting for the result.
+        """
+        effective_timeout = (
+            float(timeout_seconds) if timeout_seconds is not None
+            else ADVISOR_COORDINATOR_TIMEOUT_SECONDS
+        )
         advice = await self._run_advisor_call(
             model_spec,
-            timeout_seconds=ADVISOR_COORDINATOR_TIMEOUT_SECONDS,
-            operation_label="coordinator annotation",
+            timeout_seconds=effective_timeout,
+            operation_label=operation_label,
             call=lambda advisor: advisor.annotate_coordinator_message(
                 source_model=model_spec,
                 challenge_brief=self._advisor_challenge_brief(),
@@ -3654,14 +3683,19 @@ class ChallengeSwarm:
                 solver.bump(advisory_msg)
 
     # ── Standing directives (persistent operator instructions) ─────────────
-    PERSISTENT_DIRECTIVE_INTERVAL_SECONDS = 30.0
-
+    # Note: we intentionally DO NOT re-bump the directive every N seconds —
+    # every re-bump merged the same text into the solver's operator_bump
+    # slot, so after a few ticks the solver saw 10 copies of the same
+    # directive.  Instead: bump exactly once on add, and rely on the
+    # solver's session memory to keep the directive in context.  If
+    # compaction later drops it, the operator can re-add.
     def add_persistent_directive(self, text: str) -> str:
-        """Register a standing directive and bump every lane immediately.
+        """Register a standing directive and bump every lane exactly once.
 
-        The directive is re-bumped every PERSISTENT_DIRECTIVE_INTERVAL_SECONDS
-        by ``_persistent_directive_pump`` so it doesn't age out of context.
-        Returns the directive ID.
+        One-shot bump (no periodic re-pump — that flooded the solver's
+        operator_bump slot with duplicates).  The directive survives in
+        the solver's session memory; if context compaction drops it later,
+        the operator can revoke + re-add.  Returns the directive ID.
         """
         import uuid
         text = str(text or "").strip()
@@ -3695,7 +3729,14 @@ class ChallengeSwarm:
                         "Acknowledge briefly and keep this in mind when you next "
                         "summarise progress or hint any lane."
                     )
-                    await build_synth(first_lane, prompt)
+                    try:
+                        await build_synth(
+                            first_lane, prompt,
+                            timeout_seconds=ADVISOR_USER_TRIGGERED_TIMEOUT_SECONDS,
+                            operation_label="standing-directive ack",
+                        )
+                    except TypeError:
+                        await build_synth(first_lane, prompt)
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("advisor-on-directive failed: %s", exc)
 
@@ -3734,43 +3775,27 @@ class ChallengeSwarm:
             )
         return count
 
-    def _push_directives_now(self, *, reason: str = "reminder") -> None:
+    def _push_directives_now(self, *, reason: str = "added") -> None:
         """Bump every lane with the current directive set right now.
 
-        The ``reason`` flag controls whether the bump demands a visible
-        acknowledgment via notify_coordinator:
-        - "added" (first push when the human registers a new directive) →
-          demand a one-line notify_coordinator ack so the human can see
-          the directive landed.
-        - "reminder" (periodic re-push every 30 s) → just remind, no ack
-          demand (avoids spamming a notify_coordinator call every 30 s).
+        Called exactly once when a directive is added (or explicitly
+        triggered by the operator).  No periodic re-pump — same text
+        every 30s was flooding solver context.
         """
         if not self.persistent_directives:
             return
         bullets = "\n".join(f"  • {d['text']}" for d in self.persistent_directives)
-        if reason == "added":
-            wrapped = (
-                "[STANDING DIRECTIVE — human just added; apply to every "
-                "response from now until revoked]\n"
-                f"{bullets}\n\n"
-                "Acknowledge receipt by calling the `notify_coordinator` "
-                "tool (NOT just agentMessage text — the human's GUI only "
-                "displays notify_coordinator tool calls) with a brief "
-                "confirmation that you will follow this directive.  Then "
-                "continue your current task while keeping the directive in "
-                "mind on every future step."
-            )
-        else:
-            wrapped = (
-                f"[STANDING DIRECTIVES — {reason}; apply to every response "
-                "from now until revoked]\n"
-                f"{bullets}\n\n"
-                "These are persistent instructions from the human operator.  "
-                "Even if older turns in your context don't repeat them, keep "
-                "following them on every step.  No new ack needed unless the "
-                "directive itself asks for one — just respect the directives "
-                "in your next tool calls / notify_coordinator messages."
-            )
+        wrapped = (
+            "[STANDING DIRECTIVE — human just added; apply to every "
+            "response from now until revoked]\n"
+            f"{bullets}\n\n"
+            "Acknowledge receipt by calling the `notify_coordinator` "
+            "tool (NOT just agentMessage text — the human's GUI only "
+            "displays notify_coordinator tool calls) with a brief "
+            "confirmation that you will follow this directive.  Then "
+            "continue your current task while keeping the directive in "
+            "mind on every future step."
+        )
         for spec, solver in self.solvers.items():
             bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
             if callable(bump_fn):
@@ -3778,17 +3803,6 @@ class ChallengeSwarm:
                     bump_fn(wrapped)
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("persistent directive bump failed for %s: %s", spec, exc)
-
-    async def _persistent_directive_pump(self) -> None:
-        """Background loop: re-bump standing directives every ~30 s."""
-        while not self.cancel_event.is_set():
-            await asyncio.sleep(self.PERSISTENT_DIRECTIVE_INTERVAL_SECONDS)
-            if self.cancel_event.is_set():
-                break
-            try:
-                self._push_directives_now(reason="periodic reminder")
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("directive pump iteration failed: %s", exc)
 
     async def _monitor_lane_advisories(self) -> None:
         last_trigger_signature: tuple[object, ...] | None = None
@@ -4543,10 +4557,6 @@ class ChallengeSwarm:
             self._monitor_lane_advisories(),
             name=f"lane-advice-{self.meta.name}",
         )
-        directive_pump = asyncio.create_task(
-            self._persistent_directive_pump(),
-            name=f"directive-pump-{self.meta.name}",
-        )
 
         try:
             while tasks:
@@ -4583,9 +4593,8 @@ class ChallengeSwarm:
         finally:
             artifact_monitor.cancel()
             advisory_monitor.cancel()
-            directive_pump.cancel()
             await asyncio.gather(
-                artifact_monitor, advisory_monitor, directive_pump,
+                artifact_monitor, advisory_monitor,
                 return_exceptions=True,
             )
             self._solver_tasks.difference_update(solver_tasks)
