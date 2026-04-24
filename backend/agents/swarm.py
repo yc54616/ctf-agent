@@ -3712,18 +3712,42 @@ class ChallengeSwarm:
         return count
 
     def _push_directives_now(self, *, reason: str = "reminder") -> None:
-        """Bump every lane with the current directive set right now."""
+        """Bump every lane with the current directive set right now.
+
+        The ``reason`` flag controls whether the bump demands a visible
+        acknowledgment via notify_coordinator:
+        - "added" (first push when the human registers a new directive) →
+          demand a one-line notify_coordinator ack so the human can see
+          the directive landed.
+        - "reminder" (periodic re-push every 30 s) → just remind, no ack
+          demand (avoids spamming a notify_coordinator call every 30 s).
+        """
         if not self.persistent_directives:
             return
         bullets = "\n".join(f"  • {d['text']}" for d in self.persistent_directives)
-        wrapped = (
-            f"[STANDING DIRECTIVES — {reason}; apply to every response from "
-            "now until revoked]\n"
-            f"{bullets}\n\n"
-            "These are persistent instructions from the human operator.  "
-            "Even if older turns in your context don't repeat them, keep "
-            "following them on every step."
-        )
+        if reason == "added":
+            wrapped = (
+                "[STANDING DIRECTIVE — human just added; apply to every "
+                "response from now until revoked]\n"
+                f"{bullets}\n\n"
+                "Acknowledge receipt by calling the `notify_coordinator` "
+                "tool (NOT just agentMessage text — the human's GUI only "
+                "displays notify_coordinator tool calls) with a brief "
+                "confirmation that you will follow this directive.  Then "
+                "continue your current task while keeping the directive in "
+                "mind on every future step."
+            )
+        else:
+            wrapped = (
+                f"[STANDING DIRECTIVES — {reason}; apply to every response "
+                "from now until revoked]\n"
+                f"{bullets}\n\n"
+                "These are persistent instructions from the human operator.  "
+                "Even if older turns in your context don't repeat them, keep "
+                "following them on every step.  No new ack needed unless the "
+                "directive itself asks for one — just respect the directives "
+                "in your next tool calls / notify_coordinator messages."
+            )
         for spec, solver in self.solvers.items():
             bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
             if callable(bump_fn):

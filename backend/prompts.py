@@ -246,9 +246,16 @@ def build_lane_bump_prompt(
     if operator:
         return (
             "Stop your previous line of attack. "
-            "Highest priority guidance from the operator:\n\n"
+            "Highest priority guidance from the HUMAN operator:\n\n"
             f"{insights}\n\n"
-            "Do this first. Verify or refute it before returning to earlier exploration."
+            "IMPORTANT — human visibility: the human watches your "
+            "`notify_coordinator` tool calls, NOT your agentMessage / "
+            "reasoning text.  If the operator asked you a question or told "
+            "you to respond/acknowledge/reply, you MUST emit a "
+            "`notify_coordinator` tool call with the requested message.  "
+            "A one-line notify_coordinator is enough.  After that, do this "
+            "guidance first, then verify or refute it before returning to "
+            "earlier exploration."
         )
     if advisory:
         return (
