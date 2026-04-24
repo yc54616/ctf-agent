@@ -1207,11 +1207,32 @@ async def do_bump_agent(deps: CoordinatorDeps, challenge_name: str, model_spec: 
     solver = swarm.solvers.get(model_spec)
     if not solver:
         return f"No solver for {model_spec} in {challenge_name}"
+    # Append an acknowledge-please clause so the human can see their hint
+    # was actually received — without this, soft hints land silently.
+    tagged = (
+        f"[HUMAN TACTICAL HINT] {str(insights or '').strip()}\n\n"
+        "Acknowledge by posting a one-line notify_coordinator update on "
+        "your very next step ('received — applying …' is fine) so the "
+        "human can confirm delivery."
+    )
     operator_bump = getattr(solver, "bump_operator", None)
     if callable(operator_bump):
-        operator_bump(insights)
+        operator_bump(tagged)
     else:
-        solver.bump(insights)
+        solver.bump(tagged)
+    # Publish the human's bump as a visible report so the operator sees
+    # their own intervention land in the feed.  Without this the message
+    # silently went into the solver's commands queue — if the lane chose
+    # not to respond via notify_coordinator (likely for soft hints), the
+    # operator had zero signal that it was even delivered.
+    publish_report = getattr(swarm, "publish_report", None)
+    if callable(publish_report):
+        publish_report(
+            kind="hint",
+            title=f"[HUMAN → {model_spec}] {str(insights or '').strip()[:160]}",
+            body=str(insights or ""),
+            lane_id=model_spec,
+        )
     return f"Bumped {model_spec} on {challenge_name}"
 
 
@@ -1262,6 +1283,16 @@ async def do_broadcast(deps: CoordinatorDeps, challenge_name: str, message: str)
     if not swarm:
         return f"No swarm running for {challenge_name}"
     await swarm.message_bus.broadcast(message)
+    # Visible receipt in the Reports tab so the operator sees the broadcast
+    # actually went out, even if no lane chooses to echo it back.
+    publish_report = getattr(swarm, "publish_report", None)
+    if callable(publish_report):
+        publish_report(
+            kind="hint",
+            title=f"[HUMAN BROADCAST → all lanes] {str(message or '').strip()[:160]}",
+            body=str(message or ""),
+            lane_id="all lanes",
+        )
     return f"Broadcast to all solvers on {challenge_name}"
 
 
@@ -1285,11 +1316,32 @@ async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, criti
     # Also bump every non-finished lane directly so they pick it up without
     # waiting for the message bus delivery on the next solver turn.
     bumped: list[str] = []
+    stronger_prompt = (
+        "[HUMAN STRATEGIC OVERRIDE] "
+        + critique.strip()
+        + "\n\nAcknowledge this by posting a one-line notify_coordinator "
+        "update on your very next step (even just 'received — pivoting to …' "
+        "is fine) so the human can confirm delivery."
+    )
     for model_spec, solver in swarm.solvers.items():
         bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
         if callable(bump_fn):
-            bump_fn(f"HUMAN STRATEGIC OVERRIDE — re-evaluate your approach: {critique.strip()}")
+            bump_fn(stronger_prompt)
             bumped.append(model_spec)
+
+    # Visible receipt — without this the strategic override was silent
+    # from the operator's perspective.  Now the Reports feed shows the
+    # override immediately; if any lane responds via notify_coordinator the
+    # response lands right underneath as a classified report.
+    publish_report = getattr(swarm, "publish_report", None)
+    if callable(publish_report):
+        publish_report(
+            kind="hint",
+            title=f"[HUMAN STRATEGIC OVERRIDE → {len(bumped)} lane(s)] "
+                  + critique.strip()[:140],
+            body=critique.strip(),
+            lane_id="all lanes",
+        )
 
     logger.info(
         "Human intervention on %s: bumped %d lane(s). Critique: %s",
