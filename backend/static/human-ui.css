@@ -639,6 +639,46 @@ textarea { resize: vertical; }
   color: var(--fg);
 }
 
+/* Standing directives list (Intervene tab, persistent section) */
+.directives-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.directive-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.directive-row .directive-text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+.directive-row .directive-ts {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.directive-row .directive-remove-btn {
+  background: transparent;
+  border: 1px solid var(--red);
+  color: var(--red);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.directive-row .directive-remove-btn:hover { background: rgba(255, 80, 80, 0.15); }
+
 /* Intervene-inactive banner — shown when the selected challenge has no
    active swarm, so the grey Send buttons have a visible explanation. */
 .intervene-inactive-banner {

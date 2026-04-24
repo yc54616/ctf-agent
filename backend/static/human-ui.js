@@ -81,7 +81,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (tab === "advisor"   && S.selectedName) loadAdvisoryHistory();
     if (tab === "health"    && S.selectedName) renderHealth();
     if (tab === "config"    && S.selectedName) loadConfig();
-    if (tab === "intervene")                    renderReports();
+    if (tab === "intervene") { renderReports(); renderDirectives(S.persistentDirectives ?? {}); }
     if (tab === "reports")                      renderSolveReports();
   });
 });
@@ -246,7 +246,8 @@ function applySnapshot(snap) {
   // Cache latest reports for filter toggle + re-render on challenge selection.
   S.advisorReports = snap.advisor_reports ?? [];
   S.solveReports   = snap.solve_reports   ?? [];
-  if (S.activeTab === "intervene") renderReports();
+  S.persistentDirectives = snap.persistent_directives ?? {};
+  if (S.activeTab === "intervene") { renderReports(); renderDirectives(S.persistentDirectives); }
   if (S.activeTab === "reports")   renderSolveReports();
 
   // Keep the CTFd status dot in sync with the background poller — a dot
@@ -635,18 +636,81 @@ $("reportsAllChallenges")?.addEventListener("change", e => {
   renderSolveReports();
 });
 
+/* ══════════════════════════════════════════════════════════════════════════
+   Standing directives (Intervene tab, persistent section)
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderDirectives(all) {
+  const list = $("directivesList");
+  if (!list) return;
+  const name = S.selectedName;
+  const items = (all && name) ? (all[name] ?? []) : [];
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">No standing directives active.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  for (const d of items) {
+    const when = d.added_at ? new Date(d.added_at * 1000).toLocaleTimeString() : "";
+    const row = document.createElement("div");
+    row.className = "directive-row";
+    row.innerHTML = `
+      <div class="directive-text">${esc(d.text || "")}</div>
+      <div class="directive-ts">${esc(when)}</div>
+      <button class="directive-remove-btn" data-id="${esc(d.id || "")}">✗ revoke</button>
+    `;
+    list.appendChild(row);
+  }
+  list.querySelectorAll(".directive-remove-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      if (!name) return;
+      const directiveId = btn.dataset.id;
+      if (!confirm(`Revoke this standing directive?`)) return;
+      const r = await api("/api/runtime/persistent-directive", {
+        method: "DELETE",
+        body: JSON.stringify({ challenge_name: name, id: directiveId }),
+      });
+      if (r.ok) {
+        logActivity(`Directive revoked`, "al-ok");
+        pollSnapshot();
+      } else {
+        flashResult("directiveResult", r.body.error ?? "Revoke failed", false);
+      }
+    });
+  });
+}
+
+$("directiveForm")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  const name = S.selectedName;
+  const text = $("directiveInput").value.trim();
+  if (!name) { flashResult("directiveResult", "Select a challenge first.", false); return; }
+  if (!text) { flashResult("directiveResult", "Type a directive first.", false); return; }
+  $("directiveBtn").disabled = true;
+  const r = await api("/api/runtime/persistent-directive", {
+    method: "POST",
+    body: JSON.stringify({ challenge_name: name, text }),
+  });
+  $("directiveBtn").disabled = false;
+  if (r.ok) {
+    $("directiveInput").value = "";
+    flashResult("directiveResult", `Added — re-bumps every ~30s`, true);
+    logActivity(`Standing directive added → ${name}`, "al-ok");
+    pushEvent(`📌 Standing directive active: ${text.slice(0, 80)}`, "info");
+    pollSnapshot();
+  } else {
+    flashResult("directiveResult", r.body.error ?? "Add failed", false);
+  }
+});
+
 // "Report now" — ask the advisor to aggregate recent lane reports into a
 // human-facing narrative.  Lanes are not interrupted; we rely on whatever
 // they've already posted into deps.solve_reports at their own pace.
 $("requestReportBtn")?.addEventListener("click", async () => {
   const name = S.selectedName;
   if (!name) { flashResult("strategicResult", "Select a challenge first.", false); return; }
-  const ch = S.challenges[name];
-  if (ch?.status !== "active") {
-    logActivity(`Report-now skipped: ${name} has no active swarm`, "al-err");
-    pushEvent(`⚠ Cannot request status report — swarm isn't running`, "warn");
-    return;
-  }
+  // Let the backend decide whether there's a swarm to report on — the
+  // client-side ch.status gate was racy (Intervene had the same bug) and
+  // made the button silently refuse when swarms were actually running.
   const btn = $("requestReportBtn");
   btn.disabled = true;
   const orig = btn.textContent;
@@ -659,7 +723,7 @@ $("requestReportBtn")?.addEventListener("click", async () => {
   btn.textContent = orig;
   if (r.ok) {
     logActivity(`Advisor synthesis requested for ${name}: ${r.body.result ?? "queued"}`, "al-ok");
-    pushEvent(`📊 Advisor synthesising from recent lane reports — result in 5–30s. Lanes were NOT interrupted.`, "info");
+    pushEvent(`📊 ${r.body.result ?? "Advisor synthesising"} — result lands in the Reports tab (5–30s).`, "info");
   } else {
     logActivity(`Report request failed: ${r.body.error ?? r.status}`, "al-err");
     pushEvent(`⚠ ${r.body.error ?? "Report request failed"}`, "warn");

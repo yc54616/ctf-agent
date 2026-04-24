@@ -1404,6 +1404,23 @@ async def do_request_status_report(
     if not recent and not active_lanes:
         return "Nothing to synthesise — no lane reports yet and no active lanes"
 
+    # Visible receipt: publish a hint report the moment the request lands so
+    # the operator sees the click went somewhere, even if advisor synthesis
+    # ends up failing or taking minutes.
+    publish_report = getattr(swarm, "publish_report", None)
+    if callable(publish_report):
+        publish_report(
+            kind="hint",
+            title=f"[HUMAN REPORT-NOW request] aggregating {len(recent)} report(s) for advisor",
+            body=(
+                f"Operator pressed Report-now at {__import__('time').strftime('%H:%M:%S')}. "
+                f"Feeding {len(recent)} recent report(s) + {len(active_lanes)} "
+                "lane state(s) to the advisor.  Synthesis will appear in the "
+                "Reports tab as a 'synthesis' entry when the LLM call completes."
+            ),
+            lane_id="swarm",
+        )
+
     async def _advisor_synth() -> None:
         import time as _time
         try:
@@ -1457,9 +1474,35 @@ async def do_request_status_report(
             # _build_advised_coordinator_message publishes the advisor's reply
             # as a kind="synthesis" report via swarm.publish_report — that's
             # the entry the human will see.
-            await build_synth(first_lane, prompt)
+            result = await build_synth(first_lane, prompt)
+            # If the advisor returned empty / failed silently, surface that to
+            # the human so Report-now doesn't look like it's been eaten.
+            tail = str(result or "").strip()
+            if tail == str(prompt or "").strip() or not tail:
+                # build_synth returns the original message unchanged when the
+                # advisor produced no advice — publish an explanatory entry.
+                if callable(publish_report):
+                    publish_report(
+                        kind="synthesis",
+                        title="[advisor returned no synthesis]",
+                        body=(
+                            "The advisor ran but produced no output.  Likely "
+                            "causes: Claude rate limit, Claude auth missing "
+                            "(advisor unavailable), or not enough lane "
+                            "reports to analyse yet.  Check the server log "
+                            "for 'advisor unavailable' / rate-limit messages."
+                        ),
+                        lane_id="swarm",
+                    )
         except Exception as exc:  # noqa: BLE001
-            logger.debug("human-facing status synthesis failed: %s", exc)
+            logger.warning("human-facing status synthesis failed: %s", exc)
+            if callable(publish_report):
+                publish_report(
+                    kind="synthesis",
+                    title=f"[advisor synthesis error] {type(exc).__name__}",
+                    body=f"{type(exc).__name__}: {exc}",
+                    lane_id="swarm",
+                )
 
     try:
         schedule_fn(_advisor_synth())
@@ -1475,6 +1518,63 @@ async def do_request_status_report(
         f"lane report(s) + {len(active_lanes)} active lane state(s). "
         "Reports tab will show the result when the LLM call returns (5–30s)."
     )
+
+
+async def do_add_persistent_directive(
+    deps: CoordinatorDeps, challenge_name: str, text: str,
+) -> dict[str, Any]:
+    """Register a standing directive on an active swarm.
+
+    Unlike Strategic Override / Tactical Hint (one-shot), a standing
+    directive is re-bumped every ~30 s so it stays in the solvers'
+    recent context until the operator revokes it.
+    """
+    swarm = deps.swarms.get(challenge_name)
+    if not swarm:
+        return {"ok": False, "error": f"No swarm running for {challenge_name}"}
+    text = str(text or "").strip()
+    if not text:
+        return {"ok": False, "error": "text is required"}
+    add_fn = getattr(swarm, "add_persistent_directive", None)
+    if not callable(add_fn):
+        return {"ok": False, "error": "Swarm doesn't support standing directives"}
+    directive_id = add_fn(text)
+    return {
+        "ok": True,
+        "id": directive_id,
+        "directives": list(getattr(swarm, "persistent_directives", [])),
+    }
+
+
+async def do_remove_persistent_directive(
+    deps: CoordinatorDeps, challenge_name: str, directive_id: str,
+) -> dict[str, Any]:
+    """Remove a specific standing directive by ID."""
+    swarm = deps.swarms.get(challenge_name)
+    if not swarm:
+        return {"ok": False, "error": f"No swarm running for {challenge_name}"}
+    remove_fn = getattr(swarm, "remove_persistent_directive", None)
+    if not callable(remove_fn):
+        return {"ok": False, "error": "Swarm doesn't support standing directives"}
+    found = remove_fn(directive_id)
+    return {
+        "ok": True,
+        "removed": found,
+        "directives": list(getattr(swarm, "persistent_directives", [])),
+    }
+
+
+async def do_list_persistent_directives(
+    deps: CoordinatorDeps, challenge_name: str,
+) -> dict[str, Any]:
+    """Return the current standing directives for a challenge."""
+    swarm = deps.swarms.get(challenge_name)
+    if not swarm:
+        return {"ok": False, "error": f"No swarm running for {challenge_name}"}
+    return {
+        "ok": True,
+        "directives": list(getattr(swarm, "persistent_directives", [])),
+    }
 
 
 async def do_clear_challenge_history(

@@ -954,6 +954,11 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "known_challenges": _known_challenges_snapshot(deps),
         "advisor_reports": list(getattr(deps, "advisor_reports", []))[-30:],
         "solve_reports": list(getattr(deps, "solve_reports", []))[-80:],
+        "persistent_directives": {
+            name: list(getattr(swarm, "persistent_directives", []) or [])
+            for name, swarm in deps.swarms.items()
+            if getattr(swarm, "persistent_directives", None)
+        },
         "results": results,
         "known_challenge_count": legacy.get("known_challenge_count", 0),
         "known_solved_count": legacy.get("known_solved_count", 0),
@@ -1601,12 +1606,15 @@ async def _start_msg_server(
     """Start a tiny HTTP server that accepts operator messages and exposes status."""
 
     from backend.agents.coordinator_core import (
+        do_add_persistent_directive,
         do_advisor_intervene,
         do_approve_flag_candidate,
         do_bump_agent,
         do_clear_challenge_history,
+        do_list_persistent_directives,
         do_mark_challenge_solved,
         do_reject_flag_candidate,
+        do_remove_persistent_directive,
         do_request_status_report,
         do_restart_challenge,
         do_set_challenge_priority_waiting,
@@ -2413,6 +2421,56 @@ async def _start_msg_server(
                         _json_response("404 Not Found", {"ok": False, "error": result})
                     else:
                         _json_response("200 OK", {"ok": True, "result": result})
+
+            elif method == "GET" and path == "/api/runtime/persistent-directives":
+                challenge_name = str(query.get("challenge_name", "")).strip()
+                if not challenge_name:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name is required"},
+                    )
+                else:
+                    result = await do_list_persistent_directives(deps, challenge_name)
+                    status_code = "200 OK" if result.get("ok") else "404 Not Found"
+                    _json_response(status_code, result)
+
+            elif method == "POST" and path == "/api/runtime/persistent-directive" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                text = str(data.get("text", "") or data.get("directive", "")).strip()
+                if not challenge_name or not text:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and text are required"},
+                    )
+                else:
+                    result = await do_add_persistent_directive(deps, challenge_name, text)
+                    status_code = "200 OK" if result.get("ok") else "404 Not Found"
+                    _json_response(status_code, result)
+
+            elif method == "DELETE" and path == "/api/runtime/persistent-directive" and content_length > 0:
+                body = await asyncio.wait_for(reader.read(content_length), timeout=5)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                challenge_name = str(data.get("challenge_name", "")).strip()
+                directive_id = str(data.get("id", "") or data.get("directive_id", "")).strip()
+                if not challenge_name or not directive_id:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "challenge_name and id are required"},
+                    )
+                else:
+                    result = await do_remove_persistent_directive(
+                        deps, challenge_name, directive_id,
+                    )
+                    status_code = "200 OK" if result.get("ok") else "404 Not Found"
+                    _json_response(status_code, result)
 
             elif method == "POST" and path == "/api/runtime/request-status-report" and content_length > 0:
                 body = await asyncio.wait_for(reader.read(content_length), timeout=5)
