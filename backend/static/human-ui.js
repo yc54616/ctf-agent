@@ -643,11 +643,11 @@ $("requestReportBtn")?.addEventListener("click", async () => {
   btn.disabled = false;
   btn.textContent = orig;
   if (r.ok) {
-    logActivity(`Status report requested for ${name}`, "al-ok");
-    pushEvent(`📊 Status report requested — synthesis + lane self-reports incoming`, "info");
-    // Force an immediate snapshot so the "STATUS SNAPSHOT" synthesis report
-    // appears in the Reports tab without waiting for the next SSE tick.
-    pollSnapshot();
+    logActivity(`Report requested for ${name}: ${r.body.result ?? "queued"}`, "al-ok");
+    // Every entry from this path is real LLM output (lane self-reports write
+    // into the feed as each solver's next step returns; advisor synthesis
+    // arrives when its LLM call completes).  No mechanical snapshot.
+    pushEvent(`📊 Report requested — lanes will pause → report → resume. Expect entries in 5–30s.`, "info");
   } else {
     logActivity(`Report request failed: ${r.body.error ?? r.status}`, "al-err");
     pushEvent(`⚠ ${r.body.error ?? "Report request failed"}`, "warn");
