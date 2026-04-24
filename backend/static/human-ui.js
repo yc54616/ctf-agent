@@ -622,7 +622,9 @@ $("reportsAllChallenges")?.addEventListener("change", e => {
   renderSolveReports();
 });
 
-// "Report now" — ask every lane for a self-report + advisor synthesis
+// "Report now" — ask the advisor to aggregate recent lane reports into a
+// human-facing narrative.  Lanes are not interrupted; we rely on whatever
+// they've already posted into deps.solve_reports at their own pace.
 $("requestReportBtn")?.addEventListener("click", async () => {
   const name = S.selectedName;
   if (!name) { flashResult("strategicResult", "Select a challenge first.", false); return; }
@@ -635,19 +637,16 @@ $("requestReportBtn")?.addEventListener("click", async () => {
   const btn = $("requestReportBtn");
   btn.disabled = true;
   const orig = btn.textContent;
-  btn.textContent = "⏳ Requesting…";
+  btn.textContent = "⏳ Synthesising…";
   const r = await api("/api/runtime/request-status-report", {
     method: "POST",
-    body: JSON.stringify({ challenge_name: name, prompt_lanes: true }),
+    body: JSON.stringify({ challenge_name: name, report_window: 40 }),
   });
   btn.disabled = false;
   btn.textContent = orig;
   if (r.ok) {
-    logActivity(`Report requested for ${name}: ${r.body.result ?? "queued"}`, "al-ok");
-    // Every entry from this path is real LLM output (lane self-reports write
-    // into the feed as each solver's next step returns; advisor synthesis
-    // arrives when its LLM call completes).  No mechanical snapshot.
-    pushEvent(`📊 Report requested — lanes will pause → report → resume. Expect entries in 5–30s.`, "info");
+    logActivity(`Advisor synthesis requested for ${name}: ${r.body.result ?? "queued"}`, "al-ok");
+    pushEvent(`📊 Advisor synthesising from recent lane reports — result in 5–30s. Lanes were NOT interrupted.`, "info");
   } else {
     logActivity(`Report request failed: ${r.body.error ?? r.status}`, "al-err");
     pushEvent(`⚠ ${r.body.error ?? "Report request failed"}`, "warn");
