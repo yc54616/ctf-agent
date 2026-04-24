@@ -701,9 +701,17 @@ $("parseForm").addEventListener("submit", async e => {
   const r = await api("/api/runtime/parse-challenge-url", { method: "POST", body: JSON.stringify({ url }) });
   if (r.ok) {
     const n = r.body.challenges?.length ?? 0;
-    res.textContent = `Found ${n} challenge(s)${r.body.competition_name ? " — " + r.body.competition_name : ""}.`;
-    res.className   = "parse-result ok";
-    logActivity(`Parsed: ${n} challenges`, "al-ok");
+    const auth = r.body.auth_used ?? {};
+    const authLabel = auth.cookie || auth.token
+      ? ` [auth: ${[auth.cookie ? "cookie" : "", auth.token ? "token" : ""].filter(Boolean).join("+")}]`
+      : " [no auth]";
+    const compLabel = r.body.competition_name ? " — " + r.body.competition_name : "";
+    res.textContent = `Found ${n} challenge(s)${compLabel}${authLabel}`;
+    res.className   = "parse-result " + (n === 0 ? "error" : "ok");
+    if (n === 0 && !(auth.cookie || auth.token)) {
+      res.textContent += " — try Fetch instead, or paste a session cookie in CTFd Connection first.";
+    }
+    logActivity(`Parsed: ${n} challenges${authLabel}`, n === 0 ? "al-err" : "al-ok");
   } else {
     res.textContent = r.body.error ?? r.body.detail ?? "Parse failed";
     res.className   = "parse-result error";

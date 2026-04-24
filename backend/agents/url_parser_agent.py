@@ -73,15 +73,27 @@ _FETCH_TIMEOUT = 15
 _MAX_TEXT_FOR_LLM = 14_000  # chars sent to LLM — keeps prompt cost low
 
 
-def _fetch_url(url: str) -> tuple[str, str]:
-    """Return (content_type, body_text).  Raises RuntimeError on failure."""
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (CTF-Agent/1.0; challenge-parser)",
-            "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
-        },
-    )
+def _fetch_url(url: str, *, cookie_header: str = "", auth_token: str = "") -> tuple[str, str]:
+    """Return (content_type, body_text).  Raises RuntimeError on failure.
+
+    Args:
+        url: Any http(s) URL.
+        cookie_header: Raw Cookie header value to attach for authenticated
+            requests (e.g. a CTFd session cookie so the challenges page
+            returns actual challenges instead of a login redirect).
+        auth_token: Optional CTFd API token — attached as ``Authorization:
+            Token <value>`` when set.  Ignored for non-CTFd hosts, but sending
+            an unrelated Authorization header is generally harmless.
+    """
+    headers: dict[str, str] = {
+        "User-Agent": "Mozilla/5.0 (CTF-Agent/1.0; challenge-parser)",
+        "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
+    }
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+    if auth_token:
+        headers["Authorization"] = f"Token {auth_token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
             content_type: str = resp.headers.get_content_type() or "text/plain"
@@ -252,13 +264,22 @@ def _render_markdown(parsed: dict[str, Any]) -> str:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-async def parse_challenge_url(url: str) -> dict[str, Any]:
+async def parse_challenge_url(
+    url: str,
+    *,
+    cookie_header: str = "",
+    auth_token: str = "",
+) -> dict[str, Any]:
     """Fetch a URL and return structured CTF challenge data.
 
     Args:
         url: Any URL pointing to CTF challenge(s).  Works for CTFd challenge
              pages, DreamHack problem pages, GitHub repos with a README, raw
              text pages, etc.
+        cookie_header: Optional raw Cookie header for authenticated fetches
+             (e.g. a CTFd session cookie so a private challenges page
+             returns real content instead of a login redirect).
+        auth_token: Optional CTFd API token.
 
     Returns:
         A dict with:
@@ -267,12 +288,18 @@ async def parse_challenge_url(url: str) -> dict[str, Any]:
           - ``source_url``        the original URL
           - ``raw_text_preview``  first 500 chars of the scraped text
           - ``markdown_summary``  human-readable markdown (for the operator UI)
+          - ``auth_used``         dict describing which auth inputs were used
           - ``error``             only present on fetch / parse failure
     """
+    auth_used = {
+        "cookie": bool(cookie_header),
+        "token": bool(auth_token),
+    }
     # Step 1: fetch
     try:
         content_type, raw_body = await asyncio.get_running_loop().run_in_executor(
-            None, _fetch_url, url
+            None,
+            lambda: _fetch_url(url, cookie_header=cookie_header, auth_token=auth_token),
         )
     except RuntimeError as exc:
         logger.warning("url_parser: fetch failed for %s: %s", url, exc)
@@ -282,6 +309,7 @@ async def parse_challenge_url(url: str) -> dict[str, Any]:
             "challenges": [],
             "markdown_summary": f"Failed to fetch URL: {exc}",
             "raw_text_preview": "",
+            "auth_used": auth_used,
         }
 
     # Step 2: normalise to plain text
@@ -304,4 +332,5 @@ async def parse_challenge_url(url: str) -> dict[str, Any]:
     parsed["source_url"] = url
     parsed["raw_text_preview"] = raw_text_preview
     parsed["markdown_summary"] = _render_markdown(parsed)
+    parsed["auth_used"] = auth_used
     return parsed
