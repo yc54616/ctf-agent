@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import Callable, Coroutine
 from pathlib import Path
@@ -163,6 +164,60 @@ def _snapshot_ui_alerts(deps: CoordinatorDeps) -> list[dict[str, Any]]:
         deps.ui_alerts.clear()
         deps.ui_alerts.extend(active_alerts)
     return active_alerts
+
+
+def _capture_advisor_report(deps: CoordinatorDeps, event: object) -> None:
+    """Extract advisor-relevant portions of an inbox event into ``deps.advisor_reports``.
+
+    Runs on every drained event (in addition to existing processing).  Entries
+    are used by the human UI's "Advisor Reports" panel so the operator sees
+    real-time strategic notes alongside the intervene controls.  Silent no-op
+    when the event carries no advisor signal.
+    """
+    log = getattr(deps, "advisor_reports", None)
+    if log is None:
+        return
+
+    def _push(record: dict[str, Any]) -> None:
+        record.setdefault("ts", time.time())
+        log.append(record)
+
+    if isinstance(event, CoordinatorNoteRef):
+        summary = str(event.summary or "")
+        advisor_idx = summary.find("[Advisor]")
+        if advisor_idx < 0:
+            return
+        advisor_text = summary[advisor_idx + len("[Advisor]"):].strip()
+        solver_text = summary[:advisor_idx].strip()
+        if not advisor_text:
+            return
+        _push(
+            {
+                "ts": float(getattr(event, "timestamp", 0.0)) or time.time(),
+                "challenge_name": str(event.challenge_name or ""),
+                "lane_id": str(event.source_model or ""),
+                "kind": "coordinator_annotation",
+                "text": advisor_text[:1500],
+                "context": solver_text[:500],
+            }
+        )
+        return
+
+    if isinstance(event, CandidateRef):
+        decision = str(getattr(event, "advisor_decision", "") or "").strip()
+        note = str(getattr(event, "advisor_note", "") or "").strip()
+        if not (decision or note):
+            return
+        _push(
+            {
+                "challenge_name": str(event.challenge_name or ""),
+                "lane_id": ", ".join(getattr(event, "source_models", []) or []),
+                "kind": "candidate_review",
+                "advisor_decision": decision or "insufficient",
+                "flag": str(getattr(event, "flag", "") or ""),
+                "text": (note or f"Flag {event.flag!r}: {decision or 'insufficient'}")[:1500],
+            }
+        )
 
 
 def _capture_solver_ui_alert(deps: CoordinatorDeps, event: object) -> bool:
@@ -556,6 +611,10 @@ async def run_event_loop(
             while True:
                 try:
                     solver_msg = deps.coordinator_inbox.get_nowait()
+                    # Mirror any advisor signal into deps.advisor_reports for the
+                    # human UI's reports panel (non-destructive — runs before
+                    # other processing).
+                    _capture_advisor_report(deps, solver_msg)
                     if _capture_solver_ui_alert(deps, solver_msg):
                         continue
                     parts.append(_render_solver_message(solver_msg))
@@ -879,6 +938,8 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "finished_swarms": finished,
         "pending_challenges": legacy.get("pending_challenges", []),
         "pending_challenge_entries": legacy.get("pending_challenge_entries", []),
+        "known_challenges": _known_challenges_snapshot(deps),
+        "advisor_reports": list(getattr(deps, "advisor_reports", []))[-30:],
         "results": results,
         "known_challenge_count": legacy.get("known_challenge_count", 0),
         "known_solved_count": legacy.get("known_solved_count", 0),
@@ -936,6 +997,152 @@ def _pending_swarms_snapshot(
             },
         }
     return pending
+
+
+async def _auto_import_remote_challenges(
+    deps: CoordinatorDeps,
+    remote_challenges: list[dict[str, Any]],
+    *,
+    concurrency: int = 4,
+) -> dict[str, Any]:
+    """Pull each remote CTFd challenge to disk and refresh deps state.
+
+    Skips challenges that are already present in ``deps.challenge_dirs``.
+    Uses ``deps.ctfd.pull_challenge`` which writes ``metadata.yml`` +
+    downloads attachments under ``distfiles/`` per challenge.
+
+    Returns a summary dict:
+      - imported: list of newly-imported challenge names
+      - skipped:  list of already-on-disk names
+      - failed:   list of (name, error) tuples
+    """
+    from urllib.parse import urlsplit
+
+    from backend.challenge_config import (
+        discover_challenge_dirs,
+        load_effective_metadata,
+        refresh_effective_metadata,
+    )
+    from backend.prompts import ChallengeMeta
+
+    host = ""
+    try:
+        host = str(urlsplit(getattr(deps.ctfd, "base_url", "") or "").hostname or "")
+    except Exception:
+        host = ""
+    host_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", host).strip("-") or "fetched"
+
+    target_root = Path(deps.challenges_root).resolve() / host_slug
+    target_root.mkdir(parents=True, exist_ok=True)
+
+    pull_fn = getattr(deps.ctfd, "pull_challenge", None)
+    if not callable(pull_fn):
+        return {
+            "imported": [],
+            "skipped": [],
+            "failed": [],
+            "error": "Platform client does not support pull_challenge (auto-import unavailable)",
+        }
+
+    # Diff: only pull challenges not already known to deps.
+    to_pull: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for ch in remote_challenges:
+        name = str(ch.get("name") or "").strip()
+        if not name:
+            continue
+        if name in deps.challenge_dirs:
+            skipped.append(name)
+            continue
+        to_pull.append(ch)
+
+    imported: list[str] = []
+    failed: list[tuple[str, str]] = []
+
+    if not to_pull:
+        return {"imported": imported, "skipped": skipped, "failed": failed}
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _pull_one(ch: dict[str, Any]) -> None:
+        name = str(ch.get("name") or "").strip() or "?"
+        async with sem:
+            try:
+                await asyncio.wait_for(pull_fn(ch, str(target_root)), timeout=120)
+                imported.append(name)
+            except Exception as exc:  # noqa: BLE001 — bubble up per-challenge failure
+                logger.warning("auto-import: %s failed: %s", name, exc)
+                failed.append((name, str(exc)))
+
+    await asyncio.gather(*(_pull_one(ch) for ch in to_pull), return_exceptions=False)
+
+    # Refresh deps with newly imported challenges.
+    for challenge_dir in discover_challenge_dirs(deps.challenges_root):
+        try:
+            refresh_effective_metadata(challenge_dir)
+            meta = ChallengeMeta.from_dict(load_effective_metadata(challenge_dir))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("auto-import: could not load meta at %s: %s", challenge_dir, exc)
+            continue
+        if meta.name not in deps.challenge_dirs:
+            deps.challenge_dirs[meta.name] = str(challenge_dir)
+            deps.challenge_metas[meta.name] = meta
+
+    # Clear remote cache entries that are now on disk — they'll be surfaced as
+    # local records by _known_challenges_snapshot instead.
+    for name in imported:
+        deps.remote_challenge_cache.pop(name, None)
+
+    return {"imported": imported, "skipped": skipped, "failed": failed}
+
+
+def _known_challenges_snapshot(deps: CoordinatorDeps) -> list[dict[str, Any]]:
+    """Return every challenge known to deps (on-disk metas + cached remote fetches).
+
+    This lets the human-mode UI display challenges that haven't been spawned yet,
+    including ones pulled in by the Fetch button but not yet imported to disk.
+    Entries carry a `source` field ("local" / "remote") so the UI can style them.
+    """
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # 1) Challenges discovered on disk (via discover_challenge_dirs).
+    for name, meta in deps.challenge_metas.items():
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        records.append(
+            {
+                "name": name,
+                "category": str(getattr(meta, "category", "") or ""),
+                "value": int(getattr(meta, "value", 0) or 0),
+                "description": str(getattr(meta, "description", "") or "")[:400],
+                "source": "local",
+                "local_preloaded": name in deps.challenge_dirs,
+            }
+        )
+
+    # 2) Remote-only challenges cached by the most recent Fetch call
+    #    (raw CTFd dicts — description may be HTML; category/value fields
+    #    are preserved as-is from the platform).
+    platform_label = str(getattr(deps.ctfd, "platform", "") or "remote")
+    for name, record in getattr(deps, "remote_challenge_cache", {}).items():
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        records.append(
+            {
+                "name": str(name),
+                "category": str(record.get("category") or ""),
+                "value": int(record.get("value", 0) or 0),
+                "description": str(record.get("description") or "")[:400],
+                "source": platform_label,
+                "local_preloaded": False,
+            }
+        )
+
+    records.sort(key=lambda r: (r.get("category", ""), r.get("name", "")))
+    return records
 
 
 def _refresh_challenge_meta(deps: CoordinatorDeps, challenge_name: str) -> ChallengeMeta | None:
@@ -1427,14 +1634,43 @@ async def _start_msg_server(
 
             # ── Human-coordinator endpoints ────────────────────────────────────
             elif method == "GET" and path == "/api/runtime/fetch-challenges":
-                # Fetch all challenges from the platform (CTFd) or local dirs.
+                # Fetch all challenges from the platform (CTFd) or local dirs,
+                # then auto-import remote ones to disk so they're spawnable
+                # without a separate `ctf-import` run.
                 from backend.agents.coordinator_core import do_fetch_challenges
+                auto_import = str(query.get("import", "1")).lower() not in {"0", "false", "no"}
                 try:
                     result_json = await asyncio.wait_for(do_fetch_challenges(deps), timeout=30)
                     challenges_list = json.loads(result_json)
+
+                    summary: dict[str, Any] = {"imported": [], "skipped": [], "failed": []}
+                    if auto_import and not deps.local_mode and deps.remote_challenge_cache:
+                        # Feed the RAW challenge dicts (files / hints / connection_info
+                        # intact) from the cache to pull_challenge — the summarised
+                        # challenges_list is lossy (e.g. description truncated to 200 ch).
+                        raw_remote = list(deps.remote_challenge_cache.values())
+                        try:
+                            summary = await asyncio.wait_for(
+                                _auto_import_remote_challenges(deps, raw_remote),
+                                timeout=300,
+                            )
+                        except asyncio.TimeoutError:
+                            summary = {
+                                "imported": [],
+                                "skipped": [],
+                                "failed": [],
+                                "error": "Auto-import timed out (>5 min); partial results may be on disk",
+                            }
+
                     _json_response(
                         "200 OK",
-                        {"ok": True, "challenges": challenges_list, "count": len(challenges_list)},
+                        {
+                            "ok": True,
+                            "challenges": challenges_list,
+                            "count": len(challenges_list),
+                            "auto_import": auto_import,
+                            "import_summary": summary,
+                        },
                     )
                 except asyncio.TimeoutError:
                     _json_response("504 Gateway Timeout", {"error": "Challenge fetch timed out (>30 s)"})

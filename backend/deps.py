@@ -89,3 +89,15 @@ class CoordinatorDeps:
     human_event_log: asyncio.Queue = field(
         default_factory=lambda: asyncio.Queue(maxsize=500)
     )
+    # Last CTFd /api/v1/challenges payload cached by the Fetch button, so the UI
+    # can surface remote-only challenges that aren't yet imported to disk.
+    # Key is challenge name, value is the raw record dict (name, category, value, …).
+    remote_challenge_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    # Structured advisor / solver reports for the human UI.  Populated from the
+    # coordinator_inbox drain loop in run_event_loop — each entry carries
+    # {ts, challenge_name, lane_id, kind, text, advisor_decision?}.
+    # maxlen=200 — older entries drop off as new reports arrive.
+    advisor_reports: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=200)
+    )

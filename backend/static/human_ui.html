@@ -129,6 +129,25 @@
 
     <!-- TAB: Intervene -->
     <div class="tab-pane" id="tab-intervene">
+      <!-- Live advisor reports — co-located with intervene forms so the
+           operator can read the strategic signal and reply on the same page. -->
+      <section class="section" id="reportsSection">
+        <h3 class="section-title">
+          Advisor Reports (live)
+          <span class="section-controls">
+            <label class="checkbox-label" style="font-size:12px"><input type="checkbox" id="reportsThisChallengeOnly" checked> this challenge only</label>
+          </span>
+        </h3>
+        <p class="cmd-meta">
+          Strategic notes and candidate reviews from the advisor, streamed as
+          each solver turn completes.  Click <strong>Reply to lane</strong> on
+          any report to preload the tactical hint form below with that lane.
+        </p>
+        <div class="reports-list" id="reportsList">
+          <div class="empty">Waiting for advisor reports…</div>
+        </div>
+      </section>
+
       <!-- Strategic override → advisor -->
       <section class="section">
         <h3 class="section-title">Strategic Override → Advisor + All Lanes</h3>

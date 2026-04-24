@@ -398,6 +398,13 @@ async def do_fetch_challenges(deps: CoordinatorDeps) -> str:
         return json.dumps(result, indent=2)
 
     solved |= restored_solved
+    # Cache the RAW remote challenge dicts (with files/hints/connection_info)
+    # so the Fetch button's auto-import step can feed them to pull_challenge.
+    deps.remote_challenge_cache = {
+        str(ch.get("name", "")): ch
+        for ch in challenges
+        if ch.get("name")
+    }
     result = [
         {
             "name": ch.get("name", "?"),

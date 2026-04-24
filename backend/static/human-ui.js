@@ -16,6 +16,7 @@ const S = {
   pollTimer: null,
   activeTab: "overview",
   queueOpen: false,
+  advisorReports: [],
 };
 
 const $ = id => document.getElementById(id);
@@ -71,9 +72,10 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     S.activeTab = tab;
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".tab-pane").forEach(p => p.classList.toggle("active", p.id === "tab-" + tab));
-    if (tab === "advisor" && S.selectedName) loadAdvisoryHistory();
-    if (tab === "health"  && S.selectedName) renderHealth();
-    if (tab === "config"  && S.selectedName) loadConfig();
+    if (tab === "advisor"   && S.selectedName) loadAdvisoryHistory();
+    if (tab === "health"    && S.selectedName) renderHealth();
+    if (tab === "config"    && S.selectedName) loadConfig();
+    if (tab === "intervene")                    renderReports();
   });
 });
 
@@ -160,6 +162,8 @@ function buildChallenges(snap) {
       if (!out[name]) out[name] = {
         name, status: chStatus(sw, null),
         category: sw?.category ?? "", points: sw?.points ?? null,
+        source: "local",
+        local_preloaded: true,
         lanes: mkLanes(sw?.agents ?? {}),
         flag_candidates: mkCandidates(sw?.flag_candidates ?? {}),
         shared_findings: mkFindings(sw?.shared_findings ?? {}),
@@ -171,11 +175,28 @@ function buildChallenges(snap) {
       out[name] = {
         name, status: chStatus(null, result),
         category: result?.category ?? "", points: result?.points ?? null,
+        source: "local",
+        local_preloaded: true,
         lanes: [],
         flag_candidates: mkCandidates(result?.flag_candidates ?? {}),
         shared_findings: mkFindings(result?.shared_findings ?? {}),
       };
     }
+  }
+  // Idle/not-yet-spawned challenges: on-disk metas + remote-fetched cache.
+  for (const entry of (snap.known_challenges ?? [])) {
+    const name = entry?.name; if (!name || out[name]) continue;
+    out[name] = {
+      name,
+      status: "idle",
+      category: entry.category ?? "",
+      points: entry.value ?? null,
+      source: entry.source ?? "local",
+      local_preloaded: !!entry.local_preloaded,
+      lanes: [],
+      flag_candidates: [],
+      shared_findings: [],
+    };
   }
   return out;
 }
@@ -215,6 +236,9 @@ function applySnapshot(snap) {
 
   renderChallengeList();
   renderQueue(snap.pending_challenge_entries ?? []);
+  // Cache latest reports for filter toggle + re-render on challenge selection.
+  S.advisorReports = snap.advisor_reports ?? [];
+  if (S.activeTab === "intervene") renderReports();
 
   if (S.selectedName && S.challenges[S.selectedName]) {
     renderCenterPanel(S.challenges[S.selectedName]);
@@ -241,10 +265,14 @@ function renderChallengeList() {
     const item   = document.createElement("div");
     item.className    = "challenge-item" + (name === S.selectedName ? " active" : "");
     item.dataset.name = name;
+    // Remote-only = discovered via CTFd but not yet on disk (auto-import failed
+    // or was skipped).  Spawn would fail without a challenge_dir.
+    const isRemoteOnly = !ch.local_preloaded && ch.status === "idle";
     item.innerHTML = `
       <span class="ch-status-dot ${chStatusCls(ch.status)}"></span>
-      <span class="ch-name" title="${esc(name)}">${esc(name)}</span>
+      <span class="ch-name" title="${esc(name)}${isRemoteOnly ? " (remote-only — import failed; re-click Fetch)" : ""}">${esc(name)}</span>
       ${ch.category ? `<span class="ch-cat">${esc(ch.category)}</span>` : ""}
+      ${isRemoteOnly ? `<span class="ch-cat" style="color:var(--purple)" title="Not yet imported to disk">☁</span>` : ""}
       ${staleN > 0 ? `<span class="ch-cat" style="color:var(--orange)">⚠${staleN}</span>` : ""}
       ${ch.points ? `<span class="ch-pts">${ch.points}pt</span>` : ""}
     `;
@@ -302,18 +330,21 @@ function selectChallenge(name) {
 function enableCommands(name, ch) {
   const solved = ch.status === "solved";
   const active = ch.status === "active";
+  const remoteOnly = !ch.local_preloaded && ch.status === "idle";
   $("selectedBadge").textContent  = name;
   $("selectedBadge").style.display = "";
-  $("swarmMeta").textContent = `${name} — ${ch.status}`;
-  $("spawnBtn").disabled        = solved || active;
+  const metaSuffix = remoteOnly ? " — ☁ remote-only (run ctf-import first)" : "";
+  $("swarmMeta").textContent = `${name} — ${ch.status}${metaSuffix}`;
+  // Spawning a remote-only challenge fails because there's no challenge_dir on disk.
+  $("spawnBtn").disabled        = solved || active || remoteOnly;
   $("killBtn").disabled         = !active;
-  $("restartBtn").disabled      = solved;
-  $("priorityOnBtn").disabled   = false;
-  $("priorityOffBtn").disabled  = false;
+  $("restartBtn").disabled      = solved || remoteOnly;
+  $("priorityOnBtn").disabled   = remoteOnly;
+  $("priorityOffBtn").disabled  = remoteOnly;
   $("checkInstanceBtn").disabled = false;
   $("submitFlagBtn").disabled   = false;
   $("markSolvedBtn").disabled   = solved;
-  $("broadcastBtn").disabled    = false;
+  $("broadcastBtn").disabled    = !active;
   $("strategicBtn").disabled    = !active;
   $("tacticalBtn").disabled     = !active;
   $("saveResultBtn").disabled   = false;
@@ -447,6 +478,73 @@ async function loadAdvisoryHistory() {
     list.appendChild(item);
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Intervene tab — live advisor reports panel
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderReports() {
+  const list = $("reportsList");
+  if (!list) return;
+  const onlyThis = $("reportsThisChallengeOnly")?.checked ?? true;
+  let reports = S.advisorReports ?? [];
+  if (onlyThis && S.selectedName) {
+    reports = reports.filter(r => !r.challenge_name || r.challenge_name === S.selectedName);
+  }
+  // Newest first
+  reports = [...reports].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)).slice(0, 40);
+  if (!reports.length) {
+    list.innerHTML = '<div class="empty">No advisor reports yet. They appear here as solvers run.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  for (const r of reports) {
+    const kind = String(r.kind ?? "coordinator_annotation");
+    const item = document.createElement("div");
+    item.className = "report-item " + kind;
+    const when  = r.ts ? new Date(r.ts * 1000).toLocaleTimeString() : "";
+    const lane  = r.lane_id ? shortModel(r.lane_id) : "";
+    const ch    = r.challenge_name ?? "";
+    const dec   = (r.advisor_decision ?? "").toLowerCase();
+    const decHtml = dec ? `<span class="report-decision ${esc(dec)}">verdict: ${esc(dec)}</span>` : "";
+    const flagHtml = r.flag ? `<span title="${esc(r.flag)}">🏁 ${esc(r.flag).slice(0, 40)}${r.flag.length > 40 ? "…" : ""}</span>` : "";
+    item.innerHTML = `
+      <div class="report-meta">
+        ${when ? `<span>${esc(when)}</span>` : ""}
+        <span class="report-kind ${esc(kind)}">${esc(kind.replace(/_/g, " "))}</span>
+        ${ch   ? `<span>${esc(ch)}</span>`   : ""}
+        ${lane ? `<span>${esc(lane)}</span>` : ""}
+        ${decHtml}
+        ${flagHtml}
+      </div>
+      <div class="report-text">${esc(r.text ?? "")}</div>
+      ${lane ? `<div class="report-actions"><button class="report-reply-btn" data-lane="${esc(r.lane_id)}" data-ch="${esc(ch)}">↩ Reply to lane</button></div>` : ""}
+    `;
+    list.appendChild(item);
+  }
+  list.querySelectorAll(".report-reply-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const lane = btn.dataset.lane;
+      const ch   = btn.dataset.ch;
+      // If the report was for a different challenge, switch to it first.
+      if (ch && ch !== S.selectedName && S.challenges[ch]) selectChallenge(ch);
+      const sel = $("tacticalLaneSelect");
+      if (sel && lane) {
+        // Ensure option exists even if the lane isn't in the current dropdown yet.
+        let opt = Array.from(sel.options).find(o => o.value === lane);
+        if (!opt) {
+          opt = document.createElement("option");
+          opt.value = lane; opt.textContent = shortModel(lane);
+          sel.appendChild(opt);
+        }
+        sel.value = lane;
+      }
+      $("tacticalInput").focus();
+      $("tacticalInput").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+}
+
+$("reportsThisChallengeOnly")?.addEventListener("change", renderReports);
 
 /* ══════════════════════════════════════════════════════════════════════════
    Intervene tab
@@ -617,13 +715,33 @@ $("parseForm").addEventListener("submit", async e => {
    ══════════════════════════════════════════════════════════════════════════ */
 $("fetchChallengesBtn").addEventListener("click", async () => {
   const btn = $("fetchChallengesBtn");
-  btn.disabled = true; btn.textContent = "⏳ Fetching…";
+  btn.disabled = true; btn.textContent = "⏳ Fetching + importing…";
+  // Auto-import is on by default; the server downloads attachments + writes
+  // metadata.yml for each remote challenge under challenges/<ctfd-host>/.
   const r = await api("/api/runtime/fetch-challenges");
   btn.disabled = false; btn.textContent = "🔄 Fetch";
   if (r.ok) {
     const n = r.body.count ?? r.body.challenges?.length ?? 0;
-    logActivity(`Fetched ${n} challenge(s) from platform`, "al-ok");
-    pushEvent(`🔄 Fetched ${n} challenges from CTFd`, "info");
+    const summary = r.body.import_summary ?? { imported: [], skipped: [], failed: [] };
+    const imp = (summary.imported ?? []).length;
+    const skip = (summary.skipped ?? []).length;
+    const fail = (summary.failed ?? []).length;
+    const parts = [`${n} total`];
+    if (imp)  parts.push(`${imp} imported`);
+    if (skip) parts.push(`${skip} already on disk`);
+    if (fail) parts.push(`${fail} failed`);
+    const summaryText = parts.join(", ");
+    logActivity(`Fetched: ${summaryText}`, fail > 0 ? "al-err" : "al-ok");
+    pushEvent(`🔄 ${summaryText}${summary.error ? ` (${summary.error})` : ""}`,
+              fail > 0 ? "warn" : "success");
+    if (fail > 0) {
+      const firstFew = (summary.failed ?? []).slice(0, 3).map(f =>
+        Array.isArray(f) ? `${f[0]}: ${f[1]}` : String(f)
+      ).join("; ");
+      logActivity(`Import errors: ${firstFew}`, "al-err");
+    }
+    // Force an immediate snapshot refresh so newly imported challenges appear.
+    pollSnapshot();
   } else {
     logActivity(`Fetch failed: ${r.body.error ?? r.status}`, "al-err");
   }
