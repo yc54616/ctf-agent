@@ -3690,11 +3690,12 @@ class ChallengeSwarm:
     # solver's session memory to keep the directive in context.  If
     # compaction later drops it, the operator can re-add.
     def add_persistent_directive(self, text: str) -> str:
-        """Register a standing directive and bump every lane immediately.
+        """Register a standing directive and bump every lane exactly once.
 
-        The directive is re-bumped every PERSISTENT_DIRECTIVE_INTERVAL_SECONDS
-        by ``_persistent_directive_pump`` so it doesn't age out of context.
-        Returns the directive ID.
+        One-shot bump (no periodic re-pump — that flooded the solver's
+        operator_bump slot with duplicates).  The directive survives in
+        the solver's session memory; if context compaction drops it later,
+        the operator can revoke + re-add.  Returns the directive ID.
         """
         import uuid
         text = str(text or "").strip()
