@@ -1362,28 +1362,75 @@ async def do_read_solver_trace(deps: CoordinatorDeps, challenge_name: str, model
 
 
 async def do_broadcast(deps: CoordinatorDeps, challenge_name: str, message: str) -> str:
-    """Broadcast a message to all solvers working on a challenge."""
+    """Broadcast a one-shot message to all solvers + advisor.
+
+    Previously this only posted to ``swarm.message_bus`` — that puts the
+    message in the shared findings channel, read lazily by each lane
+    between turns.  Same delivery timing as turn boundaries, which means
+    5–60 s latency and no interrupt.  Now every transient operator path
+    (override, tactical hint, broadcast, report-now) uses the same
+    instant-interrupt delivery so the whole operator-intervention family
+    behaves consistently: lane's current codex turn is interrupted, new
+    turn starts with the broadcast as prompt (~2–5 s).
+
+    The message_bus.broadcast call is preserved so the message also
+    lands in the shared findings channel for lanes that join later.
+    """
     swarm = deps.swarms.get(challenge_name)
     if not swarm:
         return f"No swarm running for {challenge_name}"
-    await swarm.message_bus.broadcast(message)
-    # Visible receipt in the Reports tab so the operator sees the broadcast
-    # actually went out, even if no lane chooses to echo it back.
+
+    msg_text = str(message or "").strip()
+    await swarm.message_bus.broadcast(msg_text)
+
+    # Instant-interrupt every active lane with a one-shot recovery prompt
+    # identical in spirit to Strategic Override + Tactical Hint.
+    tagged = (
+        f"[ONE-SHOT OPERATOR BROADCAST — answer this once, then do NOT "
+        f"keep referring to it on future steps]\n{msg_text}\n\n"
+        "Emit a `notify_coordinator` tool call on your VERY NEXT step with "
+        "your immediate response (agentMessage / reasoning text is "
+        "invisible to the human — only notify_coordinator tool calls "
+        "reach them).\n\n"
+        "RECOVERY: your current turn was interrupted for this broadcast, "
+        "so any in-flight tool call was aborted.  After your "
+        "notify_coordinator response:\n"
+        "  1. Re-read the last few messages in your conversation history "
+        "(they're preserved across the interrupt).\n"
+        "  2. Factor in the broadcast's guidance.\n"
+        "  3. Continue solving from where you left off — re-issue the "
+        "aborted tool call if needed.\n"
+        "Do NOT restart from scratch.  This is a transient prompt, NOT "
+        "a standing directive."
+    )
+    bumped: list[str] = []
+    for spec, solver in swarm.solvers.items():
+        bump_fn = (
+            getattr(solver, "interrupt_and_bump_operator", None)
+            or getattr(solver, "bump_operator", None)
+            or getattr(solver, "bump", None)
+        )
+        if callable(bump_fn):
+            try:
+                bump_fn(tagged)
+                bumped.append(spec)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("broadcast bump failed for %s: %s", spec, exc)
+
     publish_report = getattr(swarm, "publish_report", None)
     if callable(publish_report):
         publish_report(
             kind="transient_prompt",
-            title=f"📢 OPERATOR BROADCAST → all lanes (one-shot): {str(message or '').strip()[:130]}",
-            body=str(message or ""),
+            title=f"📢 OPERATOR BROADCAST → {len(bumped)} lane(s) (one-shot): {msg_text[:120]}",
+            body=msg_text,
             lane_id="all lanes",
         )
-    # Advisor also hears the broadcast.
     _schedule_advisor_on_operator_message(
         swarm,
         source_label="broadcast to all lanes (one-shot)",
-        message=str(message or ""),
+        message=msg_text,
     )
-    return f"Broadcast to all solvers on {challenge_name}"
+    return f"Broadcast to {len(bumped)} solver(s) on {challenge_name}"
 
 
 async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, critique: str) -> str:
