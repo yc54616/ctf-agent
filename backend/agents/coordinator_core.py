@@ -1200,6 +1200,49 @@ async def do_kill_swarm(deps: CoordinatorDeps, challenge_name: str) -> str:
     return f"Swarm for {challenge_name} cancelled"
 
 
+def _schedule_advisor_on_operator_message(swarm, *, source_label: str, message: str) -> bool:
+    """Schedule a background advisor call so the advisor ALSO hears the operator.
+
+    Lane bumps already reach every solver, but the advisor (Claude/Codex
+    sidecar) only annotates solver→coordinator notifications by default —
+    it never sees the operator's own interventions.  This helper feeds the
+    operator message into the advisor via the existing
+    ``_build_advised_coordinator_message`` path so the advisor's next
+    synthesis report reflects what the human just said.  Fire-and-forget;
+    silent failure so operator interactions never block on advisor.
+
+    Returns True if the advisor call was scheduled, False if the swarm
+    doesn't expose the required primitives.
+    """
+    schedule_fn = getattr(swarm, "_schedule_background", None)
+    build_synth = getattr(swarm, "_build_advised_coordinator_message", None)
+    if not (callable(schedule_fn) and callable(build_synth)):
+        return False
+    first_lane = next(iter(getattr(swarm, "solvers", {}).keys()), "swarm")
+
+    async def _advisor_hears_operator() -> None:
+        try:
+            prompt = (
+                "[HUMAN OPERATOR MESSAGE — you (the advisor) are hearing this "
+                "too so you can factor it into your next lane-hint / synthesis]\n"
+                f"Source: {source_label}\n"
+                f"Message: {str(message or '').strip()[:1400]}\n\n"
+                "Acknowledge you heard it (short reply is fine) and keep this "
+                "in mind when you next synthesise guidance.  No need to act on "
+                "it directly — the solvers have already been bumped."
+            )
+            await build_synth(first_lane, prompt)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("advisor-on-operator-message failed: %s", exc)
+
+    try:
+        schedule_fn(_advisor_hears_operator())
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("could not schedule advisor-on-operator-message: %s", exc)
+        return False
+
+
 async def do_bump_agent(deps: CoordinatorDeps, challenge_name: str, model_spec: str, insights: str) -> str:
     swarm = deps.swarms.get(challenge_name)
     if not swarm:
@@ -1234,10 +1277,16 @@ async def do_bump_agent(deps: CoordinatorDeps, challenge_name: str, model_spec: 
     if callable(publish_report):
         publish_report(
             kind="hint",
-            title=f"[HUMAN → {model_spec}] {str(insights or '').strip()[:160]}",
+            title=f"💬 OPERATOR → {model_spec}: {str(insights or '').strip()[:140]}",
             body=str(insights or ""),
             lane_id=model_spec,
         )
+    # Also tell the advisor so its next synthesis factors in this hint.
+    _schedule_advisor_on_operator_message(
+        swarm,
+        source_label=f"tactical hint to {model_spec}",
+        message=str(insights or ""),
+    )
     return f"Bumped {model_spec} on {challenge_name}"
 
 
@@ -1294,10 +1343,16 @@ async def do_broadcast(deps: CoordinatorDeps, challenge_name: str, message: str)
     if callable(publish_report):
         publish_report(
             kind="hint",
-            title=f"[HUMAN BROADCAST → all lanes] {str(message or '').strip()[:160]}",
+            title=f"📢 OPERATOR BROADCAST → all lanes: {str(message or '').strip()[:140]}",
             body=str(message or ""),
             lane_id="all lanes",
         )
+    # Advisor also hears the broadcast.
+    _schedule_advisor_on_operator_message(
+        swarm,
+        source_label="broadcast to all lanes",
+        message=str(message or ""),
+    )
     return f"Broadcast to all solvers on {challenge_name}"
 
 
@@ -1345,11 +1400,18 @@ async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, criti
     if callable(publish_report):
         publish_report(
             kind="hint",
-            title=f"[HUMAN STRATEGIC OVERRIDE → {len(bumped)} lane(s)] "
-                  + critique.strip()[:140],
+            title=f"🧠 OPERATOR OVERRIDE → {len(bumped)} lane(s): "
+                  + critique.strip()[:130],
             body=critique.strip(),
             lane_id="all lanes",
         )
+
+    # Advisor hears the override too and factors it into next synthesis.
+    _schedule_advisor_on_operator_message(
+        swarm,
+        source_label=f"strategic override to {len(bumped)} lane(s)",
+        message=critique.strip(),
+    )
 
     logger.info(
         "Human intervention on %s: bumped %d lane(s). Critique: %s",
@@ -1410,62 +1472,49 @@ async def do_request_status_report(
 
     publish_report = getattr(swarm, "publish_report", None)
 
-    # ── Path 1: immediate mechanical per-lane digest (always works) ──────
-    # The user needs something to read the moment they click — not a
-    # 5-30s wait + possibly empty advisor.  Mechanical is clearly
-    # labelled so it can't be mistaken for advisor reasoning.
-    mechanical_lines: list[str] = []
-    for spec, agent in (agents or {}).items():
-        if not isinstance(agent, dict):
-            continue
-        lifecycle = str(agent.get("lifecycle") or agent.get("status") or "?")
-        steps = int(agent.get("step_count", 0) or 0)
-        cur = str(agent.get("current_command") or agent.get("activity") or "").strip()[:180]
-        finding = str(agent.get("findings") or "").strip()[:300]
-        lane_block = [f"• {spec} — {lifecycle}, {steps} steps"]
-        if cur:
-            lane_block.append(f"  now: {cur}")
-        if finding:
-            lane_block.append(f"  last finding: {finding}")
-        mechanical_lines.append("\n".join(lane_block))
-    recent_kinds_counter: dict[str, int] = {}
-    for r in recent:
-        k = str(r.get("kind") or "lane_note")
-        recent_kinds_counter[k] = recent_kinds_counter.get(k, 0) + 1
-    kinds_summary = ", ".join(f"{k}×{v}" for k, v in sorted(recent_kinds_counter.items()))
-    mechanical_body = (
-        "[mechanical digest — raw in-memory state, NOT advisor reasoning]\n\n"
-        + (f"Recent activity ({len(recent)} reports): {kinds_summary or 'none'}\n\n"
-           if recent else "")
-        + "Active lanes:\n"
-        + ("\n\n".join(mechanical_lines) if mechanical_lines else "  (none)")
-    )
+    # Show a short receipt so the operator knows the click landed, but
+    # WITHOUT embedding mechanical state (operator explicitly rejected
+    # dict dumps).  The real content arrives via Path 1 (lane bumps) and
+    # Path 2 (advisor synthesis) below.
     if callable(publish_report):
         publish_report(
             kind="hint",
-            title=f"[STATUS — mechanical digest] {len(active_lanes)} lane(s), {len(recent)} recent report(s)",
-            body=mechanical_body,
+            title=(
+                f"📊 REPORT-NOW → {len(active_lanes)} lane(s) + advisor "
+                f"(asking for live status; replies arrive 5–30s)"
+            ),
+            body=(
+                f"Operator pressed Report-now.  Every active lane has been "
+                f"asked to emit a notify_coordinator status.  Advisor has "
+                f"been asked for a narrative synthesis based on the last "
+                f"{len(recent)} lane report(s).  Both arrive asynchronously "
+                f"in this feed as LLM calls complete."
+            ),
             lane_id="swarm",
         )
 
-    # ── Path 2: lane self-report bumps (soft, no pause) ──────────────────
-    # Each lane gets a bump asking it to emit a notify_coordinator call
-    # summarising its state on the next step boundary.  No mid-step
-    # interrupt — lane finishes its current tool call first.
+    # ── Path 1: lane self-report bumps (strong "drop current task") ──────
+    # Strong wording per operator's explicit ask: lanes must pause their
+    # current path and REPLY to this prompt first.  notify_coordinator
+    # tool call is mandatory — the human only sees those, and the
+    # advisor reads them on the next synthesis cycle.
     bumped: list[str] = []
     prompt = (
-        "[HUMAN STATUS REQUEST] The human pressed 'Report now' and wants "
-        "to know what you're doing.  On your very next step, emit a "
-        "`notify_coordinator` tool call (NOT just agentMessage / reasoning "
-        "— the human only sees notify_coordinator tool calls in their GUI) "
-        "with a short status:\n"
-        "  • Currently: <what you're working on>\n"
-        "  • Tried: <1–2 things you've tried>\n"
+        "[HUMAN OPERATOR STATUS REQUEST — answer this BEFORE continuing "
+        "your current line of work]\n\n"
+        "DROP whatever tool call you were about to run.  Your IMMEDIATE "
+        "next step MUST be a `notify_coordinator` tool call (NOT "
+        "agentMessage / reasoning — those are invisible to both the "
+        "human AND the advisor) with a short status using exactly this "
+        "structure:\n"
+        "  • Currently: <what you're working on right now>\n"
+        "  • Tried: <1–2 things you tried>\n"
         "  • Learned: <what you know so far>\n"
-        "  • Blocked: <if stuck>\n"
-        "  • Next: <your next step>\n"
-        "Keep it under ~8 lines.  After that, resume your current task "
-        "with the tool call you were about to make."
+        "  • Blocked: <blocker, if any>\n"
+        "  • Next: <what you'll try next>\n\n"
+        "Keep it under ~8 lines.  The advisor will aggregate every "
+        "lane's reply into a single report for the human.  After your "
+        "notify_coordinator call, resume solving."
     )
     for spec in active_lanes:
         solver = swarm.solvers.get(spec)
@@ -1477,54 +1526,107 @@ async def do_request_status_report(
             except Exception as exc:  # noqa: BLE001
                 logger.debug("status bump failed for %s: %s", spec, exc)
 
-    # ── Path 3: advisor synthesis (fire-and-forget, best-effort) ─────────
+    # ── Path 2: advisor synthesis (DELAYED so lane replies arrive first) ─
+    # Core insight: lane bumps take 5–30 s to produce notify_coordinator
+    # responses.  Previously advisor synthesis fired immediately, so it
+    # never saw those fresh replies — just historic reports.  Now we
+    # wait ~35 s so the solvers actually complete a step first, then
+    # advisor reads the NEW lane replies + prior progress and writes a
+    # single human-facing report.  Per operator's design:
+    #     lanes → notify_coordinator → advisor → human.
     schedule_fn = getattr(swarm, "_schedule_background", None)
     build_synth = getattr(swarm, "_build_advised_coordinator_message", None)
     synth_scheduled = False
     if callable(schedule_fn) and callable(build_synth) and (recent or active_lanes):
+        # Snapshot the "before" timestamp so the advisor prompt can tell
+        # the advisor WHICH reports are replies to this specific request
+        # vs older background chatter.
+        request_ts = _time.time()
+
         async def _advisor_synth() -> None:
             try:
-                # Short prompt to avoid confusing the advisor's NO_ADVICE heuristic.
-                report_lines: list[str] = []
-                for r in recent[-20:]:  # keep prompt small
+                # Wait for lane replies to stream in before synthesising.
+                # 35s covers a normal codex step (~20–30s) with headroom.
+                await asyncio.sleep(35.0)
+
+                # Re-read the reports AFTER the delay so we pick up the
+                # fresh replies the lanes just posted.
+                all_reports = list(getattr(deps, "solve_reports", []))
+                my_request_replies = [
+                    r for r in all_reports
+                    if isinstance(r, dict)
+                    and str(r.get("challenge_name") or "") == challenge_name
+                    and float(r.get("ts", 0) or 0) >= request_ts
+                ]
+                older_reports = [
+                    r for r in all_reports
+                    if isinstance(r, dict)
+                    and str(r.get("challenge_name") or "") == challenge_name
+                    and float(r.get("ts", 0) or 0) < request_ts
+                ][-30:]
+
+                def _fmt(r: dict) -> str:
                     ts = _time.strftime("%H:%M:%S", _time.localtime(float(r.get("ts", 0) or 0)))
                     lane = str(r.get("lane_id") or "")[:60]
                     kind = str(r.get("kind") or "")[:20]
                     title = str(r.get("title") or "")[:150]
-                    report_lines.append(f"[{ts}] {lane} ({kind}): {title}")
+                    body = str(r.get("body") or "")[:400]
+                    head = f"[{ts}] {lane} ({kind}): {title}"
+                    return head + (f"\n    {body}" if body and body != title else "")
 
-                state_lines: list[str] = []
-                for spec, agent in (agents or {}).items():
+                try:
+                    live_status = swarm.get_status()
+                except Exception:  # noqa: BLE001
+                    live_status = {}
+                live_agents = live_status.get("agents", {}) if isinstance(live_status, dict) else {}
+                lane_state_lines: list[str] = []
+                for spec, agent in (live_agents or {}).items():
                     if not isinstance(agent, dict):
                         continue
                     lifecycle = str(agent.get("lifecycle") or "?")
                     steps = int(agent.get("step_count", 0) or 0)
                     finding = str(agent.get("findings") or "").strip()[:200]
-                    state_lines.append(
+                    lane_state_lines.append(
                         f"{spec}: {lifecycle}, {steps} steps"
                         + (f" — {finding}" if finding else "")
                     )
 
                 synth_prompt = (
-                    "A human operator pressed 'status report now' on a CTF "
-                    "swarm they're supervising.  Give them a 5–10 line "
-                    "human-readable status of what the swarm is doing and "
-                    "what to watch for.  Never say NO_ADVICE — they pressed "
-                    "the button, they want a human-readable status.  At "
-                    "minimum describe: what each lane is doing, any promising "
-                    "leads, any dead ends.\n\n"
-                    "RECENT REPORTS:\n"
-                    + ("\n".join(report_lines) if report_lines else "(none yet)")
-                    + "\n\nLANE STATE:\n"
-                    + ("\n".join(state_lines) if state_lines else "(no active lanes)")
+                    "You are writing a SINGLE human-facing status report for "
+                    "a CTF operator who pressed 'Report now'.  You are the "
+                    "only synthesiser — the human does NOT read raw lane "
+                    "notes; they read only your output.\n\n"
+                    "Design: every active lane was just asked to emit a "
+                    "notify_coordinator status with Currently / Tried / "
+                    "Learned / Blocked / Next.  Their replies are in "
+                    "'FRESH LANE REPLIES' below.  Prior context is in "
+                    "'EARLIER PROGRESS'.  Aggregate all of it + current "
+                    "lane state into a concise narrative (≤14 lines):\n"
+                    "  1. One-line collective summary of what the swarm "
+                    "is doing\n"
+                    "  2. Per-lane one-liner (so the human can see who's "
+                    "on what)\n"
+                    "  3. Most promising open lead, owner lane\n"
+                    "  4. Anything worth the human's attention / "
+                    "intervention\n"
+                    "  5. Recommended next action for the swarm\n\n"
+                    "Never say NO_ADVICE — the human pressed the button.  "
+                    "If some lanes haven't replied yet, say '<lane> has "
+                    "not yet reported since the request' rather than "
+                    "inventing.\n\n"
+                    "FRESH LANE REPLIES (to this request):\n"
+                    + ("\n".join(_fmt(r) for r in my_request_replies)
+                       if my_request_replies else "(none arrived within 35s)")
+                    + "\n\nEARLIER PROGRESS (prior lane reports for context):\n"
+                    + ("\n".join(_fmt(r) for r in older_reports)
+                       if older_reports else "(no prior reports)")
+                    + "\n\nCURRENT LANE STATE:\n"
+                    + ("\n".join(lane_state_lines) if lane_state_lines else "(no active lanes)")
                 )
                 first_lane = active_lanes[0] if active_lanes else "swarm"
                 result = await build_synth(first_lane, synth_prompt)
-                # If advisor returns the prompt unchanged (its "no advice" path),
-                # we already published the mechanical digest above — no fallback
-                # needed here.  Just log quietly.
                 if not str(result or "").strip() or str(result).strip() == synth_prompt.strip():
-                    logger.debug("advisor returned no synthesis for report-now; mechanical already published")
+                    logger.debug("advisor returned no synthesis for report-now")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("report-now advisor synthesis failed: %s", exc)
 
@@ -1535,16 +1637,18 @@ async def do_request_status_report(
             logger.debug("could not schedule advisor synth: %s", exc)
 
     logger.info(
-        "Report-now for %s: mechanical digest published, bumped %d lane(s), advisor synthesis %s",
+        "Report-now for %s: bumped %d lane(s), advisor synthesis %s (delayed 35s)",
         challenge_name, len(bumped),
         "scheduled" if synth_scheduled else "skipped",
     )
-    pieces = [f"mechanical digest published in Reports (immediate)"]
+    pieces = []
     if bumped:
         pieces.append(f"asked {len(bumped)} lane(s) for self-report")
     if synth_scheduled:
-        pieces.append("advisor synthesis queued (best-effort)")
-    return " · ".join(pieces)
+        pieces.append("advisor synthesis queued (waits ~35s for lane replies)")
+    if not pieces:
+        return "No active lanes + advisor unavailable — nothing to request"
+    return " · ".join(pieces) + "."
 
 
 async def do_add_persistent_directive(

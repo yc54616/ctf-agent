@@ -3676,10 +3676,33 @@ class ChallengeSwarm:
         self._push_directives_now(reason="added")
         self.publish_report(
             kind="hint",
-            title=f"[HUMAN STANDING DIRECTIVE added] {text[:160]}",
+            title=f"📌 STANDING DIRECTIVE (added) → all lanes: {text[:140]}",
             body=text,
             lane_id="all lanes",
         )
+        # Tell the advisor too so its next synthesis respects the directive.
+        schedule_fn = getattr(self, "_schedule_background", None)
+        build_synth = getattr(self, "_build_advised_coordinator_message", None)
+        if callable(schedule_fn) and callable(build_synth):
+            first_lane = next(iter(self.solvers.keys()), "swarm")
+
+            async def _advisor_hears_directive() -> None:
+                try:
+                    prompt = (
+                        "[HUMAN OPERATOR added a STANDING DIRECTIVE — apply to "
+                        "every future synthesis until revoked]\n"
+                        f"Directive: {text}\n\n"
+                        "Acknowledge briefly and keep this in mind when you next "
+                        "summarise progress or hint any lane."
+                    )
+                    await build_synth(first_lane, prompt)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("advisor-on-directive failed: %s", exc)
+
+            try:
+                schedule_fn(_advisor_hears_directive())
+            except Exception:  # noqa: BLE001
+                pass
         return entry["id"]
 
     def remove_persistent_directive(self, directive_id: str) -> bool:
@@ -3692,7 +3715,7 @@ class ChallengeSwarm:
         if removed:
             self.publish_report(
                 kind="hint",
-                title=f"[HUMAN STANDING DIRECTIVE removed] {directive_id}",
+                title=f"✗ STANDING DIRECTIVE (revoked) → all lanes: {directive_id}",
                 body=f"Directive {directive_id} revoked by operator.",
                 lane_id="all lanes",
             )
@@ -3705,7 +3728,7 @@ class ChallengeSwarm:
         if count > 0:
             self.publish_report(
                 kind="hint",
-                title=f"[HUMAN STANDING DIRECTIVES cleared] {count} removed",
+                title=f"✗ STANDING DIRECTIVES (cleared) → all lanes: {count} removed",
                 body=f"Operator cleared all {count} standing directive(s).",
                 lane_id="all lanes",
             )
