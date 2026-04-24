@@ -1098,61 +1098,163 @@ def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
     }
 
 
+_COOKIE_ATTR_KEYS = {
+    "path", "domain", "expires", "max-age", "secure", "httponly",
+    "samesite", "priority", "partitioned",
+}
+
+
+def _sanitize_cookie_header(raw: str) -> str:
+    """Strip Set-Cookie attributes that users often paste by accident.
+
+    Inputs like ``session=abc; Path=/; Secure; HttpOnly; SameSite=Lax``
+    come from DevTools' Response → Set-Cookie view — but those extra
+    attributes are NOT valid Cookie header values to send back to the
+    server.  We keep only ``name=value`` pairs whose key isn't a known
+    cookie attribute.
+    """
+    raw = raw.strip()
+    if raw.lower().startswith("cookie:"):
+        raw = raw[len("cookie:"):].strip()
+
+    keepers: list[str] = []
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name = part.split("=", 1)[0].strip().lower()
+        if name in _COOKIE_ATTR_KEYS:
+            continue
+        # Bare flags with no "=" sign are attributes too.
+        if "=" not in part:
+            continue
+        keepers.append(part)
+    return "; ".join(keepers)
+
+
 async def _probe_cookie(deps: CoordinatorDeps, cookie_header: str) -> dict[str, Any]:
     """GET CTFd's /users/me with the given Cookie header to verify validity.
 
     Returns a dict describing the probe outcome.  Does not mutate deps.
+    Strips Set-Cookie attributes from the header, uses a browser-like UA
+    so CloudFlare / WAFs don't 403 us, follows intra-host redirects so
+    http→https or trailing-slash redirects work, and includes a response
+    body snippet on failure so the operator can tell whether CTFd
+    rejected the cookie or something else broke.
     """
     base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
     if not base_url:
         return {"ok": False, "error": "No CTFd URL configured"}
 
+    cleaned = _sanitize_cookie_header(cookie_header)
+
     import httpx
+    from urllib.parse import urlparse
 
     probe_url = base_url.rstrip("/") + "/api/v1/users/me"
-    headers: dict[str, str] = {"User-Agent": "ctf-agent/cookie-probe"}
-    if cookie_header:
-        headers["Cookie"] = cookie_header
+    base_host = urlparse(base_url).hostname or ""
+    # Browser-like UA — some CTFd installs sit behind CloudFlare that
+    # blocks generic "python-httpx" or short custom UAs as scrapers.
+    headers: dict[str, str] = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+    }
+    if cleaned:
+        headers["Cookie"] = cleaned
     token = str(getattr(deps.settings, "ctfd_token", "") or "").strip()
     if token:
         headers["Authorization"] = f"Token {token}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=True) as client:
             resp = await client.get(probe_url, headers=headers)
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"Request failed: {exc}"}
+        return {"ok": False, "error": f"Request failed: {exc}", "probe_url": probe_url}
 
     status = resp.status_code
-    if status == 200:
-        body = {}
-        try:
-            body = resp.json()
-        except Exception:  # noqa: BLE001
-            pass
-        user = ""
-        if isinstance(body, dict):
-            data = body.get("data") or {}
-            if isinstance(data, dict):
-                user = str(data.get("name") or data.get("username") or "")
-        return {"ok": True, "status": status, "user": user, "probe_url": probe_url}
+    final_host = urlparse(str(resp.url)).hostname or ""
+    body_preview = (resp.text or "")[:200].strip()
 
-    # 302 redirect to /login means cookie is invalid
-    if status in {301, 302, 303, 307, 308}:
-        location = resp.headers.get("location", "")
+    # Landed on a login / auth URL after redirects → cookie rejected.
+    final_path = urlparse(str(resp.url)).path.lower()
+    if status == 200 and any(marker in final_path for marker in ("/login", "/auth/login", "/signin")):
         return {
             "ok": False,
             "status": status,
+            "error": f"Redirected to {resp.url} — session likely expired",
+            "probe_url": probe_url,
+            "final_url": str(resp.url),
+        }
+
+    if status == 200:
+        body: Any = {}
+        try:
+            body = resp.json()
+        except Exception:  # noqa: BLE001 — non-JSON 200 is still suspicious
+            return {
+                "ok": False,
+                "status": status,
+                "error": "200 OK but response was not JSON — probably a cached login page",
+                "probe_url": probe_url,
+                "body_preview": body_preview,
+            }
+        user = ""
+        if isinstance(body, dict):
+            # CTFd wraps user data in {"success": true, "data": {...}}.
+            if body.get("success") is False:
+                err = str(body.get("message") or body.get("errors") or "authentication failed")
+                return {
+                    "ok": False, "status": status,
+                    "error": f"CTFd said: {err}",
+                    "probe_url": probe_url,
+                    "body_preview": body_preview,
+                }
+            data = body.get("data") or {}
+            if isinstance(data, dict):
+                user = str(data.get("name") or data.get("username") or "")
+        return {
+            "ok": True, "status": status, "user": user,
+            "probe_url": probe_url,
+            "final_url": str(resp.url) if str(resp.url) != probe_url else "",
+        }
+
+    # 302 after follow_redirects=True means we still landed on a non-200 redirect.
+    if status in {301, 302, 303, 307, 308}:
+        location = resp.headers.get("location", "")
+        return {
+            "ok": False, "status": status,
             "error": f"Redirected to {location or 'unknown'} — session likely expired",
             "probe_url": probe_url,
         }
 
     if status == 403:
-        return {"ok": False, "status": status, "error": "403 Forbidden — cookie invalid or lacking access", "probe_url": probe_url}
+        # CloudFlare / WAF block looks different from CTFd's own 403 — surface
+        # the first bit of the page so the operator can tell which one.
+        cf_hint = "cloudflare" in body_preview.lower() or final_host != base_host
+        label = "CloudFlare / WAF block" if cf_hint else "cookie invalid or lacking access"
+        return {
+            "ok": False, "status": status,
+            "error": f"403 Forbidden — {label}",
+            "probe_url": probe_url,
+            "body_preview": body_preview,
+        }
     if status == 401:
-        return {"ok": False, "status": status, "error": "401 Unauthorized — cookie invalid", "probe_url": probe_url}
+        return {
+            "ok": False, "status": status,
+            "error": "401 Unauthorized — cookie invalid",
+            "probe_url": probe_url,
+            "body_preview": body_preview,
+        }
 
-    return {"ok": False, "status": status, "error": f"Unexpected HTTP {status}", "probe_url": probe_url}
+    return {
+        "ok": False, "status": status,
+        "error": f"Unexpected HTTP {status}",
+        "probe_url": probe_url,
+        "body_preview": body_preview,
+    }
 
 
 async def _auto_import_remote_challenges(
@@ -1810,24 +1912,43 @@ async def _start_msg_server(
                 except json.JSONDecodeError:
                     data = {}
                 raw = str(data.get("cookie") or "").strip()
-                # Strip leading "Cookie:" prefix if the user pasted the full header line.
-                if raw.lower().startswith("cookie:"):
-                    raw = raw[len("cookie:"):].strip()
-                if not raw:
-                    _json_response("400 Bad Request", {"error": "cookie value is required (body: {\"cookie\": \"…\"})"})
+                # Clean up common paste artifacts — leading "Cookie:" prefix AND
+                # Set-Cookie attributes (Path=, Domain=, Secure, HttpOnly, …)
+                # that sneak in when operators copy from DevTools' Response view.
+                cleaned = _sanitize_cookie_header(raw)
+                if not cleaned:
+                    _json_response(
+                        "400 Bad Request",
+                        {
+                            "error": (
+                                "cookie value is required — after stripping Set-Cookie "
+                                "attributes nothing usable remained"
+                            ),
+                        },
+                    )
                 else:
-                    deps.settings.remote_cookie_header = raw
+                    deps.settings.remote_cookie_header = cleaned
                     deps.cookie_source = f"operator_api@{int(time.time())}"
                     summary = _cookie_summary(deps)
                     # Optionally verify immediately.
                     probe_result: dict[str, Any] = {}
                     if bool(data.get("test")):
-                        probe_result = await _probe_cookie(deps, raw)
+                        probe_result = await _probe_cookie(deps, cleaned)
+                    stripped = len(raw) - len(cleaned)
                     logger.info(
-                        "Cookie header updated via API (%d chars, %d cookies)",
+                        "Cookie header updated via API (%d chars, %d cookies%s)",
                         summary["length"], summary["cookie_count"],
+                        f", stripped {stripped} chars of attrs" if stripped > 0 else "",
                     )
-                    _json_response("200 OK", {"ok": True, "cookie": summary, "probe": probe_result})
+                    _json_response(
+                        "200 OK",
+                        {
+                            "ok": True,
+                            "cookie": summary,
+                            "probe": probe_result,
+                            "sanitized_chars_dropped": stripped,
+                        },
+                    )
             elif method == "DELETE" and path == "/api/runtime/cookie":
                 deps.settings.remote_cookie_header = ""
                 deps.cookie_source = ""
