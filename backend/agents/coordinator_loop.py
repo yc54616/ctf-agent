@@ -1098,61 +1098,253 @@ def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
     }
 
 
-async def _probe_cookie(deps: CoordinatorDeps, cookie_header: str) -> dict[str, Any]:
-    """GET CTFd's /users/me with the given Cookie header to verify validity.
+_COOKIE_ATTR_KEYS = {
+    "path", "domain", "expires", "max-age", "secure", "httponly",
+    "samesite", "priority", "partitioned",
+}
 
-    Returns a dict describing the probe outcome.  Does not mutate deps.
+
+def _sanitize_cookie_header(raw: str) -> str:
+    """Strip Set-Cookie attributes that users often paste by accident.
+
+    Inputs like ``session=abc; Path=/; Secure; HttpOnly; SameSite=Lax``
+    come from DevTools' Response → Set-Cookie view — but those extra
+    attributes are NOT valid Cookie header values to send back to the
+    server.  We keep only ``name=value`` pairs whose key isn't a known
+    cookie attribute.
+    """
+    raw = raw.strip()
+    if raw.lower().startswith("cookie:"):
+        raw = raw[len("cookie:"):].strip()
+
+    keepers: list[str] = []
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name = part.split("=", 1)[0].strip().lower()
+        if name in _COOKIE_ATTR_KEYS:
+            continue
+        # Bare flags with no "=" sign are attributes too.
+        if "=" not in part:
+            continue
+        keepers.append(part)
+    return "; ".join(keepers)
+
+
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+async def _run_single_probe(
+    client: "httpx.AsyncClient",  # type: ignore[name-defined]  # forward-ref; import inside
+    probe_url: str,
+    *,
+    cookie_header: str = "",
+    auth_token: str = "",
+) -> dict[str, Any]:
+    """One HTTP GET against probe_url with the given auth bits.
+
+    Returns a dict with ``ok``, ``status``, ``url``, ``body_preview`` and
+    an ``error`` description on failure.  Doesn't try to be clever about
+    what it means — the caller aggregates outcomes across several attempts.
+    """
+    from urllib.parse import urlparse
+
+    headers: dict[str, str] = {
+        "User-Agent": _BROWSER_UA,
+        "Accept": "application/json, text/plain, */*",
+    }
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+    if auth_token:
+        headers["Authorization"] = f"Token {auth_token}"
+
+    try:
+        resp = await client.get(probe_url, headers=headers)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"request failed: {exc}", "url": probe_url, "status": 0}
+
+    status = resp.status_code
+    final_url = str(resp.url)
+    final_path = urlparse(final_url).path.lower()
+    body_preview = (resp.text or "")[:200].strip()
+
+    # Landed on a login URL after redirects → auth rejected even though HTTP says 200.
+    if status == 200 and any(m in final_path for m in ("/login", "/auth/login", "/signin")):
+        return {
+            "ok": False, "status": status,
+            "error": f"landed on {final_url} — treated as login redirect",
+            "url": probe_url, "final_url": final_url, "body_preview": body_preview,
+        }
+
+    if status == 200:
+        if "application/json" in (resp.headers.get("content-type") or "").lower():
+            try:
+                body = resp.json()
+            except Exception:  # noqa: BLE001
+                body = None
+            if isinstance(body, dict) and body.get("success") is False:
+                return {
+                    "ok": False, "status": status,
+                    "error": f"CTFd said: {body.get('message') or body.get('errors') or 'auth failed'}",
+                    "url": probe_url, "body_preview": body_preview,
+                }
+            user = ""
+            if isinstance(body, dict):
+                data = body.get("data") or {}
+                if isinstance(data, dict):
+                    user = str(data.get("name") or data.get("username") or "")
+            return {
+                "ok": True, "status": status, "user": user,
+                "url": probe_url, "final_url": final_url,
+            }
+        # Non-JSON 200: OK only if the URL is an HTML page (e.g. /challenges) and
+        # the body doesn't look like a login form.  Very heuristic.
+        login_markers = ("<form", "login", "password", "csrf", "sign in")
+        if any(m in body_preview.lower() for m in login_markers):
+            return {
+                "ok": False, "status": status,
+                "error": "200 OK but page body looks like a login form",
+                "url": probe_url, "final_url": final_url, "body_preview": body_preview,
+            }
+        return {
+            "ok": True, "status": status, "user": "",
+            "url": probe_url, "final_url": final_url,
+            "note": "200 OK (non-JSON, did not parse user)",
+        }
+
+    if status in {301, 302, 303, 307, 308}:
+        location = resp.headers.get("location", "")
+        return {
+            "ok": False, "status": status,
+            "error": f"redirected to {location or '?'} — auth rejected",
+            "url": probe_url, "body_preview": body_preview,
+        }
+    if status == 401:
+        return {
+            "ok": False, "status": status,
+            "error": "401 Unauthorized",
+            "url": probe_url, "body_preview": body_preview,
+        }
+    if status == 403:
+        cf = "cloudflare" in body_preview.lower()
+        return {
+            "ok": False, "status": status,
+            "error": f"403 Forbidden{' — CloudFlare block' if cf else ''}",
+            "url": probe_url, "body_preview": body_preview,
+        }
+    return {
+        "ok": False, "status": status,
+        "error": f"HTTP {status}",
+        "url": probe_url, "body_preview": body_preview,
+    }
+
+
+async def _probe_cookie(deps: CoordinatorDeps, cookie_header: str) -> dict[str, Any]:
+    """Verify a CTFd session cookie by trying several auth paths in order.
+
+    Strategy:
+
+    1. GET ``/api/v1/users/me`` with **cookie only** (no Authorization header).
+       This is the canonical "am I logged in" check and isolates the cookie
+       from a possibly-bad API token.
+    2. If (1) returns 404 (API path missing on old CTFd builds), fall back
+       to GET ``/challenges`` with cookie only.
+    3. If (1) returns 401 AND a token is configured, try (1) again with
+       BOTH cookie and token — some CTFd deployments gate certain endpoints
+       behind token auth.
+    4. If all attempts fail, report the most informative failure
+       (``attempts`` list included for the UI to display).
+
+    Returns the same shape as before (ok / status / error / body_preview /
+    probe_url / final_url) plus ``attempts`` for debugging.
     """
     base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
     if not base_url:
         return {"ok": False, "error": "No CTFd URL configured"}
 
+    cleaned = _sanitize_cookie_header(cookie_header)
+    token = str(getattr(deps.settings, "ctfd_token", "") or "").strip()
+    base = base_url.rstrip("/")
+    api_url = base + "/api/v1/users/me"
+    chal_url = base + "/challenges"
+
     import httpx
 
-    probe_url = base_url.rstrip("/") + "/api/v1/users/me"
-    headers: dict[str, str] = {"User-Agent": "ctf-agent/cookie-probe"}
-    if cookie_header:
-        headers["Cookie"] = cookie_header
-    token = str(getattr(deps.settings, "ctfd_token", "") or "").strip()
-    if token:
-        headers["Authorization"] = f"Token {token}"
+    attempts: list[dict[str, Any]] = []
 
-    try:
-        async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=False) as client:
-            resp = await client.get(probe_url, headers=headers)
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"Request failed: {exc}"}
+    async with httpx.AsyncClient(timeout=10.0, verify=False, follow_redirects=True) as client:
+        # 1) /api/v1/users/me with cookie ONLY
+        r1 = await _run_single_probe(client, api_url, cookie_header=cleaned, auth_token="")
+        r1["label"] = "GET /api/v1/users/me (cookie only)"
+        attempts.append(r1)
+        if r1.get("ok"):
+            return {
+                "ok": True,
+                "status": r1["status"],
+                "user": r1.get("user", ""),
+                "probe_url": api_url,
+                "final_url": r1.get("final_url", ""),
+                "attempts": attempts,
+            }
 
-    status = resp.status_code
-    if status == 200:
-        body = {}
-        try:
-            body = resp.json()
-        except Exception:  # noqa: BLE001
-            pass
-        user = ""
-        if isinstance(body, dict):
-            data = body.get("data") or {}
-            if isinstance(data, dict):
-                user = str(data.get("name") or data.get("username") or "")
-        return {"ok": True, "status": status, "user": user, "probe_url": probe_url}
+        # 2) fallback to /challenges on old CTFd builds (404 on /api/v1/users/me)
+        if r1.get("status") in {404, 405}:
+            r2 = await _run_single_probe(client, chal_url, cookie_header=cleaned, auth_token="")
+            r2["label"] = "GET /challenges (cookie only, fallback)"
+            attempts.append(r2)
+            if r2.get("ok"):
+                return {
+                    "ok": True,
+                    "status": r2["status"],
+                    "user": "",
+                    "probe_url": chal_url,
+                    "final_url": r2.get("final_url", ""),
+                    "attempts": attempts,
+                    "note": "verified via /challenges HTML (no /api/v1/users/me on this CTFd)",
+                }
 
-    # 302 redirect to /login means cookie is invalid
-    if status in {301, 302, 303, 307, 308}:
-        location = resp.headers.get("location", "")
-        return {
-            "ok": False,
-            "status": status,
-            "error": f"Redirected to {location or 'unknown'} — session likely expired",
-            "probe_url": probe_url,
-        }
+        # 3) 401 on step 1 + token available → maybe endpoint wants token auth
+        if r1.get("status") == 401 and token:
+            r3 = await _run_single_probe(client, api_url, cookie_header=cleaned, auth_token=token)
+            r3["label"] = "GET /api/v1/users/me (cookie + token)"
+            attempts.append(r3)
+            if r3.get("ok"):
+                return {
+                    "ok": True,
+                    "status": r3["status"],
+                    "user": r3.get("user", ""),
+                    "probe_url": api_url,
+                    "final_url": r3.get("final_url", ""),
+                    "attempts": attempts,
+                    "note": "endpoint required API token in addition to cookie",
+                }
 
-    if status == 403:
-        return {"ok": False, "status": status, "error": "403 Forbidden — cookie invalid or lacking access", "probe_url": probe_url}
-    if status == 401:
-        return {"ok": False, "status": status, "error": "401 Unauthorized — cookie invalid", "probe_url": probe_url}
+    # Pick the most informative failure for the top-level error message.
+    best = r1
+    for attempt in attempts[1:]:
+        # Prefer the last attempt if it provided more detail.
+        if attempt.get("body_preview") and not best.get("body_preview"):
+            best = attempt
+    primary_error = best.get("error") or "probe failed"
+    # Dedicated guidance for the classic "401 with token present" pattern.
+    if r1.get("status") == 401 and token:
+        primary_error += " — API token may also be invalid; try clearing it and probing with cookie alone."
+    elif r1.get("status") == 401 and not token:
+        primary_error += " — cookie likely expired (re-login in browser, copy fresh `session=…` cookie)."
 
-    return {"ok": False, "status": status, "error": f"Unexpected HTTP {status}", "probe_url": probe_url}
+    return {
+        "ok": False,
+        "status": best.get("status", 0),
+        "error": primary_error,
+        "probe_url": best.get("url", api_url),
+        "final_url": best.get("final_url", ""),
+        "body_preview": best.get("body_preview", ""),
+        "attempts": attempts,
+    }
 
 
 async def _auto_import_remote_challenges(
@@ -1810,24 +2002,49 @@ async def _start_msg_server(
                 except json.JSONDecodeError:
                     data = {}
                 raw = str(data.get("cookie") or "").strip()
-                # Strip leading "Cookie:" prefix if the user pasted the full header line.
-                if raw.lower().startswith("cookie:"):
-                    raw = raw[len("cookie:"):].strip()
-                if not raw:
-                    _json_response("400 Bad Request", {"error": "cookie value is required (body: {\"cookie\": \"…\"})"})
+                # Clean up common paste artifacts — leading "Cookie:" prefix AND
+                # Set-Cookie attributes (Path=, Domain=, Secure, HttpOnly, …)
+                # that sneak in when operators copy from DevTools' Response view.
+                cleaned = _sanitize_cookie_header(raw)
+                if not cleaned:
+                    # Distinguish "pasted nothing" from "pasted a bare token with no name=".
+                    has_equals = "=" in raw
+                    if raw and not has_equals:
+                        msg = (
+                            "Invalid Cookie header: looks like you pasted just the cookie "
+                            "VALUE. The Cookie header needs the full 'name=value' pair, "
+                            "e.g. 'session=eyJhbG...'.  Copy from DevTools → Network → "
+                            "Request Headers → Cookie: line (not Application → Cookies)."
+                        )
+                    else:
+                        msg = (
+                            "cookie value is required — after stripping Set-Cookie "
+                            "attributes nothing usable remained"
+                        )
+                    _json_response("400 Bad Request", {"error": msg})
                 else:
-                    deps.settings.remote_cookie_header = raw
+                    deps.settings.remote_cookie_header = cleaned
                     deps.cookie_source = f"operator_api@{int(time.time())}"
                     summary = _cookie_summary(deps)
                     # Optionally verify immediately.
                     probe_result: dict[str, Any] = {}
                     if bool(data.get("test")):
-                        probe_result = await _probe_cookie(deps, raw)
+                        probe_result = await _probe_cookie(deps, cleaned)
+                    stripped = len(raw) - len(cleaned)
                     logger.info(
-                        "Cookie header updated via API (%d chars, %d cookies)",
+                        "Cookie header updated via API (%d chars, %d cookies%s)",
                         summary["length"], summary["cookie_count"],
+                        f", stripped {stripped} chars of attrs" if stripped > 0 else "",
                     )
-                    _json_response("200 OK", {"ok": True, "cookie": summary, "probe": probe_result})
+                    _json_response(
+                        "200 OK",
+                        {
+                            "ok": True,
+                            "cookie": summary,
+                            "probe": probe_result,
+                            "sanitized_chars_dropped": stripped,
+                        },
+                    )
             elif method == "DELETE" and path == "/api/runtime/cookie":
                 deps.settings.remote_cookie_header = ""
                 deps.cookie_source = ""

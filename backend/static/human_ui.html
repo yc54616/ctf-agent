@@ -69,8 +69,12 @@
           <input id="ctfdUrlInput" type="url" placeholder="https://ctf.example.com">
         </div>
         <div class="config-field">
-          <label>API token <span class="cmd-meta" style="font-weight:normal">(optional; for submit / fetch)</span></label>
-          <input id="ctfdTokenInput" type="password" placeholder="ctfd_xxxxxxxx" autocomplete="off">
+          <label>API token <span class="cmd-meta" style="font-weight:normal">(optional — leave blank if unsure)</span></label>
+          <input id="ctfdTokenInput" type="password" placeholder="ctfd_xxxxxxxx (only if you generated one)" autocomplete="off">
+          <p class="cmd-meta" style="margin-top:4px">
+            Session cookie alone is enough for most CTFs. Only add a token if you generated one at
+            <code>&lt;ctfd&gt;/settings#tokens</code> for persistent access (survives logout).
+          </p>
         </div>
         <div class="btn-row" style="margin-top:4px">
           <button class="btn-accent" id="ctfdSaveBtn">💾 Save + Test</button>
@@ -82,10 +86,15 @@
         <h4 class="ctfd-subhead">Session Cookie
           <span id="cookieDot" class="cookie-dot missing" title="No session cookie loaded"></span>
         </h4>
-        <p class="cmd-meta" id="cookieMeta" style="margin-top:0">Raw Cookie header used by solvers for authenticated requests.</p>
+        <p class="cmd-meta" id="cookieMeta" style="margin-top:0">
+          Raw Cookie header solvers attach to authenticated requests.
+          <strong>Copy from DevTools → Network → any request → <em>Request</em> Headers → <code>Cookie:</code> line</strong>
+          (not <em>Response</em>/<code>Set-Cookie</code>).
+          Expires when you log out of the browser.
+        </p>
         <div class="cookie-status" id="cookieStatus">—</div>
         <textarea id="cookieInput" rows="2"
-          placeholder="session=abc123; remember_token=…  (DevTools → Network → copy Cookie header)"></textarea>
+          placeholder="session=eyJhbGciOi...; remember_token=...    (must include the name=value pair, not just the value)"></textarea>
         <div class="btn-row" style="margin-top:6px">
           <button class="btn-accent" id="cookieSaveBtn">💾 Save</button>
           <button class="ghost-btn"  id="cookieTestBtn">🔌 Test</button>
