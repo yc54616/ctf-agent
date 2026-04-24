@@ -219,6 +219,14 @@
 
     <!-- TAB: Intervene -->
     <div class="tab-pane" id="tab-intervene">
+      <!-- Banner that appears when the selected challenge has no active
+           swarm, so the operator knows why Send buttons are disabled. -->
+      <div id="interveneInactiveBanner" class="intervene-inactive-banner" style="display:none">
+        ⚠ Intervention requires an <strong>active swarm</strong>.
+        Click <strong>Spawn</strong> in the right panel first, or switch to
+        a challenge that's already running.
+      </div>
+
       <!-- Live advisor reports — co-located with intervene forms so the
            operator can read the strategic signal and reply on the same page. -->
       <section class="section" id="reportsSection">
@@ -249,7 +257,8 @@
         <form id="strategicForm">
           <textarea id="strategicInput" rows="4"
             placeholder="e.g. PIE is disabled — stop looking for ASLR bypasses, focus on ROP gadgets at fixed addresses."></textarea>
-          <button class="btn-accent" type="submit" id="strategicBtn" disabled style="margin-top:6px;width:100%">🧠 Send Strategic Override</button>
+          <button class="btn-accent" type="submit" id="strategicBtn" disabled style="margin-top:6px;width:100%"
+            title="Disabled: no active swarm. Spawn a swarm first.">🧠 Send Strategic Override</button>
         </form>
         <div class="intervention-result" id="strategicResult"></div>
       </section>
@@ -265,7 +274,8 @@
           </div>
           <textarea id="tacticalInput" rows="3"
             placeholder="e.g. The flag format is picoCTF{...}. Check PNG metadata with exiftool."></textarea>
-          <button class="btn-accent" type="submit" id="tacticalBtn" disabled style="margin-top:6px;width:100%">💬 Send Hint to Lane</button>
+          <button class="btn-accent" type="submit" id="tacticalBtn" disabled style="margin-top:6px;width:100%"
+            title="Disabled: no active swarm. Spawn a swarm first.">💬 Send Hint to Lane</button>
         </form>
         <div class="intervention-result" id="tacticalResult"></div>
       </section>

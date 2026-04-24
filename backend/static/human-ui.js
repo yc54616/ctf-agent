@@ -367,6 +367,29 @@ function enableCommands(name, ch) {
   $("saveResultBtn").disabled   = false;
   $("clearHistoryBtn").disabled = active;
   $("bumpAllStaleBtn").disabled = !active;
+
+  // Contextual tooltips + banner so operators know WHY intervene buttons
+  // are grey instead of just seeing a dead button.
+  const interveneReason = active ? ""
+      : solved ? "Disabled: challenge already solved."
+      : remoteOnly ? "Disabled: challenge is remote-only — import it first, then Spawn."
+      : "Disabled: no active swarm. Click Spawn in the right panel first.";
+  $("strategicBtn").title = interveneReason || "Broadcast strategic critique to advisor + all lanes";
+  $("tacticalBtn").title  = interveneReason || "Send a targeted hint to one solver lane";
+  $("broadcastBtn").title = interveneReason || "Post a finding every solver reads next turn";
+  const banner = $("interveneInactiveBanner");
+  if (banner) {
+    if (active) {
+      banner.style.display = "none";
+    } else {
+      banner.style.display = "";
+      banner.innerHTML = solved
+        ? '✅ Challenge already solved. Intervention not needed.'
+        : remoteOnly
+        ? '⚠ This challenge is <strong>remote-only</strong>. Import it with <code>ctf-import</code> or let the swarm auto-import on Fetch, then click <strong>Spawn</strong>.'
+        : '⚠ Intervention requires an <strong>active swarm</strong>. Click <strong>Spawn</strong> in the right panel first, or switch to a challenge that\'s already running.';
+    }
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

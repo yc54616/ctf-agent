@@ -639,6 +639,21 @@ textarea { resize: vertical; }
   color: var(--fg);
 }
 
+/* Intervene-inactive banner — shown when the selected challenge has no
+   active swarm, so the grey Send buttons have a visible explanation. */
+.intervene-inactive-banner {
+  margin: 6px 12px 10px;
+  padding: 10px 14px;
+  background: rgba(255, 170, 60, 0.1);
+  border: 1px solid rgba(255, 170, 60, 0.4);
+  border-left: 3px solid var(--orange);
+  border-radius: var(--radius);
+  color: var(--orange);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.intervene-inactive-banner strong { color: var(--fg); }
+
 /* Solve reports feed — lanes + advisor share this channel */
 .reports-kind-filter {
   display: inline-flex;
