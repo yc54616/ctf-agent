@@ -166,6 +166,60 @@ def _snapshot_ui_alerts(deps: CoordinatorDeps) -> list[dict[str, Any]]:
     return active_alerts
 
 
+def _capture_advisor_report(deps: CoordinatorDeps, event: object) -> None:
+    """Extract advisor-relevant portions of an inbox event into ``deps.advisor_reports``.
+
+    Runs on every drained event (in addition to existing processing).  Entries
+    are used by the human UI's "Advisor Reports" panel so the operator sees
+    real-time strategic notes alongside the intervene controls.  Silent no-op
+    when the event carries no advisor signal.
+    """
+    log = getattr(deps, "advisor_reports", None)
+    if log is None:
+        return
+
+    def _push(record: dict[str, Any]) -> None:
+        record.setdefault("ts", time.time())
+        log.append(record)
+
+    if isinstance(event, CoordinatorNoteRef):
+        summary = str(event.summary or "")
+        advisor_idx = summary.find("[Advisor]")
+        if advisor_idx < 0:
+            return
+        advisor_text = summary[advisor_idx + len("[Advisor]"):].strip()
+        solver_text = summary[:advisor_idx].strip()
+        if not advisor_text:
+            return
+        _push(
+            {
+                "ts": float(getattr(event, "timestamp", 0.0)) or time.time(),
+                "challenge_name": str(event.challenge_name or ""),
+                "lane_id": str(event.source_model or ""),
+                "kind": "coordinator_annotation",
+                "text": advisor_text[:1500],
+                "context": solver_text[:500],
+            }
+        )
+        return
+
+    if isinstance(event, CandidateRef):
+        decision = str(getattr(event, "advisor_decision", "") or "").strip()
+        note = str(getattr(event, "advisor_note", "") or "").strip()
+        if not (decision or note):
+            return
+        _push(
+            {
+                "challenge_name": str(event.challenge_name or ""),
+                "lane_id": ", ".join(getattr(event, "source_models", []) or []),
+                "kind": "candidate_review",
+                "advisor_decision": decision or "insufficient",
+                "flag": str(getattr(event, "flag", "") or ""),
+                "text": (note or f"Flag {event.flag!r}: {decision or 'insufficient'}")[:1500],
+            }
+        )
+
+
 def _capture_solver_ui_alert(deps: CoordinatorDeps, event: object) -> bool:
     note = event if isinstance(event, CoordinatorNoteRef) else CoordinatorNoteRef.from_snapshot(event)
     if note is None:
@@ -557,6 +611,10 @@ async def run_event_loop(
             while True:
                 try:
                     solver_msg = deps.coordinator_inbox.get_nowait()
+                    # Mirror any advisor signal into deps.advisor_reports for the
+                    # human UI's reports panel (non-destructive — runs before
+                    # other processing).
+                    _capture_advisor_report(deps, solver_msg)
                     if _capture_solver_ui_alert(deps, solver_msg):
                         continue
                     parts.append(_render_solver_message(solver_msg))
@@ -881,6 +939,7 @@ def _runtime_snapshot(deps: CoordinatorDeps) -> dict[str, Any]:
         "pending_challenges": legacy.get("pending_challenges", []),
         "pending_challenge_entries": legacy.get("pending_challenge_entries", []),
         "known_challenges": _known_challenges_snapshot(deps),
+        "advisor_reports": list(getattr(deps, "advisor_reports", []))[-30:],
         "results": results,
         "known_challenge_count": legacy.get("known_challenge_count", 0),
         "known_solved_count": legacy.get("known_solved_count", 0),

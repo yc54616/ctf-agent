@@ -16,6 +16,7 @@ const S = {
   pollTimer: null,
   activeTab: "overview",
   queueOpen: false,
+  advisorReports: [],
 };
 
 const $ = id => document.getElementById(id);
@@ -71,9 +72,10 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     S.activeTab = tab;
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".tab-pane").forEach(p => p.classList.toggle("active", p.id === "tab-" + tab));
-    if (tab === "advisor" && S.selectedName) loadAdvisoryHistory();
-    if (tab === "health"  && S.selectedName) renderHealth();
-    if (tab === "config"  && S.selectedName) loadConfig();
+    if (tab === "advisor"   && S.selectedName) loadAdvisoryHistory();
+    if (tab === "health"    && S.selectedName) renderHealth();
+    if (tab === "config"    && S.selectedName) loadConfig();
+    if (tab === "intervene")                    renderReports();
   });
 });
 
@@ -234,6 +236,9 @@ function applySnapshot(snap) {
 
   renderChallengeList();
   renderQueue(snap.pending_challenge_entries ?? []);
+  // Cache latest reports for filter toggle + re-render on challenge selection.
+  S.advisorReports = snap.advisor_reports ?? [];
+  if (S.activeTab === "intervene") renderReports();
 
   if (S.selectedName && S.challenges[S.selectedName]) {
     renderCenterPanel(S.challenges[S.selectedName]);
@@ -473,6 +478,73 @@ async function loadAdvisoryHistory() {
     list.appendChild(item);
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Intervene tab — live advisor reports panel
+   ══════════════════════════════════════════════════════════════════════════ */
+function renderReports() {
+  const list = $("reportsList");
+  if (!list) return;
+  const onlyThis = $("reportsThisChallengeOnly")?.checked ?? true;
+  let reports = S.advisorReports ?? [];
+  if (onlyThis && S.selectedName) {
+    reports = reports.filter(r => !r.challenge_name || r.challenge_name === S.selectedName);
+  }
+  // Newest first
+  reports = [...reports].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)).slice(0, 40);
+  if (!reports.length) {
+    list.innerHTML = '<div class="empty">No advisor reports yet. They appear here as solvers run.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  for (const r of reports) {
+    const kind = String(r.kind ?? "coordinator_annotation");
+    const item = document.createElement("div");
+    item.className = "report-item " + kind;
+    const when  = r.ts ? new Date(r.ts * 1000).toLocaleTimeString() : "";
+    const lane  = r.lane_id ? shortModel(r.lane_id) : "";
+    const ch    = r.challenge_name ?? "";
+    const dec   = (r.advisor_decision ?? "").toLowerCase();
+    const decHtml = dec ? `<span class="report-decision ${esc(dec)}">verdict: ${esc(dec)}</span>` : "";
+    const flagHtml = r.flag ? `<span title="${esc(r.flag)}">🏁 ${esc(r.flag).slice(0, 40)}${r.flag.length > 40 ? "…" : ""}</span>` : "";
+    item.innerHTML = `
+      <div class="report-meta">
+        ${when ? `<span>${esc(when)}</span>` : ""}
+        <span class="report-kind ${esc(kind)}">${esc(kind.replace(/_/g, " "))}</span>
+        ${ch   ? `<span>${esc(ch)}</span>`   : ""}
+        ${lane ? `<span>${esc(lane)}</span>` : ""}
+        ${decHtml}
+        ${flagHtml}
+      </div>
+      <div class="report-text">${esc(r.text ?? "")}</div>
+      ${lane ? `<div class="report-actions"><button class="report-reply-btn" data-lane="${esc(r.lane_id)}" data-ch="${esc(ch)}">↩ Reply to lane</button></div>` : ""}
+    `;
+    list.appendChild(item);
+  }
+  list.querySelectorAll(".report-reply-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const lane = btn.dataset.lane;
+      const ch   = btn.dataset.ch;
+      // If the report was for a different challenge, switch to it first.
+      if (ch && ch !== S.selectedName && S.challenges[ch]) selectChallenge(ch);
+      const sel = $("tacticalLaneSelect");
+      if (sel && lane) {
+        // Ensure option exists even if the lane isn't in the current dropdown yet.
+        let opt = Array.from(sel.options).find(o => o.value === lane);
+        if (!opt) {
+          opt = document.createElement("option");
+          opt.value = lane; opt.textContent = shortModel(lane);
+          sel.appendChild(opt);
+        }
+        sel.value = lane;
+      }
+      $("tacticalInput").focus();
+      $("tacticalInput").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+}
+
+$("reportsThisChallengeOnly")?.addEventListener("change", renderReports);
 
 /* ══════════════════════════════════════════════════════════════════════════
    Intervene tab

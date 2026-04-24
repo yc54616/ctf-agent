@@ -1988,23 +1988,78 @@ class ChallengeSwarm:
         raise ValueError(f"Unsupported solver provider in model spec: {model_spec}")
 
     def _make_notify_fn(self, model_spec: str):
-        """Create a callback that pushes solver messages to the coordinator inbox."""
+        """Create a callback that pushes solver messages to the coordinator inbox.
+
+        Behaviour:
+        - LLM coordinator (no_submit=False): block on advisor annotation so the
+          inline [Advisor] hint reaches the LLM in the same turn.
+        - Human mode (no_submit=True): push the raw message immediately and
+          kick the advisor annotation off as a background task.  The advisor's
+          report lands in the human UI's Reports panel when it completes — no
+          solver turn is blocked waiting for coordinator feedback.
+        """
         async def _notify(message: str) -> None:
-            if self.coordinator_inbox:
-                advised_message = await self._build_advised_coordinator_message(model_spec, message)
+            if not self.coordinator_inbox:
+                return
+            if self.no_submit:
+                # Human mode: non-blocking path.  Deliver solver message first,
+                # run advisor annotation in the background so its verdict still
+                # flows into the inbox (captured as an advisor_report) but doesn't
+                # delay the solver.
                 pointer_path, _size_bytes = self._persist_shared_text_pointer(
                     f"coordinator-{self.meta.name}-{model_spec}",
-                    advised_message,
+                    message,
                 )
                 self.coordinator_inbox.put_nowait(
                     CoordinatorNoteRef(
                         challenge_name=self.meta.name,
                         source_model=model_spec,
-                        summary=self._compact_summary(advised_message),
+                        summary=self._compact_summary(message),
                         pointer_path=pointer_path,
                     )
                 )
                 self.coordinator_message_count += 1
+
+                async def _annotate_in_background() -> None:
+                    try:
+                        advised = await self._build_advised_coordinator_message(model_spec, message)
+                    except Exception as exc:  # noqa: BLE001 — background, swallow
+                        logger.debug(
+                            "[%s/%s] background advisor annotation failed: %s",
+                            self.meta.name, model_spec, exc,
+                        )
+                        return
+                    if advised == message or not advised.strip():
+                        return
+                    # Push the advisor-annotated version as a second, shorter
+                    # note so the Reports panel picks up the [Advisor] segment.
+                    self.coordinator_inbox.put_nowait(
+                        CoordinatorNoteRef(
+                            challenge_name=self.meta.name,
+                            source_model=model_spec,
+                            summary=self._compact_summary(advised),
+                            pointer_path=pointer_path,
+                        )
+                    )
+
+                self._schedule_background(_annotate_in_background())
+                return
+
+            # LLM coordinator path: block on advisor so annotation is inline.
+            advised_message = await self._build_advised_coordinator_message(model_spec, message)
+            pointer_path, _size_bytes = self._persist_shared_text_pointer(
+                f"coordinator-{self.meta.name}-{model_spec}",
+                advised_message,
+            )
+            self.coordinator_inbox.put_nowait(
+                CoordinatorNoteRef(
+                    challenge_name=self.meta.name,
+                    source_model=model_spec,
+                    summary=self._compact_summary(advised_message),
+                    pointer_path=pointer_path,
+                )
+            )
+            self.coordinator_message_count += 1
         return _notify
 
     @staticmethod

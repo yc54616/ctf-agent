@@ -541,6 +541,70 @@ textarea { resize: vertical; }
   line-height: 1.5;
 }
 
+/* Live advisor reports panel (Intervene tab) */
+.reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.report-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--purple);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.report-item.candidate_review { border-left-color: var(--accent); }
+.report-item.lane_hint        { border-left-color: var(--orange); }
+.report-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 3px;
+  flex-wrap: wrap;
+}
+.report-kind {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--purple);
+}
+.report-kind.candidate_review { color: var(--accent); }
+.report-kind.lane_hint        { color: var(--orange); }
+.report-decision {
+  font-weight: 600;
+}
+.report-decision.likely   { color: var(--green); }
+.report-decision.unlikely { color: var(--red); }
+.report-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+}
+.report-actions {
+  margin-top: 4px;
+  display: flex;
+  gap: 4px;
+}
+.report-reply-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--purple);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.report-reply-btn:hover {
+  background: var(--surface);
+}
+
 /* Intervention result */
 .intervention-result {
   margin-top: 8px;
