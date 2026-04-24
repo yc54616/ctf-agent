@@ -622,6 +622,38 @@ $("reportsAllChallenges")?.addEventListener("change", e => {
   renderSolveReports();
 });
 
+// "Report now" — ask every lane for a self-report + advisor synthesis
+$("requestReportBtn")?.addEventListener("click", async () => {
+  const name = S.selectedName;
+  if (!name) { flashResult("strategicResult", "Select a challenge first.", false); return; }
+  const ch = S.challenges[name];
+  if (ch?.status !== "active") {
+    logActivity(`Report-now skipped: ${name} has no active swarm`, "al-err");
+    pushEvent(`⚠ Cannot request status report — swarm isn't running`, "warn");
+    return;
+  }
+  const btn = $("requestReportBtn");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "⏳ Requesting…";
+  const r = await api("/api/runtime/request-status-report", {
+    method: "POST",
+    body: JSON.stringify({ challenge_name: name, prompt_lanes: true }),
+  });
+  btn.disabled = false;
+  btn.textContent = orig;
+  if (r.ok) {
+    logActivity(`Status report requested for ${name}`, "al-ok");
+    pushEvent(`📊 Status report requested — synthesis + lane self-reports incoming`, "info");
+    // Force an immediate snapshot so the "STATUS SNAPSHOT" synthesis report
+    // appears in the Reports tab without waiting for the next SSE tick.
+    pollSnapshot();
+  } else {
+    logActivity(`Report request failed: ${r.body.error ?? r.status}`, "al-err");
+    pushEvent(`⚠ ${r.body.error ?? "Report request failed"}`, "warn");
+  }
+});
+
 /* ══════════════════════════════════════════════════════════════════════════
    Intervene tab — live advisor reports panel
    ══════════════════════════════════════════════════════════════════════════ */
