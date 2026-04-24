@@ -2046,7 +2046,11 @@ class ChallengeSwarm:
         "hypothesis",       # lane or advisor: "I think X implies Y"
         "blocker",          # lane: "I'm stuck because X"
         "synthesis",        # advisor: consolidated summary of recent lane reports
-        "hint",             # advisor: targeted suggestion to a specific lane
+        "hint",             # advisor / operator STANDING DIRECTIVE: ongoing advice
+                            # kept in context for future decisions (persistent)
+        "transient_prompt", # operator one-shot intervention: Strategic Override /
+                            # Tactical Hint / Broadcast / Report-Now request.
+                            # Answer once, do NOT incorporate into ongoing strategy.
         "candidate_review", # advisor: verdict on a flag candidate
         "flag_candidate",   # lane: a flag-shaped string worth submitting — special UI
         "lane_note",        # catch-all for uncategorised lane notifications

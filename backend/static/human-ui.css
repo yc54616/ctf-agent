@@ -734,6 +734,10 @@ textarea { resize: vertical; }
 .report-row.kind-synthesis       { border-left-color: var(--purple); background: rgba(128, 90, 213, 0.08); }
 .report-row.kind-hint            { border-left-color: var(--orange); }
 .report-row.kind-candidate_review { border-left-color: var(--accent); }
+.report-row.kind-transient_prompt {
+  border-left-color: var(--yellow, #f6c945);
+  background: rgba(246, 201, 69, 0.06);
+}
 .report-row.kind-flag_candidate {
   border-left: 3px solid var(--yellow, #f6c945);
   background: rgba(246, 201, 69, 0.08);
