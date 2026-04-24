@@ -693,7 +693,7 @@ $("directiveForm")?.addEventListener("submit", async e => {
   $("directiveBtn").disabled = false;
   if (r.ok) {
     $("directiveInput").value = "";
-    flashResult("directiveResult", `Added — re-bumps every ~30s`, true);
+    flashResult("directiveResult", `Added — bumped to all lanes (one-shot, lives in session memory)`, true);
     logActivity(`Standing directive added → ${name}`, "al-ok");
     pushEvent(`📌 Standing directive active: ${text.slice(0, 80)}`, "info");
     pollSnapshot();
