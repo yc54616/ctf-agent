@@ -538,7 +538,7 @@ async function loadAdvisoryHistory() {
    ══════════════════════════════════════════════════════════════════════════ */
 const KIND_ICONS = {
   discovery: "🔍", experiment: "🧪", hypothesis: "💡", blocker: "🚧",
-  synthesis: "🧠", hint: "→",
+  synthesis: "🧠", hint: "→", transient_prompt: "⚡",
   candidate_review: "⚖", flag_candidate: "🏁", lane_note: "·",
 };
 

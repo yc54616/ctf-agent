@@ -1263,18 +1263,18 @@ async def do_bump_agent(deps: CoordinatorDeps, challenge_name: str, model_spec: 
     solver = swarm.solvers.get(model_spec)
     if not solver:
         return f"No solver for {model_spec} in {challenge_name}"
-    # Append an acknowledge-please clause so the human can see their hint
-    # was actually received.  Explicit about notify_coordinator because
-    # agentMessage / reasoning text doesn't surface to the human GUI —
-    # only notify_coordinator tool calls do.
+    # ONE-SHOT tactical hint.  NOT a standing rule — answer once, don't
+    # incorporate into future strategy.  Explicit about notify_coordinator
+    # because agentMessage / reasoning text doesn't surface to the human.
     tagged = (
-        f"[HUMAN TACTICAL HINT] {str(insights or '').strip()}\n\n"
-        "Acknowledge by emitting a `notify_coordinator` tool call on "
-        "your very next step ('received — applying …' is fine).  "
-        "IMPORTANT: the human only sees notify_coordinator tool calls "
-        "in their GUI — your agentMessage / reasoning text is invisible "
-        "to them.  If you reply only in reasoning, the human will think "
-        "you ignored them."
+        f"[ONE-SHOT OPERATOR HINT — answer this once, then do NOT keep "
+        f"referring to it on future steps] {str(insights or '').strip()}\n\n"
+        "Emit a `notify_coordinator` tool call on your VERY NEXT step with "
+        "your immediate response.  IMPORTANT: the human only sees "
+        "notify_coordinator tool calls in their GUI — agentMessage / "
+        "reasoning text is invisible to them.  After this single response "
+        "resume your normal task; this is NOT a standing directive, just "
+        "a transient prompt."
     )
     operator_bump = getattr(solver, "bump_operator", None)
     if callable(operator_bump):
@@ -1289,15 +1289,15 @@ async def do_bump_agent(deps: CoordinatorDeps, challenge_name: str, model_spec: 
     publish_report = getattr(swarm, "publish_report", None)
     if callable(publish_report):
         publish_report(
-            kind="hint",
-            title=f"💬 OPERATOR → {model_spec}: {str(insights or '').strip()[:140]}",
+            kind="transient_prompt",
+            title=f"💬 OPERATOR → {model_spec} (one-shot): {str(insights or '').strip()[:130]}",
             body=str(insights or ""),
             lane_id=model_spec,
         )
     # Also tell the advisor so its next synthesis factors in this hint.
     _schedule_advisor_on_operator_message(
         swarm,
-        source_label=f"tactical hint to {model_spec}",
+        source_label=f"tactical one-shot to {model_spec}",
         message=str(insights or ""),
     )
     return f"Bumped {model_spec} on {challenge_name}"
@@ -1355,15 +1355,15 @@ async def do_broadcast(deps: CoordinatorDeps, challenge_name: str, message: str)
     publish_report = getattr(swarm, "publish_report", None)
     if callable(publish_report):
         publish_report(
-            kind="hint",
-            title=f"📢 OPERATOR BROADCAST → all lanes: {str(message or '').strip()[:140]}",
+            kind="transient_prompt",
+            title=f"📢 OPERATOR BROADCAST → all lanes (one-shot): {str(message or '').strip()[:130]}",
             body=str(message or ""),
             lane_id="all lanes",
         )
     # Advisor also hears the broadcast.
     _schedule_advisor_on_operator_message(
         swarm,
-        source_label="broadcast to all lanes",
+        source_label="broadcast to all lanes (one-shot)",
         message=str(message or ""),
     )
     return f"Broadcast to all solvers on {challenge_name}"
@@ -1390,14 +1390,15 @@ async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, criti
     # waiting for the message bus delivery on the next solver turn.
     bumped: list[str] = []
     stronger_prompt = (
-        "[HUMAN STRATEGIC OVERRIDE] "
+        "[ONE-SHOT HUMAN STRATEGIC OVERRIDE — answer this once, then do "
+        "NOT keep referring to it on future steps]\n"
         + critique.strip()
-        + "\n\nAcknowledge this by emitting a `notify_coordinator` tool "
-        "call on your very next step ('received — pivoting to …' is fine).  "
-        "IMPORTANT: the human only sees notify_coordinator tool calls in "
-        "their GUI — your agentMessage / reasoning text is invisible to "
-        "them.  If you reply only in reasoning, the human will think you "
-        "ignored them."
+        + "\n\nEmit a `notify_coordinator` tool call on your VERY NEXT "
+        "step acknowledging + your immediate response.  IMPORTANT: "
+        "agentMessage / reasoning text is invisible to the human — "
+        "only notify_coordinator tool calls reach them.  After this "
+        "single response resume solving; this is a transient prompt, "
+        "NOT a standing rule."
     )
     for model_spec, solver in swarm.solvers.items():
         bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
@@ -1412,9 +1413,9 @@ async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, criti
     publish_report = getattr(swarm, "publish_report", None)
     if callable(publish_report):
         publish_report(
-            kind="hint",
-            title=f"🧠 OPERATOR OVERRIDE → {len(bumped)} lane(s): "
-                  + critique.strip()[:130],
+            kind="transient_prompt",
+            title=f"🧠 OPERATOR OVERRIDE → {len(bumped)} lane(s) (one-shot): "
+                  + critique.strip()[:120],
             body=critique.strip(),
             lane_id="all lanes",
         )
@@ -1491,14 +1492,15 @@ async def do_request_status_report(
     # Path 2 (advisor synthesis) below.
     if callable(publish_report):
         publish_report(
-            kind="hint",
+            kind="transient_prompt",
             title=(
                 f"📊 REPORT-NOW → {len(active_lanes)} lane(s) + advisor "
-                f"(asking for live status; replies arrive 5–30s)"
+                f"(one-shot; replies arrive 5–30s)"
             ),
             body=(
                 f"Operator pressed Report-now.  Every active lane has been "
-                f"asked to emit a notify_coordinator status.  Advisor has "
+                f"asked to emit a notify_coordinator status on its very "
+                f"next step (one-shot, not ongoing advice).  Advisor has "
                 f"been asked for a narrative synthesis based on the last "
                 f"{len(recent)} lane report(s).  Both arrive asynchronously "
                 f"in this feed as LLM calls complete."
@@ -1513,8 +1515,8 @@ async def do_request_status_report(
     # advisor reads them on the next synthesis cycle.
     bumped: list[str] = []
     prompt = (
-        "[HUMAN OPERATOR STATUS REQUEST — answer this BEFORE continuing "
-        "your current line of work]\n\n"
+        "[ONE-SHOT HUMAN STATUS REQUEST — answer this ONCE on your very "
+        "next step, then do NOT keep referring to it in future reasoning]\n\n"
         "DROP whatever tool call you were about to run.  Your IMMEDIATE "
         "next step MUST be a `notify_coordinator` tool call (NOT "
         "agentMessage / reasoning — those are invisible to both the "
@@ -1526,8 +1528,9 @@ async def do_request_status_report(
         "  • Blocked: <blocker, if any>\n"
         "  • Next: <what you'll try next>\n\n"
         "Keep it under ~8 lines.  The advisor will aggregate every "
-        "lane's reply into a single report for the human.  After your "
-        "notify_coordinator call, resume solving."
+        "lane's reply into a single report for the human.  After this "
+        "ONE notify_coordinator call, resume solving normally — this "
+        "is a transient prompt, NOT a standing rule."
     )
     for spec in active_lanes:
         solver = swarm.solvers.get(spec)
