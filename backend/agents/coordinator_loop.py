@@ -1066,11 +1066,24 @@ async def _rebuild_ctfd_client(deps: CoordinatorDeps, *, base_url: str, token: s
     return {"ok": True}
 
 
+# Cookies that are NOT CTFd auth but still legitimately present — operators
+# who paste their full browser Cookie header will have some of these.  We only
+# warn when NONE of the known auth cookies appear.
+_KNOWN_AUTH_COOKIE_NAMES = {"session", "remember_token", "remember_me"}
+_KNOWN_BOT_COOKIE_NAMES = {
+    "ctf_clearance", "cf_clearance", "__cf_bm", "__cf_waitingroom",
+    "cf_chl_2", "cf_chl_prog", "cf_chl_rc_i", "cf_chl_rc_m",
+    "_ga", "_gid", "_gat", "_gcl_au",
+}
+
+
 def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
     """Return a safe, UI-ready summary of the currently configured CTFd cookie.
 
     Never returns the raw cookie value — only metadata suitable for display
     (length, number of cookie pairs, names present, first-seen timestamp).
+    Also flags the common mistake of loading a CloudFlare / bot-check cookie
+    without the actual CTFd ``session=`` pair.
     """
     raw = str(getattr(deps.settings, "remote_cookie_header", "") or "").strip()
     base_url = str(getattr(deps.ctfd, "base_url", "") or getattr(deps.settings, "ctfd_url", "") or "")
@@ -1085,11 +1098,39 @@ def _cookie_summary(deps: CoordinatorDeps) -> dict[str, Any]:
             continue
         names.append(chunk.split("=", 1)[0])
 
+    lower_names = {n.lower() for n in names}
+    has_auth_cookie = bool(lower_names & _KNOWN_AUTH_COOKIE_NAMES)
+    bot_only = (
+        bool(lower_names)
+        and not has_auth_cookie
+        and all(
+            (name.lower() in _KNOWN_BOT_COOKIE_NAMES)
+            or name.lower().startswith(("cf_", "__cf_"))
+            for name in names
+        )
+    )
+    warning = ""
+    if bot_only:
+        warning = (
+            "Cookie has CloudFlare / bot-check entries but no CTFd session "
+            "cookie.  Log in at the CTFd site in your browser first, then copy "
+            "the Cookie header — you should see a 'session=...' pair.  "
+            "ctf_clearance / cf_clearance alone is NOT auth."
+        )
+    elif names and not has_auth_cookie:
+        warning = (
+            "No 'session' or 'remember_token' cookie in the pasted header.  "
+            "CTFd expects a 'session=...' pair — did you copy the cookie "
+            "before logging in?"
+        )
+
     return {
         "configured": bool(raw),
         "length": len(raw),
         "cookie_count": len(names),
         "cookie_names": names[:16],
+        "has_auth_cookie": has_auth_cookie,
+        "warning": warning,
         "base_url": base_url,
         "platform": platform,
         "username": username,

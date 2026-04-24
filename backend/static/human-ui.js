@@ -907,7 +907,21 @@ function renderCookieStatus(summary, probe) {
   if (summary.configured) {
     parts.push(`<div>Length: ${summary.length} chars · Cookies: ${summary.cookie_count}</div>`);
     if (summary.cookie_names?.length) {
-      parts.push(`<div>${summary.cookie_names.map(n => `<span class="cookie-chip">${esc(n)}</span>`).join("")}</div>`);
+      parts.push(`<div>${summary.cookie_names.map(n => {
+        const isAuth = ["session", "remember_token", "remember_me"].includes(n.toLowerCase());
+        const isBot  = n.toLowerCase().startsWith("cf_") || n.toLowerCase().startsWith("__cf_")
+                    || ["ctf_clearance", "_ga", "_gid", "_gat", "_gcl_au"].includes(n.toLowerCase());
+        const style = isAuth ? "color:var(--green);border-color:var(--green)"
+                    : isBot  ? "color:var(--orange);border-color:var(--orange)"
+                    : "";
+        const title = isAuth ? "CTFd auth cookie"
+                    : isBot  ? "CloudFlare / analytics — NOT auth"
+                    : "";
+        return `<span class="cookie-chip" ${style ? `style="${style}"` : ""} title="${esc(title)}">${esc(n)}</span>`;
+      }).join("")}</div>`);
+    }
+    if (summary.warning) {
+      parts.push(`<div style="color:var(--orange);margin-top:4px;padding:4px 6px;background:rgba(0,0,0,0.2);border-radius:3px">⚠ ${esc(summary.warning)}</div>`);
     }
     if (summary.source) parts.push(`<div>Source: ${esc(summary.source)}</div>`);
   }
