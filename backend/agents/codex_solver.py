@@ -200,6 +200,10 @@ class CodexSolver:
         self._bump_insights: str | None = None
         self._advisory_bump_insights: str | None = None
         self._operator_bump_insights: str | None = None
+        # Set by interrupt_and_bump_operator; checked in run_until_done_or_gave_up
+        # so an operator-initiated subprocess kill does NOT look like a normal
+        # gave_up (which the swarm treats as terminal).
+        self._was_interrupted_for_operator_bump: bool = False
         self._structured_output: dict | None = None
         self._turn_error: str | None = None
         self._compact_requested = False
@@ -927,6 +931,26 @@ class CodexSolver:
             if not (self._turn_error or "").startswith("stalled:"):
                 self._clear_watchdog()
 
+            # If the turn ended because the operator interrupted us, don't
+            # treat that as gave_up (the swarm loop would take that as
+            # terminal).  Clear the flag, tear down the dead subprocess so
+            # next start() creates a fresh one, and return RETRY_SOON so
+            # the loop continues immediately with the bump as next prompt.
+            if self._was_interrupted_for_operator_bump:
+                self._was_interrupted_for_operator_bump = False
+                self.tracer.event(
+                    "finish", status=RETRY_SOON, flag=None, confirmed=False,
+                    reason="interrupted_for_operator_bump",
+                )
+                await self._post_interrupt_cleanup()
+                return SolverResult(
+                    flag=None, status=RETRY_SOON,
+                    findings_summary="interrupted for operator bump",
+                    step_count=self._step_count,
+                    cost_usd=self._cost_usd,
+                    log_path=self.tracer.path,
+                )
+
             if self._turn_error:
                 err = self._turn_error.lower()
                 # Context overflow is terminal — don't fallback, just error
@@ -1029,6 +1053,14 @@ class CodexSolver:
         self._advisory_bump_insights = None
         self._bump_insights = None
         self.loop_detector.reset()
+        # CRITICAL: flag this teardown as "operator-initiated interrupt" so
+        # run_until_done_or_gave_up returns RETRY_SOON instead of GAVE_UP.
+        # Without the flag the subprocess kill was indistinguishable from a
+        # normal gave_up, which the swarm's _run_solver_loop treats as
+        # "runtime finished" → break → "SOLVER FINISHED: Swarm for ...
+        # completed" → the whole lane is shut down just because the operator
+        # asked a question.
+        self._was_interrupted_for_operator_bump = True
         self.tracer.event(
             "bump", source="operator", channel="instant",
             insights=insights[:500],
@@ -1060,6 +1092,35 @@ class CodexSolver:
             self._turn_done.set()
         except Exception:  # noqa: BLE001
             pass
+
+    async def _post_interrupt_cleanup(self) -> None:
+        """Tear down dead subprocess + reader after operator interrupt so
+        the next run_until_done_or_gave_up's ``if not self._proc: start()``
+        path creates a fresh subprocess with the operator bump as prompt.
+        Called from run_until_done_or_gave_up when it detects the interrupt
+        flag is set.
+        """
+        if self._reader_task is not None:
+            try:
+                self._reader_task.cancel()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await self._reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._reader_task = None
+        if self._proc is not None:
+            try:
+                # terminate was called already; make absolutely sure.
+                self._proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await asyncio.wait_for(self._proc.wait(), timeout=2.0)
+            except Exception:  # noqa: BLE001
+                pass
+            self._proc = None
 
     def _result(self, status: str) -> SolverResult:
         self.tracer.event("finish", status=status, flag=self._flag, confirmed=self._confirmed)
