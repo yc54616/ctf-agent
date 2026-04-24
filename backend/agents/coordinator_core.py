@@ -694,16 +694,31 @@ async def do_check_swarm_status(deps: CoordinatorDeps, challenge_name: str) -> s
     return json.dumps(swarm.get_status(), indent=2)
 
 
-async def do_submit_flag(deps: CoordinatorDeps, challenge_name: str, flag: str) -> str:
-    if deps.no_submit:
-        if deps.local_mode:
-            return (
-                f'LOCAL MODE — not submitting "{flag.strip()}" for {challenge_name}. '
-                "Use operator approval for local solves."
-            )
+async def do_submit_flag(
+    deps: CoordinatorDeps,
+    challenge_name: str,
+    flag: str,
+    *,
+    force: bool = False,
+) -> str:
+    """Submit a flag to the remote platform.
+
+    Args:
+        force: When True, bypass the ``no_submit`` guard.  Use this for
+               human-initiated submissions (operator UI / CLI) where the human
+               is explicitly requesting a submit even in human-coordinator mode.
+               Still blocked in local mode (no remote platform available).
+    """
+    if deps.local_mode:
+        return (
+            f'LOCAL MODE — cannot submit "{flag.strip()}" for {challenge_name} remotely. '
+            "Use approve-candidate or mark-solved instead."
+        )
+    if deps.no_submit and not force:
         return (
             f'SUBMISSION DISABLED — not submitting "{flag.strip()}" for {challenge_name} '
-            "because --no-submit is set. Use operator approval if you want to confirm it manually."
+            "because --no-submit is set. Use approve-candidate or pass force=True for a "
+            "human-initiated submit."
         )
     normalized = flag.strip()
     swarm = deps.swarms.get(challenge_name)
@@ -754,6 +769,11 @@ async def do_submit_flag(deps: CoordinatorDeps, challenge_name: str, flag: str) 
                     json.dumps(merged, indent=2),
                     encoding="utf-8",
                 )
+            # Auto-kill the swarm immediately — no need to wait for the platform
+            # poller to detect the solve.
+            if swarm and not swarm.cancel_event.is_set():
+                swarm.kill(reason=f"flag confirmed by coordinator: {challenge_name}")
+                logger.info("Auto-killed swarm for %s after flag accepted", challenge_name)
         return result.display
     except Exception as e:
         return f"submit_flag error: {e}"
@@ -1235,3 +1255,83 @@ async def do_broadcast(deps: CoordinatorDeps, challenge_name: str, message: str)
         return f"No swarm running for {challenge_name}"
     await swarm.message_bus.broadcast(message)
     return f"Broadcast to all solvers on {challenge_name}"
+
+
+async def do_advisor_intervene(deps: CoordinatorDeps, challenge_name: str, critique: str) -> str:
+    """Send a human strategic override to the advisor and all active solver lanes.
+
+    The advisor cannot be preempted mid-LLM-call (API calls complete atomically),
+    but its monitoring loop polls every ~2 seconds.  The critique is posted to the
+    shared message bus — the advisor sees it on its next cycle and adjusts its
+    directions accordingly.  All active solver lanes also receive the critique
+    immediately via operator bump so they can factor it into their next step.
+    """
+    swarm = deps.swarms.get(challenge_name)
+    if not swarm:
+        return f"No swarm running for {challenge_name}"
+
+    # Tag the message so the advisor can identify it as a human override.
+    tagged = f"[HUMAN STRATEGIC OVERRIDE] {critique.strip()}"
+    await swarm.message_bus.broadcast(tagged)
+
+    # Also bump every non-finished lane directly so they pick it up without
+    # waiting for the message bus delivery on the next solver turn.
+    bumped: list[str] = []
+    for model_spec, solver in swarm.solvers.items():
+        bump_fn = getattr(solver, "bump_operator", None) or getattr(solver, "bump", None)
+        if callable(bump_fn):
+            bump_fn(f"HUMAN STRATEGIC OVERRIDE — re-evaluate your approach: {critique.strip()}")
+            bumped.append(model_spec)
+
+    logger.info(
+        "Human intervention on %s: bumped %d lane(s). Critique: %s",
+        challenge_name, len(bumped), critique[:120],
+    )
+    return f"Intervention sent to {len(bumped)} lane(s) on '{challenge_name}'"
+
+
+async def do_clear_challenge_history(
+    deps: CoordinatorDeps,
+    challenge_name: str,
+    *,
+    delete_traces: bool = False,
+) -> str:
+    """Clear a challenge's solve history (result.json, flag.txt) from disk and memory.
+
+    The swarm must not be actively running; kill it first if needed.
+    Pass delete_traces=True to also remove solver JSONL trace files.
+    """
+    swarm = deps.swarms.get(challenge_name)
+    if swarm and not swarm.cancel_event.is_set():
+        return (
+            f"Cannot clear history: swarm is still active for '{challenge_name}'. "
+            "Kill it first with kill-swarm."
+        )
+
+    # Drop from in-memory state.
+    deps.results.pop(challenge_name, None)
+    _drop_pending_swarm(deps, challenge_name)
+
+    deleted: list[str] = []
+    challenge_dir = deps.challenge_dirs.get(challenge_name)
+    if challenge_dir:
+        solve_dir = Path(challenge_dir) / "solve"
+        for fname in ("flag.txt", "result.json"):
+            p = solve_dir / fname
+            if p.exists():
+                p.unlink()
+                deleted.append(fname)
+
+        if delete_traces:
+            import glob as _glob
+            pattern = str(Path(challenge_dir) / "**" / f"trace-*")
+            for tf in _glob.glob(pattern, recursive=True):
+                try:
+                    Path(tf).unlink()
+                    deleted.append(Path(tf).name)
+                except OSError:
+                    pass
+
+    if not deleted:
+        return f"Nothing to clear for '{challenge_name}' (already clean)."
+    return f"Cleared history for '{challenge_name}': {', '.join(deleted)}"

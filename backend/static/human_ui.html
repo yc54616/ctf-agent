@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CTF Human Coordinator</title>
+  <link rel="stylesheet" href="/human-ui.css">
+</head>
+<body>
+
+<!-- ─── Top bar ─────────────────────────────────────────────────────────── -->
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="logo">CTF</span>
+    <div class="topbar-title">
+      <h1>Human Coordinator</h1>
+      <span class="mode-badge" id="modeBadge">connecting…</span>
+    </div>
+  </div>
+  <div class="topbar-metrics">
+    <div class="metric"><span class="label">Solved</span><strong id="metSolved">-</strong></div>
+    <div class="metric"><span class="label">Active</span><strong id="metActive">-</strong></div>
+    <div class="metric"><span class="label">Queued</span><strong id="metQueued">-</strong></div>
+    <div class="metric"><span class="label">Cost</span><strong id="metCost">-</strong></div>
+    <div class="metric"><span class="label">Steps</span><strong id="metSteps">-</strong></div>
+    <div class="metric"><span class="label">Stale</span><strong id="metStale">-</strong></div>
+  </div>
+  <div class="topbar-right">
+    <a class="ghost-btn" href="/ui" target="_blank">Legacy UI ↗</a>
+    <span class="sync-dot" id="syncDot" title="SSE stream status"></span>
+  </div>
+</header>
+
+<!-- ─── 3-column workspace ───────────────────────────────────────────────── -->
+<div class="workspace">
+
+  <!-- LEFT: Challenge list ─────────────────────────────────────────── -->
+  <aside class="panel panel-left">
+    <div class="panel-head">
+      <h2>Challenges</h2>
+      <span class="count-badge" id="challengeCount">0</span>
+      <button class="ghost-btn small" id="fetchChallengesBtn" title="Fetch all challenges from CTFd" style="margin-left:auto">🔄 Fetch</button>
+    </div>
+
+    <!-- Parse URL -->
+    <div class="parse-section">
+      <form id="parseForm">
+        <div class="input-row">
+          <input id="parseUrl" type="url" placeholder="https://ctf.example.com/challenges" required>
+          <button type="submit" class="btn-accent">Parse</button>
+        </div>
+      </form>
+      <div class="parse-result" id="parseResult"></div>
+    </div>
+
+    <!-- Challenge list -->
+    <div class="challenge-list" id="challengeList">
+      <div class="empty">Loading…</div>
+    </div>
+
+    <!-- Pending queue (collapsible) -->
+    <div class="queue-section" id="queueSection" style="display:none">
+      <div class="queue-head" id="queueToggle">
+        <span>Queue</span>
+        <span class="count-badge" id="queueCount">0</span>
+        <span class="queue-chevron">▾</span>
+      </div>
+      <div class="queue-body" id="queueBody"></div>
+    </div>
+  </aside>
+
+  <!-- CENTER: Challenge detail ─────────────────────────────────────── -->
+  <main class="panel panel-center">
+    <div class="panel-head">
+      <h2 id="centerTitle">Select a challenge</h2>
+      <span id="centerMeta"></span>
+    </div>
+
+    <div class="center-empty" id="centerEmpty">
+      <p>Select a challenge from the left panel.</p>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="tab-bar" id="tabBar" style="display:none">
+      <button class="tab-btn active" data-tab="overview">Overview</button>
+      <button class="tab-btn" data-tab="advisor">Advisor</button>
+      <button class="tab-btn" data-tab="intervene">Intervene</button>
+      <button class="tab-btn" data-tab="health">Health</button>
+      <button class="tab-btn" data-tab="trace">Trace</button>
+      <button class="tab-btn" data-tab="config">Config</button>
+    </div>
+
+    <!-- TAB: Overview -->
+    <div class="tab-pane active" id="tab-overview">
+      <section class="section" id="lanesSection" style="display:none">
+        <h3 class="section-title">Solver Lanes</h3>
+        <div class="lane-grid" id="laneGrid"></div>
+      </section>
+      <section class="section" id="candidatesSection" style="display:none">
+        <h3 class="section-title">Flag Candidates</h3>
+        <div class="candidate-list" id="candidateList"></div>
+      </section>
+      <section class="section" id="findingsSection" style="display:none">
+        <h3 class="section-title">Shared Findings</h3>
+        <div class="finding-list" id="findingList"></div>
+      </section>
+    </div>
+
+    <!-- TAB: Advisor -->
+    <div class="tab-pane" id="tab-advisor">
+      <section class="section">
+        <h3 class="section-title">
+          Advisor History
+          <span class="section-controls">
+            <select id="advisoryLimit" class="small-select">
+              <option value="8">last 8</option>
+              <option value="16">last 16</option>
+              <option value="32">last 32</option>
+            </select>
+            <button class="ghost-btn small" id="loadAdvisoryBtn">↻ Load</button>
+          </span>
+        </h3>
+        <p class="cmd-meta">Strategic directions the advisor has sent to solver lanes. Most recent first.</p>
+        <div class="advisory-list" id="advisoryList">
+          <div class="empty">Click Load to fetch advisor history.</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- TAB: Intervene -->
+    <div class="tab-pane" id="tab-intervene">
+      <!-- Strategic override → advisor -->
+      <section class="section">
+        <h3 class="section-title">Strategic Override → Advisor + All Lanes</h3>
+        <p class="cmd-meta">
+          Broadcasts a high-level critique to the advisor's message bus <em>and</em> bumps every
+          active solver immediately. The advisor applies it on its next 2 s monitoring cycle.
+          <br><strong>Note:</strong> The advisor cannot be interrupted mid-LLM-call (API calls are atomic).
+        </p>
+        <form id="strategicForm">
+          <textarea id="strategicInput" rows="4"
+            placeholder="e.g. PIE is disabled — stop looking for ASLR bypasses, focus on ROP gadgets at fixed addresses."></textarea>
+          <button class="btn-accent" type="submit" id="strategicBtn" disabled style="margin-top:6px;width:100%">🧠 Send Strategic Override</button>
+        </form>
+        <div class="intervention-result" id="strategicResult"></div>
+      </section>
+
+      <!-- Tactical hint → specific lane -->
+      <section class="section">
+        <h3 class="section-title">Tactical Hint → Solver Lane</h3>
+        <p class="cmd-meta">Injects a low-level hint directly into one solver. Solver sees it on its very next step.</p>
+        <form id="tacticalForm">
+          <div class="input-row" style="margin-bottom:6px">
+            <label style="flex:0 0 50px;font-size:12px">Lane</label>
+            <select id="tacticalLaneSelect" class="small-select" style="flex:1"></select>
+          </div>
+          <textarea id="tacticalInput" rows="3"
+            placeholder="e.g. The flag format is picoCTF{...}. Check PNG metadata with exiftool."></textarea>
+          <button class="btn-accent" type="submit" id="tacticalBtn" disabled style="margin-top:6px;width:100%">💬 Send Hint to Lane</button>
+        </form>
+        <div class="intervention-result" id="tacticalResult"></div>
+      </section>
+    </div>
+
+    <!-- TAB: Health / Bottleneck -->
+    <div class="tab-pane" id="tab-health">
+      <section class="section">
+        <h3 class="section-title">
+          Lane Health
+          <span class="section-controls">
+            <button class="ghost-btn small" id="bumpAllStaleBtn" disabled>⚡ Bump All Stale</button>
+          </span>
+        </h3>
+        <p class="cmd-meta">
+          <strong style="color:var(--orange)">Stale</strong> = no heartbeat &gt;20 s (stuck in slow tool).
+          <strong style="color:var(--red)">Error</strong> = quota / API failure.
+          <strong style="color:var(--purple)">Resetting</strong> = recovering from crash.
+        </p>
+        <div class="health-list" id="healthList"><div class="empty">No active lanes.</div></div>
+      </section>
+    </div>
+
+    <!-- TAB: Trace -->
+    <div class="tab-pane" id="tab-trace">
+      <section class="section">
+        <h3 class="section-title">
+          Solver Trace
+          <span class="section-controls">
+            <select id="traceLaneSelect" class="small-select"></select>
+            <select id="traceLastN" class="small-select">
+              <option value="20">last 20</option>
+              <option value="40">last 40</option>
+              <option value="80">last 80</option>
+            </select>
+            <button class="ghost-btn small" id="refreshTraceBtn">↻ Refresh</button>
+          </span>
+        </h3>
+        <pre class="trace-pre" id="traceOutput">Select a lane and click Refresh.</pre>
+      </section>
+    </div>
+
+    <!-- TAB: Config -->
+    <div class="tab-pane" id="tab-config">
+      <section class="section">
+        <h3 class="section-title">
+          Challenge Config
+          <span class="section-controls">
+            <button class="ghost-btn small" id="loadConfigBtn">↻ Load</button>
+            <button class="ghost-btn small" id="resetConfigBtn">🗑 Reset Override</button>
+          </span>
+        </h3>
+        <p class="cmd-meta">Edit connection info, category, or description override. Changes apply to the next swarm spawn.</p>
+        <div id="configEditor" style="display:none">
+          <div class="config-field">
+            <label>Connection host</label>
+            <input id="cfgHost" type="text" placeholder="e.g. chal.example.com">
+          </div>
+          <div class="config-field">
+            <label>Port</label>
+            <input id="cfgPort" type="number" placeholder="e.g. 31337">
+          </div>
+          <div class="config-field">
+            <label>Protocol</label>
+            <select id="cfgProto">
+              <option value="">— unchanged —</option>
+              <option value="tcp">tcp</option>
+              <option value="http">http</option>
+              <option value="https">https</option>
+            </select>
+          </div>
+          <div class="config-field">
+            <label>Category override</label>
+            <input id="cfgCategory" type="text" placeholder="e.g. pwn">
+          </div>
+          <div class="config-field">
+            <label>Extra hint</label>
+            <textarea id="cfgHint" rows="2" placeholder="e.g. binary has NX but no ASLR"></textarea>
+          </div>
+          <button class="btn-accent" id="saveConfigBtn" style="margin-top:8px;width:100%">💾 Save Override</button>
+          <div class="intervention-result" id="configResult"></div>
+        </div>
+        <div id="configEmpty" class="empty">Load to see current config.</div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- RIGHT: Command center ─────────────────────────────────────────── -->
+  <aside class="panel panel-right">
+    <div class="panel-head">
+      <h2>Commands</h2>
+      <span id="selectedBadge" class="count-badge" style="display:none"></span>
+    </div>
+
+    <!-- Swarm management -->
+    <div class="cmd-card">
+      <h3>Swarm</h3>
+      <p class="cmd-meta" id="swarmMeta">No challenge selected.</p>
+      <div class="btn-row">
+        <button class="btn-success" id="spawnBtn" disabled>▶ Spawn</button>
+        <button class="btn-danger"  id="killBtn"  disabled>■ Kill</button>
+        <button class="ghost-btn"   id="restartBtn" disabled>↺ Restart</button>
+      </div>
+      <div class="btn-row" style="margin-top:6px">
+        <button class="ghost-btn small" id="priorityOnBtn" disabled>↑ Priority</button>
+        <button class="ghost-btn small" id="priorityOffBtn" disabled>↓ Normal</button>
+        <button class="ghost-btn small" id="checkInstanceBtn" disabled title="Probe challenge service connectivity">🔌 Check</button>
+      </div>
+      <div class="instance-result" id="instanceResult"></div>
+    </div>
+
+    <!-- Direct flag submit -->
+    <div class="cmd-card">
+      <h3>Submit Flag</h3>
+      <p class="cmd-meta">Submit to CTFd directly. Auto-terminates the swarm on acceptance.</p>
+      <form id="submitFlagForm">
+        <input id="submitFlagInput" type="text" placeholder="FLAG{…}" required>
+        <button class="btn-accent" type="submit" id="submitFlagBtn" disabled style="margin-top:6px;width:100%">→ Submit to platform</button>
+      </form>
+    </div>
+
+    <!-- Mark external solve -->
+    <div class="cmd-card">
+      <h3>Mark Solved Externally</h3>
+      <p class="cmd-meta">Use when you or a teammate solved the challenge manually outside the swarm.</p>
+      <form id="markSolvedForm">
+        <input id="markSolvedFlag" type="text" placeholder="FLAG{…}" required style="margin-bottom:4px">
+        <input id="markSolvedNote" type="text" placeholder="Optional note (e.g. solved by hand)">
+        <button class="btn-success" type="submit" id="markSolvedBtn" disabled style="margin-top:6px;width:100%">🏆 Mark Solved</button>
+      </form>
+      <div class="intervention-result" id="markSolvedResult"></div>
+    </div>
+
+    <!-- Broadcast -->
+    <div class="cmd-card">
+      <h3>Broadcast to All Solvers</h3>
+      <p class="cmd-meta">Posts to shared findings — every solver reads it next turn.</p>
+      <form id="broadcastForm">
+        <textarea id="broadcastInput" rows="3" placeholder="e.g. ASLR disabled — try ROP"></textarea>
+        <button class="btn-accent" type="submit" id="broadcastBtn" disabled style="margin-top:6px;width:100%">📢 Broadcast</button>
+      </form>
+    </div>
+
+    <!-- Concurrency -->
+    <div class="cmd-card">
+      <h3>Concurrency</h3>
+      <form id="maxForm">
+        <div class="input-row">
+          <label style="font-size:12px">Max active
+            <input id="maxInput" type="number" min="0" max="50" step="1" value="10">
+          </label>
+          <button class="btn-accent" type="submit">Set</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- History -->
+    <div class="cmd-card">
+      <h3>History</h3>
+      <p class="cmd-meta">Manage solve results and traces for the selected challenge.</p>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="ghost-btn" id="saveResultBtn" disabled style="width:100%">💾 Save result.json</button>
+        <button class="btn-danger small" id="clearHistoryBtn" disabled style="width:100%">🗑 Clear History</button>
+        <label class="checkbox-label"><input type="checkbox" id="deleteTracesChk"> also delete traces</label>
+      </div>
+    </div>
+
+    <!-- Human events feed -->
+    <div class="cmd-card events-card">
+      <h3>
+        Event Feed
+        <button class="ghost-btn small" id="clearEventsBtn" style="float:right">Clear</button>
+      </h3>
+      <p class="cmd-meta">Platform events and solver messages forwarded to you.</p>
+      <div class="event-feed" id="eventFeed">
+        <div class="empty">Waiting for events…</div>
+      </div>
+    </div>
+
+    <!-- Activity log -->
+    <div class="cmd-card">
+      <h3>Activity Log</h3>
+      <ul class="activity-log" id="activityLog"></ul>
+    </div>
+  </aside>
+</div>
+
+<script src="/human-ui.js" defer></script>
+</body>
+</html>
