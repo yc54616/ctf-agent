@@ -977,12 +977,25 @@ class CodexSolver:
         self.tracer.event("bump", source="auto", insights=insights[:500])
 
     def bump_advisory(self, insights: str) -> None:
-        self._advisory_bump_insights = insights
+        # Same merge semantics as bump_operator — slow lanes shouldn't lose
+        # earlier advisories just because a new one arrived before they stepped.
+        if self._advisory_bump_insights and insights not in self._advisory_bump_insights:
+            self._advisory_bump_insights = f"{self._advisory_bump_insights}\n\n---\n\n{insights}"
+        else:
+            self._advisory_bump_insights = insights
         self.loop_detector.reset()
         self.tracer.event("bump", source="auto", channel="advisory", insights=insights[:500])
 
     def bump_operator(self, insights: str) -> None:
-        self._operator_bump_insights = insights
+        # MERGE, don't overwrite.  Previously this was a single slot: a
+        # Strategic Override sent at T=0 could be clobbered by a standing-
+        # directive 30s reminder before slow lanes consumed it, so the
+        # human saw only some lanes acknowledge.  Now multiple operator
+        # bumps stack until the lane actually steps and reads them.
+        if self._operator_bump_insights and insights not in self._operator_bump_insights:
+            self._operator_bump_insights = f"{self._operator_bump_insights}\n\n---\n\n{insights}"
+        else:
+            self._operator_bump_insights = insights
         self._advisory_bump_insights = None
         self._bump_insights = None
         self.loop_detector.reset()
