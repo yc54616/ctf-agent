@@ -2119,8 +2119,27 @@ async def _start_msg_server(
                 else:
                     try:
                         from backend.agents.url_parser_agent import parse_challenge_url
+                        # Reuse the operator's CTFd creds so private challenges
+                        # pages return real content instead of a login redirect.
+                        # Caller can pass explicit_cookie / explicit_token to
+                        # override (e.g. when parsing a different host).
+                        cookie_header = str(
+                            data.get("cookie")
+                            or getattr(deps.settings, "remote_cookie_header", "")
+                            or ""
+                        )
+                        auth_token = str(
+                            data.get("token")
+                            or getattr(deps.settings, "ctfd_token", "")
+                            or ""
+                        )
                         parsed = await asyncio.wait_for(
-                            parse_challenge_url(url), timeout=60
+                            parse_challenge_url(
+                                url,
+                                cookie_header=cookie_header,
+                                auth_token=auth_token,
+                            ),
+                            timeout=60,
                         )
                         _json_response("200 OK", parsed)
                     except asyncio.TimeoutError:

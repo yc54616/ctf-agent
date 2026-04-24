@@ -260,6 +260,10 @@ def _setup_logging(verbose: bool = False, *, log_path: Path | None = None) -> Pa
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("aiodocker").setLevel(logging.WARNING)
+    # claude_agent_sdk logs every stream read/cancel at DEBUG — noisy in -v mode.
+    # Keep WARNING so "bundled Claude Code CLI: …" still shows once, but skip
+    # "Read task cancelled" and other internal churn.
+    logging.getLogger("claude_agent_sdk").setLevel(logging.WARNING)
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)-8s %(message)s", datefmt="%X"))
     handlers: list[logging.Handler] = [handler]
