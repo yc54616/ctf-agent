@@ -2626,6 +2626,126 @@ async def _start_msg_server(
                             {"error": f"URL parsing failed: {exc}"},
                         )
 
+            elif method == "POST" and path == "/api/runtime/parse-local-dir" and content_length > 0:
+                # Parse a local directory of challenge files (binary +
+                # description) into a challenge the swarm can solve.  Works
+                # without network — designed for --local mode where the
+                # operator has the challenge files on disk but no CTFd
+                # URL.  Optional import=1 writes the parsed result to
+                # challenges/<slug>/ so the lane can Spawn immediately.
+                body = await asyncio.wait_for(reader.read(content_length), timeout=10)
+                try:
+                    data = json.loads(body)
+                except json.JSONDecodeError:
+                    data = {}
+                directory = str(data.get("path") or data.get("directory") or "").strip()
+                do_import = str(data.get("import", "1")).lower() not in {"0", "false", "no"}
+                if not directory:
+                    _json_response(
+                        "400 Bad Request",
+                        {"error": "path (to local challenge directory) is required"},
+                    )
+                else:
+                    try:
+                        from backend.agents.url_parser_agent import parse_local_directory
+                        parsed = await asyncio.wait_for(
+                            parse_local_directory(directory), timeout=60,
+                        )
+
+                        # Optionally import the parsed challenge(s) to
+                        # challenges/<slug>/ so they can be spawned.
+                        imported: list[str] = []
+                        import_errors: list[str] = []
+                        if do_import and isinstance(parsed.get("challenges"), list):
+                            import shutil as _shutil
+                            import yaml as _yaml
+                            import re as _re
+                            from pathlib import Path as _Path
+                            from backend.challenge_config import (
+                                discover_challenge_dirs,
+                                load_effective_metadata,
+                                refresh_effective_metadata,
+                            )
+                            from backend.prompts import ChallengeMeta as _ChallengeMeta
+
+                            src_root = _Path(directory).expanduser().resolve()
+                            challenges_root = _Path(deps.challenges_root).resolve() / "local"
+                            challenges_root.mkdir(parents=True, exist_ok=True)
+
+                            for ch in parsed["challenges"]:
+                                if not isinstance(ch, dict):
+                                    continue
+                                name = str(ch.get("name") or "").strip()
+                                if not name:
+                                    continue
+                                slug = _re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "challenge"
+                                ch_dir = challenges_root / slug
+                                try:
+                                    ch_dir.mkdir(parents=True, exist_ok=True)
+                                    distfiles_dir = ch_dir / "distfiles"
+                                    distfiles_dir.mkdir(exist_ok=True)
+                                    # Copy all binary / text files from source.
+                                    for item in src_root.rglob("*"):
+                                        if not item.is_file():
+                                            continue
+                                        rel = item.relative_to(src_root)
+                                        dest = distfiles_dir / rel
+                                        dest.parent.mkdir(parents=True, exist_ok=True)
+                                        if not dest.exists():
+                                            try:
+                                                _shutil.copy2(item, dest)
+                                            except OSError:
+                                                pass
+
+                                    # Build metadata.yml from the parsed result.
+                                    meta = {
+                                        "name": name,
+                                        "category": str(ch.get("category") or ""),
+                                        "description": str(ch.get("description") or "").strip(),
+                                        "value": int(ch.get("points") or 0),
+                                        "connection_info": (
+                                            (ch.get("connection") or {}).get("url")
+                                            or (
+                                                f"{(ch.get('connection') or {}).get('protocol', 'nc')} "
+                                                f"{(ch.get('connection') or {}).get('host', '')} "
+                                                f"{(ch.get('connection') or {}).get('port', '')}"
+                                            ).strip()
+                                        ),
+                                        "tags": list(ch.get("tags") or []),
+                                        "solves": int(ch.get("solve_count") or 0),
+                                    }
+                                    hints = ch.get("hints") or []
+                                    if isinstance(hints, list) and hints:
+                                        meta["hints"] = [
+                                            {"content": str(h)} for h in hints if h
+                                        ]
+                                    (ch_dir / "metadata.yml").write_text(
+                                        _yaml.safe_dump(meta, allow_unicode=True, sort_keys=False),
+                                        encoding="utf-8",
+                                    )
+                                    # Refresh deps so the GUI picks it up.
+                                    refresh_effective_metadata(ch_dir)
+                                    new_meta = _ChallengeMeta.from_dict(load_effective_metadata(ch_dir))
+                                    deps.challenge_dirs[new_meta.name] = str(ch_dir)
+                                    deps.challenge_metas[new_meta.name] = new_meta
+                                    imported.append(new_meta.name)
+                                except Exception as exc:  # noqa: BLE001
+                                    import_errors.append(f"{name}: {exc}")
+
+                        parsed["imported"] = imported
+                        parsed["import_errors"] = import_errors
+                        _json_response("200 OK", parsed)
+                    except asyncio.TimeoutError:
+                        _json_response(
+                            "504 Gateway Timeout",
+                            {"error": "local directory parsing timed out after 60s"},
+                        )
+                    except Exception as exc:
+                        _json_response(
+                            "500 Internal Server Error",
+                            {"error": f"local parsing failed: {exc}"},
+                        )
+
             elif method == "GET" and path == "/api/runtime/human-events":
                 # SSE stream of coordinator events for human-mode display
                 writer.write(

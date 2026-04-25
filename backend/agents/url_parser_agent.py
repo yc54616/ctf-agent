@@ -334,3 +334,169 @@ async def parse_challenge_url(
     parsed["markdown_summary"] = _render_markdown(parsed)
     parsed["auth_used"] = auth_used
     return parsed
+
+
+# ---------------------------------------------------------------------------
+# Local-directory parsing (for local_mode: no network, read description +
+# binary files from disk and extract metadata via LLM)
+# ---------------------------------------------------------------------------
+
+_DESCRIPTION_GLOB_EXTS = {".txt", ".md", ".markdown", ".rst", ".json", ".yml", ".yaml"}
+_DESCRIPTION_FILENAMES = {
+    "readme", "description", "desc", "problem",
+    "challenge", "instructions", "info", "prompt",
+}
+_BINARY_EXTS_LOCAL = {
+    ".bin", ".exe", ".elf", ".so", ".dll", ".dylib",
+    ".zip", ".tar", ".gz", ".tgz", ".7z", ".rar", ".xz",
+    ".png", ".jpg", ".jpeg", ".gif", ".pdf", ".wav", ".mp3", ".mp4",
+    ".pyc", ".class", ".jar", ".apk",
+}
+
+
+def _read_local_directory(directory: str) -> tuple[list[str], list[str], str]:
+    """Walk a directory and return (text_contents, binary_filenames, tree).
+
+    Text files (description / readme / config) are read into the first list.
+    Binary files (binaries / archives / media) are listed by name in the second.
+    ``tree`` is a compact tree view of the directory for the LLM prompt.
+    """
+    import os as _os
+    from pathlib import Path
+
+    root = Path(directory).expanduser().resolve()
+    if not root.exists() or not root.is_dir():
+        raise RuntimeError(f"Directory does not exist or is not a directory: {root}")
+
+    text_blocks: list[str] = []
+    binary_files: list[str] = []
+    tree_lines: list[str] = []
+
+    # Cap what we send to LLM so a repo full of sample files doesn't blow up.
+    max_text_per_file = 8_000
+    max_total_text = 24_000
+    total_text = 0
+
+    for dirpath, dirnames, filenames in _os.walk(root):
+        # Skip common noise dirs
+        dirnames[:] = [
+            d for d in sorted(dirnames)
+            if d not in {".git", "__pycache__", ".venv", "node_modules", ".cache"}
+        ]
+        rel_dir = Path(dirpath).relative_to(root)
+        for name in sorted(filenames):
+            full_path = Path(dirpath) / name
+            rel = (rel_dir / name) if str(rel_dir) != "." else Path(name)
+            suffix = full_path.suffix.lower()
+            name_lower = name.lower()
+            stem_lower = full_path.stem.lower()
+
+            # Classify: text vs binary
+            is_text = (
+                suffix in _DESCRIPTION_GLOB_EXTS
+                or stem_lower in _DESCRIPTION_FILENAMES
+                or name_lower in _DESCRIPTION_FILENAMES
+            )
+            is_binary = suffix in _BINARY_EXTS_LOCAL
+
+            size = 0
+            try:
+                size = full_path.stat().st_size
+            except OSError:
+                pass
+            tree_lines.append(f"  {rel}  ({size} bytes)")
+
+            if is_text and total_text < max_total_text:
+                try:
+                    text = full_path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                text = text[:max_text_per_file].strip()
+                if not text:
+                    continue
+                total_text += len(text)
+                text_blocks.append(f"=== FILE: {rel} ===\n{text}")
+            elif is_binary or not is_text:
+                binary_files.append(str(rel))
+
+    tree = "\n".join(tree_lines[:200])
+    return text_blocks, binary_files, tree
+
+
+def _build_local_prompt(directory: str, text_blocks: list[str], binaries: list[str], tree: str) -> str:
+    """Synthesise a compact prompt for the LLM from local-directory contents."""
+    body_parts = [
+        f"Source directory: {directory}",
+        "",
+        f"Directory tree (first 200 entries):\n{tree or '(empty)'}",
+        "",
+    ]
+    if binaries:
+        body_parts.append(
+            "Binary / attachment files (these are the challenge distfiles — "
+            "list them by filename in the 'files' field):\n"
+            + "\n".join(f"  - {b}" for b in binaries[:40])
+        )
+        body_parts.append("")
+    if text_blocks:
+        body_parts.append("Text files (descriptions / readmes):")
+        body_parts.extend(text_blocks)
+    else:
+        body_parts.append("(no readable text files found)")
+    return "\n".join(body_parts)
+
+
+async def parse_local_directory(directory: str) -> dict[str, Any]:
+    """Parse a local challenge directory into structured metadata.
+
+    Designed for ``--local`` mode where the operator has a folder containing
+    challenge binaries + a description file and wants the swarm to solve it
+    without any CTFd-style remote platform.  Workflow:
+
+    1. Walk the directory, classifying files into text (descriptions/readmes)
+       and binary (executables/archives/media).
+    2. Hand the text + file list to the LLM with the same extractor prompt
+       used by ``parse_challenge_url``.
+    3. Return the structured result with ``source_path`` instead of
+       ``source_url``.  The caller can then create the ``challenges/<slug>/``
+       layout on disk from this result.
+
+    No network.  No Claude auth dependency beyond the normal LLM call.
+    """
+    try:
+        text_blocks, binaries, tree = _read_local_directory(directory)
+    except RuntimeError as exc:
+        logger.warning("url_parser: local dir scan failed for %s: %s", directory, exc)
+        return {
+            "error": str(exc),
+            "source_path": directory,
+            "challenges": [],
+            "markdown_summary": f"Failed to read directory: {exc}",
+            "raw_text_preview": "",
+            "binary_files": [],
+        }
+
+    prompt_text = _build_local_prompt(directory, text_blocks, binaries, tree)
+    raw_text_preview = prompt_text[:500]
+
+    try:
+        parsed = await _llm_parse(directory, prompt_text[:_MAX_TEXT_FOR_LLM])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("url_parser: LLM parse failed for %s: %s", directory, exc)
+        parsed = {"challenges": [], "competition_name": None}
+
+    # Inject the binary file list into each parsed challenge if LLM missed them.
+    challenges_list = parsed.get("challenges") or []
+    if isinstance(challenges_list, list) and binaries:
+        for ch in challenges_list:
+            if not isinstance(ch, dict):
+                continue
+            if not ch.get("files"):
+                ch["files"] = list(binaries)
+
+    parsed["source_path"] = directory
+    parsed["source_url"] = ""  # compat with UI that expects source_url
+    parsed["raw_text_preview"] = raw_text_preview
+    parsed["binary_files"] = binaries
+    parsed["markdown_summary"] = _render_markdown(parsed)
+    return parsed

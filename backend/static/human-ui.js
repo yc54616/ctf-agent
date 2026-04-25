@@ -971,6 +971,47 @@ $("parseForm").addEventListener("submit", async e => {
 });
 
 /* ══════════════════════════════════════════════════════════════════════════
+   Parse a LOCAL directory (for --local mode: read binary + description
+   files from disk, LLM extracts metadata, copy into challenges/local/<slug>/
+   so the lane can Spawn it immediately).
+   ══════════════════════════════════════════════════════════════════════════ */
+$("parseLocalForm")?.addEventListener("submit", async e => {
+  e.preventDefault();
+  const path = $("parseLocalPath").value.trim();
+  if (!path) return;
+  const res = $("parseLocalResult");
+  res.textContent = "Scanning directory + LLM parse…";
+  res.className = "parse-result";
+  const r = await api("/api/runtime/parse-local-dir", {
+    method: "POST",
+    body: JSON.stringify({ path, import: 1 }),
+  });
+  if (r.ok) {
+    const n = r.body.challenges?.length ?? 0;
+    const imp = (r.body.imported ?? []).length;
+    const errs = (r.body.import_errors ?? []).length;
+    const binCount = (r.body.binary_files ?? []).length;
+    const parts = [`Parsed ${n} challenge(s)`];
+    if (binCount) parts.push(`${binCount} binary/attachment file(s)`);
+    if (imp)      parts.push(`${imp} imported to challenges/local/`);
+    if (errs)     parts.push(`${errs} import error(s)`);
+    res.innerText = parts.join(" · ");
+    res.className = "parse-result " + (n === 0 ? "error" : "ok");
+    if (n === 0) {
+      res.innerText += "\nLLM couldn't extract a challenge from this directory.  Make sure a readme/description is present.";
+    }
+    logActivity(`Parsed local dir: ${parts.join(", ")}`, n === 0 ? "al-err" : "al-ok");
+    if (imp > 0) {
+      pushEvent(`📁 Imported ${imp} local challenge(s): ${(r.body.imported ?? []).join(", ")}`, "success");
+      pollSnapshot();
+    }
+  } else {
+    res.textContent = r.body.error ?? r.body.detail ?? "Local parse failed";
+    res.className   = "parse-result error";
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
    Fetch all challenges from CTFd
    ══════════════════════════════════════════════════════════════════════════ */
 $("fetchChallengesBtn").addEventListener("click", async () => {
