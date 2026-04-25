@@ -1994,9 +1994,26 @@ class ChallengeSwarm:
         _notify = self._make_notify_fn(model_spec)
 
         if provider == "claude-sdk":
-            raise ValueError(
-                f"Claude solver lanes are disabled for {model_spec}. "
-                "Use Claude as coordinator/advisor only."
+            # Claude Code CLI lane — host-side via claude_agent_sdk, uses a
+            # custom MCP server exposing sandbox-aware bash / file / notify /
+            # flag-candidate tools.  Minimal but functional; shares the same
+            # SolverProtocol so operator bumps / interrupts / Reports work
+            # identically to the codex lane.
+            from backend.agents.claude_code_solver import ClaudeCodeSolver
+
+            return ClaudeCodeSolver(
+                model_spec=model_spec,
+                challenge_dir=self.challenge_dir,
+                meta=self.meta,
+                cost_tracker=self.cost_tracker,
+                settings=self.settings,
+                cancel_event=self.cancel_event,
+                no_submit=self.no_submit,
+                local_mode=self.local_mode,
+                report_flag_candidate_fn=_report_flag_candidate,
+                notify_coordinator=_notify,
+                initial_step_count=initial_step_count,
+                sandbox=sandbox,
             )
 
         if provider == "codex":

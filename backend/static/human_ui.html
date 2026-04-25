@@ -53,6 +53,21 @@
       <div class="parse-result" id="parseResult"></div>
     </div>
 
+    <!-- Local directory parse — works in --local mode, no network.  Given
+         a folder of binary + description files, LLM extracts metadata and
+         (default) copies everything into challenges/local/<slug>/ so the
+         lane can Spawn immediately. -->
+    <div class="parse-section">
+      <form id="parseLocalForm">
+        <div class="input-row">
+          <input id="parseLocalPath" type="text"
+                 placeholder="/path/to/challenge-folder (binary + readme)">
+          <button type="submit" class="btn-accent" title="Scan the folder, let the LLM extract metadata, copy files into challenges/local/<slug>/">📁 Parse local</button>
+        </div>
+      </form>
+      <div class="parse-result" id="parseLocalResult"></div>
+    </div>
+
     <!-- CTFd Connection (URL + API token + session cookie, all in one place) -->
     <details class="ctfd-section" id="ctfdSection">
       <summary>

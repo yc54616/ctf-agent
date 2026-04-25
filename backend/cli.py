@@ -1097,10 +1097,9 @@ def _validate_runtime_auth(
         if provider == "codex":
             needs_codex = True
         elif provider == "claude-sdk":
-            raise ValueError(
-                f"Claude solver lanes are disabled for {spec}. "
-                "Use Claude as coordinator/advisor only."
-            )
+            # Claude Code lane via claude_agent_sdk — needs the claude CLI
+            # home-auth payload to be present (same as advisor).
+            needs_claude = True
         elif provider in ("gemini", "google"):
             needs_gemini = True
 
